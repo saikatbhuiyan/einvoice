@@ -4,9 +4,9 @@
     {
       "type": "node",
       "request": "launch",
-      "name": "Debug invoice with Nx",
+      "name": "Debug bff with Nx",
       "runtimeExecutable": "pnpm exec",
-      "runtimeArgs": ["nx", "serve", "invoice"],
+      "runtimeArgs": ["nx", "serve", "bff"],
       "env": {
         "NODE_OPTIONS": "--inspect=9229"
       },
@@ -15,7 +15,7 @@
       "skipFiles": ["<node_internals>/**"],
       "sourceMaps": true,
       "outFiles": [
-        "${workspaceFolder}/apps/invoice/dist/**/*.(m|c|)js",
+        "${workspaceFolder}/apps/bff/dist/**/*.(m|c|)js",
         "!**/node_modules/**"
       ]
     }
