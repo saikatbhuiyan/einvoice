@@ -15,7 +15,10 @@
     "skipDefaultLibCheck": true,
     "baseUrl": ".",
     "paths": {
-      "@libs/constants": ["libs/constants/src/index.ts"]
+      "@libs/constants": ["libs/constants/src/index.ts"],
+      "@libs/constants/*": ["libs/constants/src/lib/*"],
+      "@libs/configuration": ["libs/configuration/src/index.ts"],
+      "@libs/configuration/*": ["libs/configuration/src/lib/*"]
     }
   },
   "exclude": ["node_modules", "tmp"]

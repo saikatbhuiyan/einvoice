@@ -1,4 +1,6 @@
-class Configuration {
+import { BaseConfiguration } from '@libs/configuration';
+
+class Configuration extends BaseConfiguration {
   NODE_ENV: string;
   IS_DEVELOPMENT: boolean;
   IS_PRODUCTION: boolean;
@@ -7,6 +9,7 @@ class Configuration {
   GLOBAL_PREFIX = 'api';
 
   constructor() {
+    super();
     this.NODE_ENV = process.env.NODE_ENV || 'development';
     this.IS_DEVELOPMENT = this.NODE_ENV === 'development';
     this.IS_PRODUCTION = this.NODE_ENV === 'production';
