@@ -3,7 +3,19 @@
   "version": "0.0.0",
   "license": "MIT",
   "scripts": {
-    "prepare": "husky"
+    "prepare": "husky",
+    "dev": "nx run-many --target=serve --all --parallel=3",
+    "build": "nx run-many --target=build --all",
+    "test": "nx run-many --target=test --all",
+    "lint": "nx run-many --target=lint --all",
+    "format": "nx run-many --target=format --all",
+    "type-check": "nx run-many --target=type-check --all",
+    "bff:dev": "nx serve bff",
+    "bff:build": "nx build bff",
+    "bff:test": "nx test bff",
+    "bff:lint": "nx lint bff",
+    "bff:format": "nx format bff",
+    "bff:type-check": "nx type-check bff"
   },
   "private": true,
   "dependencies": {
@@ -11,6 +23,7 @@
     "@nestjs/config": "^4.0.3",
     "@nestjs/core": "^11.0.0",
     "@nestjs/platform-express": "^11.0.0",
+    "@nestjs/swagger": "^11.2.7",
     "axios": "^1.6.0",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.15.1",
@@ -35,6 +48,7 @@
     "@swc-node/register": "~1.11.1",
     "@swc/core": "~1.15.5",
     "@swc/helpers": "~0.5.18",
+    "@types/express": "^5.0.6",
     "@types/jest": "^30.0.0",
     "@types/node": "20.19.9",
     "eslint": "^9.8.0",

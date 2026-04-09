@@ -18,7 +18,8 @@
       "@libs/constants": ["libs/constants/src/index.ts"],
       "@libs/constants/*": ["libs/constants/src/lib/*"],
       "@libs/configuration": ["libs/configuration/src/index.ts"],
-      "@libs/configuration/*": ["libs/configuration/src/lib/*"]
+      "@libs/configuration/*": ["libs/configuration/src/lib/*"],
+      "@libs/middlewares": ["libs/middlewares/src/index.ts"]
     }
   },
   "exclude": ["node_modules", "tmp"]

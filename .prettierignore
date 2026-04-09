@@ -3,3 +3,8 @@
 /coverage
 /.nx/cache
 /.nx/workspace-data
+.env
+.env.local
+.env.test
+.env.development
+.env.production

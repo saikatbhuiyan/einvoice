@@ -1,8 +1,9 @@
 import { CONFIGURATION, TConfiguration } from './../configuration/index';
-import { Module } from '@nestjs/common';
+import { Module, MiddlewareConsumer } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { ConfigModule } from '@nestjs/config';
+import { LoggerMiddleware } from '@app/middlewares';
 
 @Module({
   imports: [
@@ -16,4 +17,8 @@ import { ConfigModule } from '@nestjs/config';
 })
 export class AppModule {
   static CONFIGURATION: TConfiguration = CONFIGURATION;
+
+  configure(consumer: MiddlewareConsumer) {
+    consumer.apply(LoggerMiddleware).forRoutes('*');
+  }
 }
