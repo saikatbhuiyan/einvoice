@@ -100,3 +100,40 @@ And join the Nx community:
 - [Follow us on X](https://twitter.com/nxdevtools) or [LinkedIn](https://www.linkedin.com/company/nrwl)
 - [Our Youtube channel](https://www.youtube.com/@nxdevtools)
 - [Our blog](https://nx.dev/blog?utm_source=nx_project&utm_medium=readme&utm_campaign=nx_projects)
+
+## Git Commit Message Rules
+
+This project enforces the [Conventional Commits](https://www.conventionalcommits.org/) specification using `commitlint` and `husky`.
+
+Every commit message must follow this format:
+
+```text
+<type>[optional scope]: <description>
+```
+
+**Allowed `<type>`s:**
+
+- `feat`: A new feature
+- `fix`: A bug fix
+- `docs`: Documentation only changes
+- `style`: Changes that do not affect the meaning of the code (white-space, formatting, missing semi-colons, etc)
+- `refactor`: A code change that neither fixes a bug nor adds a feature
+- `perf`: A code change that improves performance
+- `test`: Adding missing tests or correcting existing tests
+- `build`: Changes that affect the build system or external dependencies
+- `ci`: Changes to our CI configuration files and scripts
+- `chore`: Other changes that don't modify `src` or `test` files
+- `revert`: Reverts a previous commit
+
+**Example of a valid commit message:**
+
+```text
+feat(middlewares): create logger middleware
+```
+
+**Example of an invalid commit message:**
+
+```text
+impoved(middleware-types): created logger middleware
+// "impoved" is not a valid type
+```
