@@ -2,7 +2,10 @@ import { Logger, ValidationPipe, VersioningType } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
+import { HttpAdapterHost, Reflector } from '@nestjs/core';
 import { AppModule } from './app/app.module';
+import { GlobalExceptionFilter } from '@libs/filters';
+import { ResponseInterceptor, TimeoutInterceptor } from '@libs/interceptors';
 
 async function bootstrap(): Promise<void> {
   const { CONFIGURATION } = AppModule;
@@ -41,6 +44,12 @@ async function bootstrap(): Promise<void> {
       errorHttpStatusCode: 422,
     }),
   );
+
+  const httpAdapterHost = app.get(HttpAdapterHost);
+  const reflector = app.get(Reflector);
+
+  app.useGlobalFilters(new GlobalExceptionFilter(httpAdapterHost));
+  app.useGlobalInterceptors(new TimeoutInterceptor(reflector), new ResponseInterceptor(reflector));
 
   app.enableShutdownHooks();
 
