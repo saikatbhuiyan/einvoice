@@ -1,52 +1,86 @@
-import { Logger, ValidationPipe } from '@nestjs/common';
+import { Logger, ValidationPipe, VersioningType } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
-import { AppModule } from './app/app.module';
-import { PORT } from '@libs/constants';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import helmet from 'helmet';
+import { AppModule } from './app/app.module';
 
-async function bootstrap() {
-  try {
-    const app = await NestFactory.create(AppModule);
-    const globalPrefix = AppModule.CONFIGURATION.GLOBAL_PREFIX;
+async function bootstrap(): Promise<void> {
+  const { CONFIGURATION } = AppModule;
+  const { IS_PRODUCTION, IS_DEVELOPMENT, GLOBAL_PREFIX } = CONFIGURATION;
+  const { PORT, CORS_ORIGINS, API_VERSION } = CONFIGURATION.APP_CONFIG;
 
-    app.setGlobalPrefix(globalPrefix);
-    app.useGlobalPipes(
-      new ValidationPipe({
-        whitelist: true,
-        forbidNonWhitelisted: true,
-        transform: true,
-      }),
-    );
+  const app = await NestFactory.create(AppModule, {
+    logger: IS_PRODUCTION ? ['error', 'warn', 'log'] : ['error', 'warn', 'log', 'debug', 'verbose'],
+    bufferLogs: true,
+  });
 
-    app.enableCors({
-      origin: '*', // TODO: Change this to the actual origin
-    });
+  app.use(helmet());
 
-    const config = new DocumentBuilder()
+  const allowedOrigins = CORS_ORIGINS.split(',')
+    .map((o) => o.trim())
+    .filter(Boolean);
+  app.enableCors({
+    origin: IS_DEVELOPMENT ? true : allowedOrigins,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'x-correlation-id'],
+    credentials: true,
+  });
+
+  app.setGlobalPrefix(GLOBAL_PREFIX);
+
+  app.enableVersioning({
+    type: VersioningType.URI,
+    defaultVersion: API_VERSION.replace(/^v/, ''), // strip leading "v"
+  });
+
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      transform: true,
+      errorHttpStatusCode: 422,
+    }),
+  );
+
+  app.enableShutdownHooks();
+
+  if (!IS_PRODUCTION) {
+    const swaggerConfig = new DocumentBuilder()
       .setTitle('E-Invoice BFF API')
-      .setDescription('E-Invoice BFF API description')
+      .setDescription('Backend-for-Frontend API for E-Invoice platform')
       .setVersion('1.0.0')
       .addTag('bff')
-      .addBearerAuth({
-        type: 'http',
-        scheme: 'bearer',
-        bearerFormat: 'JWT',
-        name: 'Authorization',
-        description: 'Enter JWT token',
-        in: 'header',
-      })
+      .addBearerAuth(
+        {
+          type: 'http',
+          scheme: 'bearer',
+          bearerFormat: 'JWT',
+          name: 'Authorization',
+          description: 'Enter JWT token',
+          in: 'header',
+        },
+        'jwt',
+      )
       .build();
-    const document = SwaggerModule.createDocument(app, config);
-    SwaggerModule.setup(`${globalPrefix}/docs`, app, document);
 
-    const port = AppModule.CONFIGURATION.APP_CONFIG.PORT || PORT;
-    await app.listen(port);
-    Logger.log(`🚀 Application is running on: http://localhost:${port}/${globalPrefix}`);
-    Logger.log(`🚀 Swagger documentation is running on: http://localhost:${port}/${globalPrefix}/docs`);
-  } catch (error) {
-    Logger.error(`Application failed to start: ${error}`);
-    process.exit(1);
+    const document = SwaggerModule.createDocument(app, swaggerConfig);
+    const docsPath = `${GLOBAL_PREFIX}/docs`;
+    SwaggerModule.setup(docsPath, app, document, {
+      swaggerOptions: {
+        persistAuthorization: true,
+      },
+    });
+
+    Logger.log(`📄 Swagger docs: http://localhost:${PORT}/${docsPath}`);
   }
+
+  await app.listen(PORT);
+
+  Logger.log(`🚀 Running on: http://localhost:${PORT}/${GLOBAL_PREFIX}`);
+  Logger.log(`   ENV: ${CONFIGURATION.NODE_ENV} | Version: ${API_VERSION}`);
 }
 
-bootstrap();
+bootstrap().catch((error: unknown) => {
+  Logger.error('Application failed to start', error instanceof Error ? error.stack : String(error), 'Bootstrap');
+  process.exit(1);
+});

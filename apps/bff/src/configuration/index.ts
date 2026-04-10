@@ -8,8 +8,8 @@ class Configuration extends BaseConfiguration {
   APP_CONFIG: AppConfiguration = new AppConfiguration();
 }
 
+// Validated eagerly at module load time
 export const CONFIGURATION = new Configuration();
-
 CONFIGURATION.validate();
 
 export type TConfiguration = typeof CONFIGURATION;
