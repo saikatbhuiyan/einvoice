@@ -4,6 +4,8 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { ConfigModule } from '@nestjs/config';
 import { LoggerMiddleware } from '@libs/middlewares';
+import { ClientsModule } from '@nestjs/microservices';
+import { buildTcpClientOptions } from '@libs/transports';
 
 @Module({
   imports: [
@@ -14,6 +16,7 @@ import { LoggerMiddleware } from '@libs/middlewares';
       // Use platform env vars directly in production, ignore .env file
       ignoreEnvFile: CONFIGURATION.IS_PRODUCTION,
     }),
+    ClientsModule.register([buildTcpClientOptions('INVOICE_SERVICE', Number(process.env.INVOICE_TCP_PORT || 3305))]),
   ],
   controllers: [AppController],
   providers: [AppService],

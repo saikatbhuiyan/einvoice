@@ -15,13 +15,20 @@
     "bff:test": "nx test bff",
     "bff:lint": "nx lint bff",
     "bff:format": "nx format bff",
-    "bff:type-check": "nx type-check bff"
+    "bff:type-check": "nx type-check bff",
+    "invoice:dev": "nx serve invoice",
+    "invoice:build": "nx build invoice",
+    "invoice:test": "nx test invoice",
+    "invoice:lint": "nx lint invoice",
+    "invoice:format": "nx format invoice",
+    "invoice:type-check": "nx type-check invoice"
   },
   "private": true,
   "dependencies": {
     "@nestjs/common": "^11.0.0",
     "@nestjs/config": "^4.0.3",
     "@nestjs/core": "^11.0.0",
+    "@nestjs/microservices": "^11.1.18",
     "@nestjs/platform-express": "^11.0.0",
     "@nestjs/swagger": "^11.2.7",
     "axios": "^1.6.0",

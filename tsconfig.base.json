@@ -27,7 +27,9 @@
       "@libs/interceptors": ["libs/interceptors/src/index.ts"],
       "@libs/interceptors/*": ["libs/interceptors/src/lib/*"],
       "@libs/filters": ["libs/filters/src/index.ts"],
-      "@libs/filters/*": ["libs/filters/src/lib/*"]
+      "@libs/filters/*": ["libs/filters/src/lib/*"],
+      "@libs/transports": ["libs/transports/src/index.ts"],
+      "@libs/transports/*": ["libs/transports/src/lib/*"]
     }
   },
   "exclude": ["node_modules", "tmp"]
