@@ -6,6 +6,7 @@ import { ConfigModule } from '@nestjs/config';
 import { LoggerMiddleware } from '@libs/middlewares';
 import { ClientsModule } from '@nestjs/microservices';
 import { createTcpClientConfig, ServiceName } from '@libs/transports';
+import { InvoiceClientService } from './invoice-client.service';
 
 @Module({
   imports: [
@@ -19,7 +20,7 @@ import { createTcpClientConfig, ServiceName } from '@libs/transports';
     ClientsModule.register([createTcpClientConfig(ServiceName.INVOICE)]),
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [AppService, InvoiceClientService],
 })
 export class AppModule {
   /**

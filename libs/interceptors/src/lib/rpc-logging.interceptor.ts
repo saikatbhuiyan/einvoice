@@ -9,7 +9,10 @@ export class RpcLoggingInterceptor implements NestInterceptor {
   private readonly logger = new Logger('RPC');
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<unknown> {
-    if (context.getType() !== 'rpc') return next.handle();
+    if (context.getType() !== 'rpc') {
+      console.log('Not RPC');
+      return next.handle();
+    }
 
     const rpcContext = context.switchToRpc();
     const data = rpcContext.getData<Record<string, unknown>>();
