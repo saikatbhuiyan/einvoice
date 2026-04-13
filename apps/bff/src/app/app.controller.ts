@@ -1,13 +1,14 @@
-import { Controller, Get, Inject } from '@nestjs/common';
+import { Controller, Get, Inject, UseInterceptors } from '@nestjs/common';
 import { AppService } from './app.service';
 import { ClientProxy } from '@nestjs/microservices';
 import { firstValueFrom } from 'rxjs';
+import { ServiceName, TCP_CLIENT_TOKENS } from '@libs/transports';
 
 @Controller()
 export class AppController {
   constructor(
     private readonly appService: AppService,
-    @Inject('INVOICE_SERVICE') private readonly invoiceService: ClientProxy,
+    @Inject(TCP_CLIENT_TOKENS[ServiceName.INVOICE]) private readonly invoiceService: ClientProxy,
   ) {}
 
   @Get()
