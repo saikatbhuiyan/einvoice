@@ -1,12 +1,12 @@
-import { Controller, Get } from '@nestjs/common';
-import { AppService } from './app.service';
+import { Controller, Get, Inject, Param, UseInterceptors } from '@nestjs/common';
+import { InvoiceClientService } from './invoice-client.service';
 
-@Controller()
+@Controller('invoice')
 export class AppController {
-  constructor(private readonly appService: AppService) {}
+  constructor(private readonly invoiceClient: InvoiceClientService) {}
 
-  @Get()
-  getData() {
-    return this.appService.getData();
+  @Get(':id')
+  async getSingleInvoice(@Param('id') id: string) {
+    return this.invoiceClient.getInvoiceInfo(Number(id));
   }
 }
