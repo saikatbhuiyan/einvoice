@@ -42,3 +42,7 @@ Thumbs.db
 .nx/workspace-data
 .claude/worktrees
 .claude/settings.local.json
+
+.env
+.env.dev
+.env.prod
