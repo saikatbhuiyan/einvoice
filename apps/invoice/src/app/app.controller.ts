@@ -12,6 +12,11 @@ export class AppController {
     return this.appService.getData();
   }
 
+  @Get('health')
+  getHealth() {
+    return this.appService.getHealth();
+  }
+
   @MessagePattern(TCP_PATTERNS.INVOICE.FIND_ONE)
   getInvoice(@Payload() data: { invoiceId: number }) {
     // Calling your service directly

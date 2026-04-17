@@ -4,6 +4,7 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { CONFIGURATION, TConfiguration } from '../configuration';
 import { LoggerMiddleware } from '@libs/middlewares';
+import { MongoDbModule } from '../database/mongodb.module';
 
 @Module({
   imports: [
@@ -12,6 +13,7 @@ import { LoggerMiddleware } from '@libs/middlewares';
       load: [() => CONFIGURATION],
       ignoreEnvFile: CONFIGURATION.IS_PRODUCTION,
     }),
+    MongoDbModule,
   ],
   controllers: [AppController],
   providers: [AppService],
