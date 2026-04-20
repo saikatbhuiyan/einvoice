@@ -1,6 +1,6 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { ModelDefinition } from '@nestjs/mongoose/dist/interfaces/model-definition.interface';
-import { HydratedDocument } from 'mongoose';
+import { HydratedDocument, Model } from 'mongoose';
 import { BASE_SCHEMA_OPTIONS, BaseSchema } from './base.schema';
 import { ClientSnapshotSchema, ClientSnapshot } from './client-snapshot.schema';
 import { InvoiceItemSchema, InvoiceItem } from './invoice-item.schema';
@@ -115,7 +115,11 @@ InvoiceSchema.pre('validate', function recalculateTotals() {
   }
 });
 
+export const InvoiceModelName = Invoice.name;
+
 export const INVOICE_MODEL_DEFINITION: ModelDefinition = {
-  name: Invoice.name,
+  name: InvoiceModelName,
   schema: InvoiceSchema,
 };
+
+export type InvoiceModel = Model<Invoice>;
