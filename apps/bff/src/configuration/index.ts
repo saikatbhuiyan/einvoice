@@ -1,6 +1,8 @@
-import { AppConfiguration, BaseConfiguration } from '@libs/configuration';
+import { AppConfiguration, BaseConfiguration, loadEnvironmentFiles } from '@libs/configuration';
 import { Type } from 'class-transformer';
 import { ValidateNested } from 'class-validator';
+
+loadEnvironmentFiles();
 
 class Configuration extends BaseConfiguration {
   @ValidateNested()

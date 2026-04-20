@@ -101,6 +101,63 @@ And join the Nx community:
 - [Our Youtube channel](https://www.youtube.com/@nxdevtools)
 - [Our blog](https://nx.dev/blog?utm_source=nx_project&utm_medium=readme&utm_campaign=nx_projects)
 
+## Production Docker Compose
+
+This workspace includes a production-oriented Compose stack in [docker-compose.prod.yml](/Users/saikat/Documents/Projects/v2/Projects/nestjs/einvoice/docker-compose.prod.yml).
+
+It runs:
+
+- `bff` as the public-facing API
+- `invoice` as the internal NestJS service
+- `postgres` for relational data
+- `mongodb` for document data
+
+The database containers live only on the private backend network, with persistent volumes and health checks enabled.
+
+### Start the stack
+
+Create a production env file from the example:
+
+```sh
+cp .env.prod.example .env.prod
+```
+
+Then launch the stack:
+
+```sh
+docker compose -f docker-compose.prod.yml up -d --build
+```
+
+### Notes
+
+- `bff` is exposed on `BFF_PORT` (default `3300`)
+- `invoice` keeps its TCP microservice port internal on `INVOICE_SERVICE_PORT` (default `3301`)
+- `invoice` uses a separate HTTP port `INVOICE_HTTP_PORT` (default `3302`) to avoid clashing with its TCP transport
+- Both apps receive `DATABASE_URL` and `MONGODB_URI` so application-level database modules can be added without changing the container topology
+
+## Development Docker Compose
+
+For local development, use [docker-compose.dev.yml](/Users/saikat/Documents/Projects/v2/Projects/nestjs/einvoice/docker-compose.dev.yml).
+
+This stack keeps the same services as production, but:
+
+- mounts the full workspace into the app containers
+- runs `pnpm nx serve bff` and `pnpm nx serve invoice`
+- exposes Postgres and MongoDB to your host machine
+- enables polling-friendly file watching for containerized hot reload
+
+Create a dev env file:
+
+```sh
+cp .env.dev.example .env.dev
+```
+
+Start the dev stack:
+
+```sh
+docker compose -f docker-compose.dev.yml up --build
+```
+
 ## Git Commit Message Rules
 
 This project enforces the [Conventional Commits](https://www.conventionalcommits.org/) specification using `commitlint` and `husky`.
