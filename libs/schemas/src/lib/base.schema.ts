@@ -2,17 +2,19 @@ import { Schema } from '@nestjs/mongoose';
 import { HydratedDocument, SchemaOptions, Types } from 'mongoose';
 
 type SerializedDocument = {
-  _id?: Types.ObjectId | string;
+  _id?: unknown;
   id?: string;
   __v?: number;
   [key: string]: unknown;
 };
 
-const serializeDocument = (_: unknown, ret: SerializedDocument): void => {
+const serializeDocument = (_: unknown, ret: SerializedDocument): SerializedDocument => {
   if (ret._id != null) {
     ret.id = String(ret._id);
     delete ret._id;
   }
+
+  return ret;
 };
 
 export const BASE_SCHEMA_OPTIONS: SchemaOptions = {
