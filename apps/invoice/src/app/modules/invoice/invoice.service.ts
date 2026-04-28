@@ -2,21 +2,26 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { InjectModel } from '@nestjs/mongoose';
 import { isValidObjectId } from 'mongoose';
 import { buildPaginationMeta } from '@libs/shared/types';
-import { Invoice, InvoiceDocument, InvoiceModel, InvoiceModelName } from '@libs/schemas';
-import { CreateInvoiceDto } from './dto/create-invoice.dto';
-import { FindAllInvoicesDto } from './dto/find-all-invoices.dto';
-import { UpdateInvoiceDto } from './dto/update-invoice.dto';
+import { InvoiceModel, InvoiceModelName } from '@libs/schemas';
+import {
+  CreateInvoiceRequest,
+  DeleteInvoiceResponse,
+  FindAllInvoicesRequest,
+  FindAllInvoicesResponse,
+  InvoiceResponse,
+  UpdateInvoiceRequest,
+} from '@libs/interfaces/gateway';
 
 @Injectable()
 export class InvoiceService {
   constructor(@InjectModel(InvoiceModelName) private readonly invoiceModel: InvoiceModel) {}
 
-  async create(createInvoiceDto: CreateInvoiceDto) {
+  async create(createInvoiceDto: CreateInvoiceRequest): Promise<InvoiceResponse> {
     const createdInvoice = await this.invoiceModel.create(this.toPersistencePayload(createInvoiceDto));
-    return createdInvoice.toJSON();
+    return this.toInvoiceResponse(createdInvoice);
   }
 
-  async findAll(query: FindAllInvoicesDto) {
+  async findAll(query: FindAllInvoicesRequest): Promise<FindAllInvoicesResponse> {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
     const skip = (page - 1) * limit;
@@ -28,22 +33,22 @@ export class InvoiceService {
     ]);
 
     return {
-      items: items.map((invoice) => invoice.toJSON()),
+      items: items.map((invoice) => this.toInvoiceResponse(invoice)),
       meta: buildPaginationMeta(page, limit, total),
     };
   }
 
-  async findOne(id: string) {
+  async findOne(id: string): Promise<InvoiceResponse> {
     const invoice = await this.invoiceModel.findById(this.ensureObjectId(id)).exec();
 
     if (!invoice) {
       throw new NotFoundException(`Invoice not found for id "${id}".`);
     }
 
-    return invoice.toJSON();
+    return this.toInvoiceResponse(invoice);
   }
 
-  async update(id: string, updateInvoiceDto: UpdateInvoiceDto) {
+  async update(id: string, updateInvoiceDto: UpdateInvoiceRequest): Promise<InvoiceResponse> {
     const invoice = await this.invoiceModel.findById(this.ensureObjectId(id)).exec();
 
     if (!invoice) {
@@ -53,10 +58,10 @@ export class InvoiceService {
     invoice.set(this.toPersistencePayload(updateInvoiceDto));
     await invoice.save();
 
-    return invoice.toJSON();
+    return this.toInvoiceResponse(invoice);
   }
 
-  async remove(id: string) {
+  async remove(id: string): Promise<DeleteInvoiceResponse> {
     const invoice = await this.invoiceModel.findByIdAndDelete(this.ensureObjectId(id)).exec();
 
     if (!invoice) {
@@ -77,7 +82,11 @@ export class InvoiceService {
     return id;
   }
 
-  private toPersistencePayload(payload: Partial<CreateInvoiceDto | UpdateInvoiceDto>) {
+  private toInvoiceResponse(invoice: { toJSON(): unknown }): InvoiceResponse {
+    return invoice.toJSON() as InvoiceResponse;
+  }
+
+  private toPersistencePayload(payload: Partial<CreateInvoiceRequest | UpdateInvoiceRequest>) {
     return {
       ...payload,
       issueDate: payload.issueDate ? new Date(payload.issueDate) : payload.issueDate,
@@ -85,7 +94,7 @@ export class InvoiceService {
     };
   }
 
-  private buildFilter(query: FindAllInvoicesDto): Record<string, unknown> {
+  private buildFilter(query: FindAllInvoicesRequest): Record<string, unknown> {
     const filter: Record<string, unknown> = {};
 
     if (query.status) {
