@@ -9,14 +9,25 @@ export enum SortOrder {
 }
 
 export class PaginationQueryDto {
-  @ApiPropertyOptional({ default: 1, minimum: 1 })
+  @ApiPropertyOptional({
+    default: 1,
+    minimum: 1,
+    example: 1,
+    description: 'Page number to return. Pages are 1-indexed.',
+  })
   @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
   page = 1;
 
-  @ApiPropertyOptional({ default: 20, minimum: 1, maximum: 100 })
+  @ApiPropertyOptional({
+    default: 20,
+    minimum: 1,
+    maximum: 100,
+    example: 20,
+    description: 'Maximum number of records to return.',
+  })
   @IsOptional()
   @Type(() => Number)
   @IsInt()

@@ -1,6 +1,5 @@
 import { Logger, ValidationPipe, VersioningType } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
-import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
 import { HttpAdapterHost, Reflector } from '@nestjs/core';
 import { AppModule } from './app/app.module';
@@ -11,6 +10,7 @@ import {
   RpcLoggingInterceptor,
   TimeoutInterceptor,
 } from '@libs/interceptors';
+import { setupSwagger } from './app/common/swagger/swagger.setup';
 
 async function bootstrap(): Promise<void> {
   const { CONFIGURATION } = AppModule;
@@ -65,33 +65,12 @@ async function bootstrap(): Promise<void> {
   app.enableShutdownHooks();
 
   if (!IS_PRODUCTION) {
-    const swaggerConfig = new DocumentBuilder()
-      .setTitle('E-Invoice BFF API')
-      .setDescription('Backend-for-Frontend API for E-Invoice platform')
-      .setVersion('1.0.0')
-      .addTag('bff')
-      .addBearerAuth(
-        {
-          type: 'http',
-          scheme: 'bearer',
-          bearerFormat: 'JWT',
-          name: 'Authorization',
-          description: 'Enter JWT token',
-          in: 'header',
-        },
-        'jwt',
-      )
-      .build();
-
-    const document = SwaggerModule.createDocument(app, swaggerConfig);
-    const docsPath = `${GLOBAL_PREFIX}/docs`;
-    SwaggerModule.setup(docsPath, app, document, {
-      swaggerOptions: {
-        persistAuthorization: true,
-      },
+    setupSwagger(app, {
+      apiVersion: API_VERSION,
+      globalPrefix: GLOBAL_PREFIX,
+      nodeEnv: CONFIGURATION.NODE_ENV,
+      port: PORT,
     });
-
-    Logger.log(`📄 Swagger docs: http://localhost:${PORT}/${docsPath}`);
   }
 
   await app.listen(PORT);

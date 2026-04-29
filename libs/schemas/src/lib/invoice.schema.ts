@@ -47,6 +47,7 @@ export class Invoice extends BaseSchema {
   items!: InvoiceItem[];
 
   @Prop({
+    type: String,
     required: true,
     enum: SUPPORTED_CURRENCIES,
     uppercase: true,
@@ -55,6 +56,7 @@ export class Invoice extends BaseSchema {
   currency!: SupportedCurrency;
 
   @Prop({
+    type: String,
     required: true,
     enum: INVOICE_STATUSES,
     default: 'draft',

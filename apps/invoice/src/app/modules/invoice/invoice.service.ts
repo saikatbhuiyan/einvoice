@@ -1,6 +1,12 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+  UnprocessableEntityException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { isValidObjectId } from 'mongoose';
+import { Error as MongooseError, isValidObjectId } from 'mongoose';
 import { buildPaginationMeta } from '@libs/shared/types';
 import { InvoiceModel, InvoiceModelName } from '@libs/schemas';
 import {
@@ -17,8 +23,12 @@ export class InvoiceService {
   constructor(@InjectModel(InvoiceModelName) private readonly invoiceModel: InvoiceModel) {}
 
   async create(createInvoiceDto: CreateInvoiceRequest): Promise<InvoiceResponse> {
-    const createdInvoice = await this.invoiceModel.create(this.toPersistencePayload(createInvoiceDto));
-    return this.toInvoiceResponse(createdInvoice);
+    try {
+      const createdInvoice = await this.invoiceModel.create(this.toPersistencePayload(createInvoiceDto));
+      return this.toInvoiceResponse(createdInvoice);
+    } catch (error) {
+      this.handlePersistenceError(error);
+    }
   }
 
   async findAll(query: FindAllInvoicesRequest): Promise<FindAllInvoicesResponse> {
@@ -56,7 +66,12 @@ export class InvoiceService {
     }
 
     invoice.set(this.toPersistencePayload(updateInvoiceDto));
-    await invoice.save();
+
+    try {
+      await invoice.save();
+    } catch (error) {
+      this.handlePersistenceError(error);
+    }
 
     return this.toInvoiceResponse(invoice);
   }
@@ -122,5 +137,38 @@ export class InvoiceService {
     }
 
     return filter;
+  }
+
+  private handlePersistenceError(error: unknown): never {
+    if (this.isDuplicateInvoiceNumberError(error)) {
+      const invoiceNumber =
+        typeof error.keyValue?.invoiceNumber === 'string' ? ` "${error.keyValue.invoiceNumber}"` : '';
+      throw new ConflictException(`Invoice number${invoiceNumber} already exists.`);
+    }
+
+    if (error instanceof MongooseError.ValidationError) {
+      throw new UnprocessableEntityException(this.formatValidationError(error));
+    }
+
+    throw error;
+  }
+
+  private isDuplicateInvoiceNumberError(
+    error: unknown,
+  ): error is { code: number; keyPattern?: Record<string, unknown>; keyValue?: Record<string, unknown> } {
+    if (typeof error !== 'object' || error === null) {
+      return false;
+    }
+
+    const mongoError = error as { code?: unknown; keyPattern?: Record<string, unknown> };
+    return mongoError.code === 11000 && Boolean(mongoError.keyPattern?.invoiceNumber);
+  }
+
+  private formatValidationError(error: MongooseError.ValidationError): string {
+    const messages = Object.values(error.errors)
+      .map((validationError) => validationError.message)
+      .filter(Boolean);
+
+    return messages.length > 0 ? messages.join(' ') : error.message;
   }
 }
