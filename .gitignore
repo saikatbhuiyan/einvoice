@@ -66,6 +66,10 @@ logs/
 TODO.md
 NOTES.md
 
+# Internal project documentation (agent context)
+AGENTS.md
+ARCHITECTURE-GAPS.md
+
 # Testing
 coverage/
 .nyc_output/
