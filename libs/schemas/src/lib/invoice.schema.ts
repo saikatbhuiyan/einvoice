@@ -84,6 +84,10 @@ export class Invoice extends BaseSchema {
 
   @Prop({ required: true, min: 0, default: 0 })
   total!: number;
+
+  /** Soft-delete timestamp. Null = active record. */
+  @Prop({ type: Date, default: null, index: true })
+  deletedAt?: Date | null;
 }
 
 export type InvoiceDocument = HydratedDocument<Invoice>;

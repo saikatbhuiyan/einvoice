@@ -49,7 +49,7 @@ export class InvoiceService {
   }
 
   async findOne(id: string): Promise<InvoiceResponse> {
-    const invoice = await this.invoiceModel.findById(this.ensureObjectId(id)).exec();
+    const invoice = await this.invoiceModel.findOne({ _id: this.ensureObjectId(id), deletedAt: null }).exec();
 
     if (!invoice) {
       throw new NotFoundException(`Invoice not found for id "${id}".`);
@@ -59,7 +59,7 @@ export class InvoiceService {
   }
 
   async update(id: string, updateInvoiceDto: UpdateInvoiceRequest): Promise<InvoiceResponse> {
-    const invoice = await this.invoiceModel.findById(this.ensureObjectId(id)).exec();
+    const invoice = await this.invoiceModel.findOne({ _id: this.ensureObjectId(id), deletedAt: null }).exec();
 
     if (!invoice) {
       throw new NotFoundException(`Invoice not found for id "${id}".`);
@@ -77,7 +77,9 @@ export class InvoiceService {
   }
 
   async remove(id: string): Promise<DeleteInvoiceResponse> {
-    const invoice = await this.invoiceModel.findByIdAndDelete(this.ensureObjectId(id)).exec();
+    const invoice = await this.invoiceModel
+      .findOneAndUpdate({ _id: this.ensureObjectId(id), deletedAt: null }, { deletedAt: new Date() }, { new: true })
+      .exec();
 
     if (!invoice) {
       throw new NotFoundException(`Invoice not found for id "${id}".`);
@@ -110,7 +112,7 @@ export class InvoiceService {
   }
 
   private buildFilter(query: FindAllInvoicesRequest): Record<string, unknown> {
-    const filter: Record<string, unknown> = {};
+    const filter: Record<string, unknown> = { deletedAt: null };
 
     if (query.status) {
       filter.status = query.status;
