@@ -1,7 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Error as MongooseError, isValidObjectId } from 'mongoose';
-import { buildPaginationMeta } from '@libs/shared/types';
+import { isValidObjectId } from 'mongoose';
 import { InvoiceDocument, InvoiceModel, InvoiceModelName } from '@libs/schemas';
 import { CreateInvoiceRequest, FindAllInvoicesRequest, UpdateInvoiceRequest } from '@libs/interfaces/gateway';
 import { IInvoiceRepository } from './invoice.repository.interface';

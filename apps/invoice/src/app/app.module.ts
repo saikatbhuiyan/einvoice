@@ -8,6 +8,8 @@ import { MongoDbModule } from '../database/mongodb.module';
 import { SchemasModule } from '@libs/schemas';
 import { InvoiceModule } from './modules/invoice/invoice.module';
 
+export const APP_CONFIGURATION = Symbol('APP_CONFIGURATION');
+
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -20,7 +22,14 @@ import { InvoiceModule } from './modules/invoice/invoice.module';
     InvoiceModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [
+    AppService,
+    {
+      provide: APP_CONFIGURATION,
+      useValue: CONFIGURATION,
+    },
+  ],
+  exports: [APP_CONFIGURATION],
 })
 export class AppModule {
   static readonly CONFIGURATION: TConfiguration = CONFIGURATION;
