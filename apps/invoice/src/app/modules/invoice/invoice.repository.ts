@@ -11,6 +11,13 @@ export class InvoiceRepository implements IInvoiceRepository {
   constructor(@InjectModel(InvoiceModelName) private readonly invoiceModel: InvoiceModel) {}
 
   async create(data: CreateInvoiceRequest): Promise<InvoiceDocument> {
+    if (data.idempotencyKey) {
+      const existing = await this.invoiceModel
+        .findOne({ idempotencyKey: data.idempotencyKey.trim(), deletedAt: null })
+        .exec();
+      if (existing) return existing;
+    }
+
     return this.invoiceModel.create(this.toPersistencePayload(data));
   }
 

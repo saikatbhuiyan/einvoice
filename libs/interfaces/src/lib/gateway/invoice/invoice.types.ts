@@ -26,6 +26,7 @@ export interface CreateInvoiceRequest {
   issueDate?: string;
   dueDate?: string;
   notes?: string;
+  idempotencyKey?: string;
 }
 
 export interface UpdateClientSnapshotRequest {
@@ -93,6 +94,7 @@ export interface InvoiceResponse {
   subtotal: number;
   vatTotal: number;
   total: number;
+  idempotencyKey?: string;
   createdAt: string | Date;
   updatedAt: string | Date;
 }

@@ -88,6 +88,14 @@ export class Invoice extends BaseSchema {
   /** Soft-delete timestamp. Null = active record. */
   @Prop({ type: Date, default: null, index: true })
   deletedAt?: Date | null;
+
+  /**
+   * Client-supplied idempotency key for safe retry semantics.
+   * Sparse unique index ensures collisions only for actual keys,
+   * not for the default null/absent value.
+   */
+  @Prop({ type: String, trim: true, index: { unique: true, sparse: true } })
+  idempotencyKey?: string | null;
 }
 
 export type InvoiceDocument = HydratedDocument<Invoice>;
