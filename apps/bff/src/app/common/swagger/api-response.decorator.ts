@@ -1,21 +1,9 @@
 import { applyDecorators, HttpStatus, type Type } from '@nestjs/common';
 import { ApiExtraModels, ApiHeader, ApiResponse, getSchemaPath } from '@nestjs/swagger';
 import { ApiEnvelopeDto, ProblemDetailDto } from '@libs/shared/types';
+import { problemTitles } from '@libs/shared/utils';
 
 const correlationIdExample = '01HWN0N6VNJY4A4Y9K2Q48ZY6Q';
-
-const problemTitles: Record<number, string> = {
-  [HttpStatus.BAD_REQUEST]: 'Bad Request',
-  [HttpStatus.UNAUTHORIZED]: 'Unauthorized',
-  [HttpStatus.FORBIDDEN]: 'Forbidden',
-  [HttpStatus.NOT_FOUND]: 'Not Found',
-  [HttpStatus.CONFLICT]: 'Conflict',
-  [HttpStatus.UNPROCESSABLE_ENTITY]: 'Unprocessable Entity',
-  [HttpStatus.TOO_MANY_REQUESTS]: 'Too Many Requests',
-  [HttpStatus.INTERNAL_SERVER_ERROR]: 'Internal Server Error',
-  [HttpStatus.BAD_GATEWAY]: 'Bad Gateway',
-  [HttpStatus.SERVICE_UNAVAILABLE]: 'Service Unavailable',
-};
 
 interface ApiEnvelopeResponseOptions {
   status: HttpStatus;

@@ -2,7 +2,7 @@ import { ArgumentsHost, Catch, ExceptionFilter, HttpException, HttpStatus, Logge
 import { HttpAdapterHost } from '@nestjs/core';
 import { Request } from 'express';
 import { ProblemDetail } from '@libs/shared/types';
-import { problem as problemFactory } from '@libs/shared/utils';
+import { problem as problemFactory, statusTitle } from '@libs/shared/utils';
 
 interface ValidationExceptionBody {
   message: string | string[];
@@ -65,7 +65,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
 
       if (status === HttpStatus.UNPROCESSABLE_ENTITY || status === HttpStatus.BAD_REQUEST) {
         if (typeof body === 'object' && Array.isArray(body.message)) {
-          return problemFactory(this.statusTitle(status), 'One or more fields failed validation.', status, {
+          return problemFactory(statusTitle(status), 'One or more fields failed validation.', status, {
             instance,
             errors: this.normaliseValidationMessages(body.message),
             traceId: correlationId,
@@ -74,7 +74,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       }
 
       return problemFactory(
-        this.statusTitle(status),
+        statusTitle(status),
         typeof body === 'string' ? body : ((body.message as string) ?? exception.message),
         status,
         {
@@ -114,24 +114,5 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       (errors[field] ??= []).push(message);
     }
     return errors;
-  }
-
-  private statusTitle(status: number): string {
-    const titles: Record<number, string> = {
-      400: 'Bad Request',
-      401: 'Unauthorized',
-      403: 'Forbidden',
-      404: 'Not Found',
-      405: 'Method Not Allowed',
-      409: 'Conflict',
-      410: 'Gone',
-      422: 'Unprocessable Entity',
-      429: 'Too Many Requests',
-      500: 'Internal Server Error',
-      502: 'Bad Gateway',
-      503: 'Service Unavailable',
-      504: 'Gateway Timeout',
-    };
-    return titles[status] ?? `HTTP Error ${status}`;
   }
 }

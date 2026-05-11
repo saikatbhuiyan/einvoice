@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { ClientProxy } from '@nestjs/microservices';
 import { firstValueFrom, timeout, catchError, throwError, TimeoutError } from 'rxjs';
+import { statusTitle } from '@libs/shared/utils';
 
 /** Default RPC call timeout — override per-service or per-call */
 const DEFAULT_RPC_TIMEOUT_MS = 10_000;
@@ -194,25 +195,7 @@ export abstract class BaseTcpClient implements OnModuleInit {
   }
 
   private resolveErrorTitle(error: RpcErrorLike | undefined, status: number): string {
-    return typeof error?.error === 'string' && error.error.trim() ? error.error : this.statusTitle(status);
-  }
-
-  private statusTitle(status: number): string {
-    const titles: Record<number, string> = {
-      400: 'Bad Request',
-      401: 'Unauthorized',
-      403: 'Forbidden',
-      404: 'Not Found',
-      409: 'Conflict',
-      422: 'Unprocessable Entity',
-      429: 'Too Many Requests',
-      500: 'Internal Server Error',
-      502: 'Bad Gateway',
-      503: 'Service Unavailable',
-      504: 'Gateway Timeout',
-    };
-
-    return titles[status] ?? `HTTP Error ${status}`;
+    return typeof error?.error === 'string' && error.error.trim() ? error.error : statusTitle(status);
   }
 
   private isConnectionError(error: unknown): boolean {
