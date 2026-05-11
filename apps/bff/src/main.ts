@@ -52,7 +52,6 @@ async function bootstrap(): Promise<void> {
   app.useGlobalInterceptors(
     new TimeoutInterceptor(reflector),
     new ResponseInterceptor(reflector),
-    // RpcLoggingInterceptor checks context.getType() === 'rpc'
     new RpcLoggingInterceptor(),
     new RpcExceptionInterceptor(),
   );
