@@ -118,7 +118,7 @@ export class LoggerMiddleware implements NestMiddleware {
     return PII_PATH_PATTERNS.reduce((acc, { pattern, replacement }) => acc.replace(pattern, replacement), url);
   }
 
-  private extractIp(req: Request): string {
+  private extractIp(req: TimedRequest): string {
     return (
       (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ??
       (req.headers['x-real-ip'] as string) ??
