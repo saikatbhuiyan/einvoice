@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { Controller } from '@nestjs/common';
 import { MessagePattern, Payload } from '@nestjs/microservices';
 import { TCP_PATTERNS } from '@libs/transports';
 import {
@@ -6,39 +6,13 @@ import {
   DeleteInvoiceGatewayDto,
   FindAllInvoicesDto,
   FindOneInvoiceGatewayDto,
-  UpdateInvoiceDto,
   UpdateInvoiceGatewayDto,
 } from '@libs/interfaces/gateway';
 import { InvoiceService } from './invoice.service';
 
-@Controller('invoices')
-export class InvoiceController {
+@Controller()
+export class InvoiceRpcController {
   constructor(private readonly invoiceService: InvoiceService) {}
-
-  @Post()
-  create(@Body() createInvoiceDto: CreateInvoiceDto) {
-    return this.invoiceService.create(createInvoiceDto);
-  }
-
-  @Get()
-  findAll(@Query() query: FindAllInvoicesDto) {
-    return this.invoiceService.findAll(query);
-  }
-
-  @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.invoiceService.findOne(id);
-  }
-
-  @Patch(':id')
-  update(@Param('id') id: string, @Body() updateInvoiceDto: UpdateInvoiceDto) {
-    return this.invoiceService.update(id, updateInvoiceDto);
-  }
-
-  @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.invoiceService.remove(id);
-  }
 
   @MessagePattern(TCP_PATTERNS.INVOICE.CREATE)
   createByMessage(@Payload() payload: CreateInvoiceDto) {

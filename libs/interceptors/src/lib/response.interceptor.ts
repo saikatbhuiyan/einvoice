@@ -2,7 +2,7 @@ import { CallHandler, ExecutionContext, Injectable, NestInterceptor, SetMetadata
 import { Reflector } from '@nestjs/core';
 import { Observable } from 'rxjs';
 import { map } from 'rxjs/operators';
-import { Request, Response } from 'express';
+import { Response } from 'express';
 import { ApiEnvelope, TimedRequest } from '@libs/shared/types';
 import { ok } from '@libs/shared/utils';
 
