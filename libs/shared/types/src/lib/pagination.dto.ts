@@ -1,6 +1,7 @@
 import { IsEnum, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
+import { DEFAULT_LIMIT, DEFAULT_PAGE, MAX_LIMIT } from '@libs/constants';
 import { PaginationMeta } from './api-response.types';
 
 export enum SortOrder {
@@ -10,30 +11,30 @@ export enum SortOrder {
 
 export class PaginationQueryDto {
   @ApiPropertyOptional({
-    default: 1,
+    default: DEFAULT_PAGE,
     minimum: 1,
-    example: 1,
+    example: DEFAULT_PAGE,
     description: 'Page number to return. Pages are 1-indexed.',
   })
   @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  page = 1;
+  page = DEFAULT_PAGE;
 
   @ApiPropertyOptional({
-    default: 20,
+    default: DEFAULT_LIMIT,
     minimum: 1,
-    maximum: 100,
-    example: 20,
+    maximum: MAX_LIMIT,
+    example: DEFAULT_LIMIT,
     description: 'Maximum number of records to return.',
   })
   @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  @Max(100)
-  limit = 20;
+  @Max(MAX_LIMIT)
+  limit = DEFAULT_LIMIT;
 }
 
 export class PaginationSortQueryDto extends PaginationQueryDto {

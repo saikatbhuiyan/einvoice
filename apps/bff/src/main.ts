@@ -1,7 +1,9 @@
-import { Logger, ValidationPipe, VersioningType } from '@nestjs/common';
+import { Logger, VersioningType } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import helmet from 'helmet';
 import { HttpAdapterHost, Reflector } from '@nestjs/core';
+import { ALLOWED_HTTP_METHODS } from '@libs/constants';
+import { createValidationPipe } from '@libs/shared/utils';
 import { AppModule } from './app/app.module';
 import { GlobalExceptionFilter } from '@libs/filters';
 import {
@@ -29,7 +31,7 @@ async function bootstrap(): Promise<void> {
     .filter(Boolean);
   app.enableCors({
     origin: IS_DEVELOPMENT ? true : allowedOrigins,
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    methods: [...ALLOWED_HTTP_METHODS],
     allowedHeaders: ['Content-Type', 'Authorization', 'x-correlation-id'],
     credentials: true,
   });
@@ -41,14 +43,7 @@ async function bootstrap(): Promise<void> {
     defaultVersion: API_VERSION.replace(/^v/, ''), // strip leading "v"
   });
 
-  app.useGlobalPipes(
-    new ValidationPipe({
-      whitelist: true,
-      forbidNonWhitelisted: true,
-      transform: true,
-      errorHttpStatusCode: 422,
-    }),
-  );
+  app.useGlobalPipes(createValidationPipe());
 
   const httpAdapterHost = app.get(HttpAdapterHost);
   const reflector = app.get(Reflector);

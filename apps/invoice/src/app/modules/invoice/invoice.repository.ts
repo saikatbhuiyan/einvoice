@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { isValidObjectId } from 'mongoose';
+import { DEFAULT_LIMIT, DEFAULT_PAGE } from '@libs/constants';
 import { InvoiceDocument, InvoiceModel, InvoiceModelName } from '@libs/schemas';
 import { CreateInvoiceRequest, FindAllInvoicesRequest, UpdateInvoiceRequest } from '@libs/interfaces/gateway';
 import { IInvoiceRepository } from './invoice.repository.interface';
@@ -17,8 +18,8 @@ export class InvoiceRepository implements IInvoiceRepository {
     items: InvoiceDocument[];
     total: number;
   }> {
-    const page = query.page ?? 1;
-    const limit = query.limit ?? 20;
+    const page = query.page ?? DEFAULT_PAGE;
+    const limit = query.limit ?? DEFAULT_LIMIT;
     const skip = (page - 1) * limit;
     const filter = this.buildFilter(query);
 

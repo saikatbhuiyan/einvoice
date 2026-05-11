@@ -1,5 +1,6 @@
-import { HttpStatus, Logger, ValidationPipe } from '@nestjs/common';
+import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
+import { createValidationPipe } from '@libs/shared/utils';
 import { AppModule } from './app/app.module';
 import { createTcpServerConfig, ServiceName } from '@libs/transports';
 import { RpcExceptionInterceptor, RpcLoggingInterceptor } from '@libs/interceptors';
@@ -16,14 +17,7 @@ async function bootstrap() {
   });
 
   app.useGlobalInterceptors(new RpcLoggingInterceptor(), new RpcExceptionInterceptor());
-  app.useGlobalPipes(
-    new ValidationPipe({
-      whitelist: true,
-      forbidNonWhitelisted: true,
-      transform: true,
-      errorHttpStatusCode: HttpStatus.UNPROCESSABLE_ENTITY,
-    }),
-  );
+  app.useGlobalPipes(createValidationPipe());
 
   app.connectMicroservice(createTcpServerConfig(ServiceName.INVOICE), {
     inheritAppConfig: true,

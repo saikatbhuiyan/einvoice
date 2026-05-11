@@ -7,6 +7,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { Error as MongooseError, isValidObjectId } from 'mongoose';
+import { DEFAULT_LIMIT, DEFAULT_PAGE } from '@libs/constants';
 import { buildPaginationMeta } from '@libs/shared/types';
 import {
   CreateInvoiceRequest,
@@ -35,8 +36,8 @@ export class InvoiceService {
   }
 
   async findAll(query: FindAllInvoicesRequest): Promise<FindAllInvoicesResponse> {
-    const page = query.page ?? 1;
-    const limit = query.limit ?? 20;
+    const page = query.page ?? DEFAULT_PAGE;
+    const limit = query.limit ?? DEFAULT_LIMIT;
     const { items, total } = await this.invoiceRepository.findAll(query);
 
     return {
