@@ -69,6 +69,7 @@ NOTES.md
 # Internal project documentation (agent context)
 AGENTS.md
 ARCHITECTURE-GAPS.md
+MONGODB-CONFIG.md
 
 # Testing
 coverage/
