@@ -5,3 +5,4 @@ export * from './lib/error-codes.enum';
 export { CurrencyCode, UserRole } from './lib/enums';
 export * from './lib/http-message.enum';
 export * from './lib/invoice.types';
+export * from './lib/http-request.types';
