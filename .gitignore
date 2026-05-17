@@ -55,6 +55,9 @@ Thumbs.db
 # Docker data volumes
 docker/**/docker_data */
 
+# Redis dump
+dump.rdb
+
 # Logs
 *.log
 logs/
@@ -70,6 +73,7 @@ NOTES.md
 AGENTS.md
 ARCHITECTURE-GAPS.md
 MONGODB-CONFIG.md
+docs/
 
 # Testing
 coverage/
