@@ -32,6 +32,8 @@
       "@libs/filters/*": ["libs/filters/src/lib/*"],
       "@libs/transports": ["libs/transports/src/index.ts"],
       "@libs/transports/*": ["libs/transports/src/lib/*"],
+      "@libs/cache": ["libs/cache/src/index.ts"],
+      "@libs/cache/*": ["libs/cache/src/lib/*"],
       "@libs/decorators": ["libs/decorators/src/index.ts"],
       "@libs/schemas": ["libs/schemas/src/index.ts"]
     }
