@@ -4,16 +4,18 @@ import { HydratedDocument, Model } from 'mongoose';
 import { BASE_SCHEMA_OPTIONS, BaseSchema } from './base.schema';
 import { ClientSnapshotSchema, ClientSnapshot } from './client-snapshot.schema';
 import { InvoiceItemSchema, InvoiceItem } from './invoice-item.schema';
+import {
+  INVOICE_CONSTRAINTS,
+  INVOICE_STATUSES,
+  InvoiceStatus,
+  SUPPORTED_CURRENCIES,
+  SupportedCurrency,
+} from '@libs/shared/types';
 
 const roundCurrency = (value: number): number => Math.round((value + Number.EPSILON) * 100) / 100;
 
-export const INVOICE_STATUSES = ['draft', 'issued', 'paid', 'cancelled', 'overdue'] as const;
-
-export type InvoiceStatus = (typeof INVOICE_STATUSES)[number];
-
-export const SUPPORTED_CURRENCIES = ['BDT', 'USD', 'EUR', 'GBP'] as const;
-
-export type SupportedCurrency = (typeof SUPPORTED_CURRENCIES)[number];
+export { INVOICE_STATUSES, SUPPORTED_CURRENCIES };
+export type { InvoiceStatus, SupportedCurrency };
 
 @Schema(BASE_SCHEMA_OPTIONS)
 export class Invoice extends BaseSchema {
@@ -22,8 +24,8 @@ export class Invoice extends BaseSchema {
     unique: true,
     trim: true,
     uppercase: true,
-    minlength: 3,
-    maxlength: 32,
+    minlength: INVOICE_CONSTRAINTS.invoiceNumber.minLength,
+    maxlength: INVOICE_CONSTRAINTS.invoiceNumber.maxLength,
   })
   invoiceNumber!: string;
 
@@ -45,6 +47,7 @@ export class Invoice extends BaseSchema {
   items!: InvoiceItem[];
 
   @Prop({
+    type: String,
     required: true,
     enum: SUPPORTED_CURRENCIES,
     uppercase: true,
@@ -53,6 +56,7 @@ export class Invoice extends BaseSchema {
   currency!: SupportedCurrency;
 
   @Prop({
+    type: String,
     required: true,
     enum: INVOICE_STATUSES,
     default: 'draft',
@@ -66,7 +70,7 @@ export class Invoice extends BaseSchema {
   @Prop()
   dueDate?: Date;
 
-  @Prop({ trim: true, maxlength: 1000 })
+  @Prop({ trim: true, maxlength: INVOICE_CONSTRAINTS.notes.maxLength })
   notes?: string;
 
   /**
@@ -80,6 +84,18 @@ export class Invoice extends BaseSchema {
 
   @Prop({ required: true, min: 0, default: 0 })
   total!: number;
+
+  /** Soft-delete timestamp. Null = active record. */
+  @Prop({ type: Date, default: null, index: true })
+  deletedAt?: Date | null;
+
+  /**
+   * Client-supplied idempotency key for safe retry semantics.
+   * Sparse unique index ensures collisions only for actual keys,
+   * not for the default null/absent value.
+   */
+  @Prop({ type: String, trim: true, index: { unique: true, sparse: true } })
+  idempotencyKey?: string | null;
 }
 
 export type InvoiceDocument = HydratedDocument<Invoice>;

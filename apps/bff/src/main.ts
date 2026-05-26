@@ -1,8 +1,9 @@
-import { Logger, ValidationPipe, VersioningType } from '@nestjs/common';
+import { Logger, VersioningType } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
-import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
 import { HttpAdapterHost, Reflector } from '@nestjs/core';
+import { ALLOWED_HTTP_METHODS } from '@libs/constants';
+import { createValidationPipe } from '@libs/shared/utils';
 import { AppModule } from './app/app.module';
 import { GlobalExceptionFilter } from '@libs/filters';
 import {
@@ -11,6 +12,7 @@ import {
   RpcLoggingInterceptor,
   TimeoutInterceptor,
 } from '@libs/interceptors';
+import { setupSwagger } from './app/common/swagger/swagger.setup';
 
 async function bootstrap(): Promise<void> {
   const { CONFIGURATION } = AppModule;
@@ -29,7 +31,7 @@ async function bootstrap(): Promise<void> {
     .filter(Boolean);
   app.enableCors({
     origin: IS_DEVELOPMENT ? true : allowedOrigins,
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    methods: [...ALLOWED_HTTP_METHODS],
     allowedHeaders: ['Content-Type', 'Authorization', 'x-correlation-id'],
     credentials: true,
   });
@@ -41,14 +43,7 @@ async function bootstrap(): Promise<void> {
     defaultVersion: API_VERSION.replace(/^v/, ''), // strip leading "v"
   });
 
-  app.useGlobalPipes(
-    new ValidationPipe({
-      whitelist: true,
-      forbidNonWhitelisted: true,
-      transform: true,
-      errorHttpStatusCode: 422,
-    }),
-  );
+  app.useGlobalPipes(createValidationPipe());
 
   const httpAdapterHost = app.get(HttpAdapterHost);
   const reflector = app.get(Reflector);
@@ -57,7 +52,6 @@ async function bootstrap(): Promise<void> {
   app.useGlobalInterceptors(
     new TimeoutInterceptor(reflector),
     new ResponseInterceptor(reflector),
-    // RpcLoggingInterceptor checks context.getType() === 'rpc'
     new RpcLoggingInterceptor(),
     new RpcExceptionInterceptor(),
   );
@@ -65,33 +59,12 @@ async function bootstrap(): Promise<void> {
   app.enableShutdownHooks();
 
   if (!IS_PRODUCTION) {
-    const swaggerConfig = new DocumentBuilder()
-      .setTitle('E-Invoice BFF API')
-      .setDescription('Backend-for-Frontend API for E-Invoice platform')
-      .setVersion('1.0.0')
-      .addTag('bff')
-      .addBearerAuth(
-        {
-          type: 'http',
-          scheme: 'bearer',
-          bearerFormat: 'JWT',
-          name: 'Authorization',
-          description: 'Enter JWT token',
-          in: 'header',
-        },
-        'jwt',
-      )
-      .build();
-
-    const document = SwaggerModule.createDocument(app, swaggerConfig);
-    const docsPath = `${GLOBAL_PREFIX}/docs`;
-    SwaggerModule.setup(docsPath, app, document, {
-      swaggerOptions: {
-        persistAuthorization: true,
-      },
+    setupSwagger(app, {
+      apiVersion: API_VERSION,
+      globalPrefix: GLOBAL_PREFIX,
+      nodeEnv: CONFIGURATION.NODE_ENV,
+      port: PORT,
     });
-
-    Logger.log(`📄 Swagger docs: http://localhost:${PORT}/${docsPath}`);
   }
 
   await app.listen(PORT);

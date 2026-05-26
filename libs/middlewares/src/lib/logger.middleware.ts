@@ -1,5 +1,6 @@
 import { Injectable, Logger, NestMiddleware } from '@nestjs/common';
-import { NextFunction, Request, Response } from 'express';
+import { NextFunction, Response } from 'express';
+import { TimedRequest } from '@libs/shared/types';
 import { randomUUID } from 'crypto';
 
 const SENSITIVE_HEADERS = new Set([
@@ -26,7 +27,7 @@ const MAX_BODY_LOG_CHARS = 2_048;
 export class LoggerMiddleware implements NestMiddleware {
   private readonly logger = new Logger('HTTP');
 
-  use(req: Request, res: Response, next: NextFunction): void {
+  use(req: TimedRequest, res: Response, next: NextFunction): void {
     const correlationId =
       (req.headers['x-correlation-id'] as string) ?? (req.headers['x-request-id'] as string) ?? randomUUID();
 
@@ -41,6 +42,7 @@ export class LoggerMiddleware implements NestMiddleware {
     if (SUPPRESSED_PATHS.has(path)) return next();
 
     const startAt = process.hrtime.bigint();
+    req._startTime = startAt;
     const { method } = req;
     const url = this.sanitizeUrl(req.url);
     const ip = this.extractIp(req);
@@ -116,7 +118,7 @@ export class LoggerMiddleware implements NestMiddleware {
     return PII_PATH_PATTERNS.reduce((acc, { pattern, replacement }) => acc.replace(pattern, replacement), url);
   }
 
-  private extractIp(req: Request): string {
+  private extractIp(req: TimedRequest): string {
     return (
       (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ??
       (req.headers['x-real-ip'] as string) ??

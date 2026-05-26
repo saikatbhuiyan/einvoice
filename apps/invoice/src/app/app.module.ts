@@ -5,6 +5,10 @@ import { AppService } from './app.service';
 import { CONFIGURATION, TConfiguration } from '../configuration';
 import { LoggerMiddleware } from '@libs/middlewares';
 import { MongoDbModule } from '../database/mongodb.module';
+import { SchemasModule } from '@libs/schemas';
+import { InvoiceModule } from './modules/invoice/invoice.module';
+
+export const APP_CONFIGURATION = Symbol('APP_CONFIGURATION');
 
 @Module({
   imports: [
@@ -14,9 +18,18 @@ import { MongoDbModule } from '../database/mongodb.module';
       ignoreEnvFile: CONFIGURATION.IS_PRODUCTION,
     }),
     MongoDbModule,
+    SchemasModule,
+    InvoiceModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [
+    AppService,
+    {
+      provide: APP_CONFIGURATION,
+      useValue: CONFIGURATION,
+    },
+  ],
+  exports: [APP_CONFIGURATION],
 })
 export class AppModule {
   static readonly CONFIGURATION: TConfiguration = CONFIGURATION;

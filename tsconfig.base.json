@@ -26,10 +26,14 @@
       "@libs/shared/utils/*": ["libs/shared/utils/src/lib/*"],
       "@libs/interceptors": ["libs/interceptors/src/index.ts"],
       "@libs/interceptors/*": ["libs/interceptors/src/lib/*"],
+      "@libs/interfaces": ["libs/interfaces/src/index.ts"],
+      "@libs/interfaces/*": ["libs/interfaces/src/lib/*"],
       "@libs/filters": ["libs/filters/src/index.ts"],
       "@libs/filters/*": ["libs/filters/src/lib/*"],
       "@libs/transports": ["libs/transports/src/index.ts"],
       "@libs/transports/*": ["libs/transports/src/lib/*"],
+      "@libs/cache": ["libs/cache/src/index.ts"],
+      "@libs/cache/*": ["libs/cache/src/lib/*"],
       "@libs/decorators": ["libs/decorators/src/index.ts"],
       "@libs/schemas": ["libs/schemas/src/index.ts"]
     }

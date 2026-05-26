@@ -43,7 +43,7 @@ export function loadEnvironmentFiles(): void {
   const candidateEnvPaths = [...new Set(candidateEnvNames.map((name) => path.resolve(workspaceRoot, `.env.${name}`)))];
 
   for (const envPath of candidateEnvPaths) {
-    loadIfExists(envPath, true);
+    loadIfExists(envPath);
   }
 
   envLoaded = true;

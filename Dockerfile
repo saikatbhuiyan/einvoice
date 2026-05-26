@@ -1,4 +1,4 @@
-FROM node:20-alpine AS base
+FROM node:22-alpine AS base
 
 WORKDIR /app
 
@@ -8,7 +8,9 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml nx.json tsconfig.base.json 
 COPY apps ./apps
 COPY libs ./libs
 
-RUN pnpm install --frozen-lockfile
+RUN pnpm install --frozen-lockfile \
+    && rm -rf .nx/cache \
+    && echo "reset nx cache for volume mount"
 
 FROM base AS development
 
@@ -25,7 +27,7 @@ ARG APP_NAME
 RUN pnpm nx run ${APP_NAME}:build:production
 RUN pnpm nx run ${APP_NAME}:prune-lockfile
 
-FROM node:20-alpine AS runtime
+FROM node:22-alpine AS runtime
 
 WORKDIR /app
 

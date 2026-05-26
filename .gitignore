@@ -38,11 +38,46 @@ testem.log
 .DS_Store
 Thumbs.db
 
+# Nx
 .nx/cache
 .nx/workspace-data
+
+# Claude AI
 .claude/worktrees
 .claude/settings.local.json
 
+# Environment files (sensitive)
 .env
 .env.dev
 .env.prod
+.env.*.local
+
+# Docker data volumes
+docker/**/docker_data */
+
+# Redis dump
+dump.rdb
+
+# Logs
+*.log
+logs/
+
+# Local notes and temp files
+*.local
+*.tmp
+*.temp
+TODO.md
+NOTES.md
+
+# Internal project documentation (agent context)
+AGENTS.md
+ARCHITECTURE-GAPS.md
+MONGODB-CONFIG.md
+docs/
+
+# Testing
+coverage/
+.nyc_output/
+
+# Build artifacts
+*.tsbuildinfo

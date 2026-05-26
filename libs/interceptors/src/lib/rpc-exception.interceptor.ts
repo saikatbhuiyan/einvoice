@@ -24,6 +24,13 @@ import { RpcException } from '@nestjs/microservices';
 import { Observable, throwError } from 'rxjs';
 import { catchError } from 'rxjs/operators';
 
+interface RpcErrorPayload {
+  code: GrpcStatus;
+  status: number;
+  message: string | string[];
+  error?: string;
+}
+
 @Injectable()
 export class RpcExceptionInterceptor implements NestInterceptor {
   intercept(context: ExecutionContext, next: CallHandler): Observable<unknown> {
@@ -34,13 +41,7 @@ export class RpcExceptionInterceptor implements NestInterceptor {
         if (err instanceof RpcException) return throwError(() => err);
 
         if (err instanceof HttpException) {
-          return throwError(
-            () =>
-              new RpcException({
-                code: this.httpToGrpcCode(err.getStatus()),
-                message: err.message,
-              }),
-          );
+          return throwError(() => new RpcException(this.toRpcErrorPayload(err)));
         }
 
         if (err instanceof Error) {
@@ -78,5 +79,27 @@ export class RpcExceptionInterceptor implements NestInterceptor {
       504: GrpcStatus.DEADLINE_EXCEEDED,
     };
     return map[httpStatus] ?? GrpcStatus.INTERNAL;
+  }
+
+  private toRpcErrorPayload(exception: HttpException): RpcErrorPayload {
+    const status = exception.getStatus();
+    const response = exception.getResponse();
+
+    if (typeof response === 'string') {
+      return {
+        code: this.httpToGrpcCode(status),
+        status,
+        message: response,
+      };
+    }
+
+    const body = response as { message?: string | string[]; error?: string };
+
+    return {
+      code: this.httpToGrpcCode(status),
+      status,
+      message: body.message ?? exception.message,
+      error: body.error,
+    };
   }
 }

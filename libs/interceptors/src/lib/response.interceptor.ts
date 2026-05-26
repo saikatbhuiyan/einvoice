@@ -2,8 +2,8 @@ import { CallHandler, ExecutionContext, Injectable, NestInterceptor, SetMetadata
 import { Reflector } from '@nestjs/core';
 import { Observable } from 'rxjs';
 import { map } from 'rxjs/operators';
-import { Request, Response } from 'express';
-import { ApiEnvelope } from '@libs/shared/types';
+import { Response } from 'express';
+import { ApiEnvelope, TimedRequest } from '@libs/shared/types';
 import { ok } from '@libs/shared/utils';
 
 export const SKIP_RESPONSE_WRAP_KEY = 'skipResponseWrap';
@@ -24,13 +24,13 @@ export class ResponseInterceptor<T> implements NestInterceptor<T, ApiEnvelope<T>
     if (skip) return next.handle();
 
     const http = context.switchToHttp();
-    const request = http.getRequest<Request>();
+    const request = http.getRequest<TimedRequest>();
     const response = http.getResponse<Response>();
 
     const correlationId = (request.headers['x-correlation-id'] as string) ?? 'unknown';
 
     // Capture request start time set by LoggerMiddleware (if available)
-    const startTime: bigint | undefined = (request as any)._startTime;
+    const startTime: bigint | undefined = request._startTime;
 
     const message = this.reflector.getAllAndOverride<string>(RESPONSE_MESSAGE_KEY, [
       context.getHandler(),

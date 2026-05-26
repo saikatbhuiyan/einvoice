@@ -4,9 +4,7 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { ConfigModule } from '@nestjs/config';
 import { LoggerMiddleware } from '@libs/middlewares';
-import { ClientsModule } from '@nestjs/microservices';
-import { createTcpClientConfig, ServiceName } from '@libs/transports';
-import { InvoiceClientService } from './invoice-client.service';
+import { InvoiceModule } from './modules/invoice/invoice.module';
 
 @Module({
   imports: [
@@ -17,10 +15,10 @@ import { InvoiceClientService } from './invoice-client.service';
       // Use platform env vars directly in production, ignore .env file
       ignoreEnvFile: CONFIGURATION.IS_PRODUCTION,
     }),
-    ClientsModule.register([createTcpClientConfig(ServiceName.INVOICE)]),
+    InvoiceModule,
   ],
   controllers: [AppController],
-  providers: [AppService, InvoiceClientService],
+  providers: [AppService],
 })
 export class AppModule {
   /**

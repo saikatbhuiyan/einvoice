@@ -1,20 +1,24 @@
 import { Provider } from '@nestjs/common';
 import { ConnectOptions } from 'mongoose';
-import { CONFIGURATION } from '../configuration';
+import { APP_CONFIGURATION } from '../app/app.module';
 import { MONGODB_CONFIG_TOKEN, MONGODB_CONNECTION_OPTIONS_TOKEN } from './mongodb.constants';
 
 export const mongoConfigurationProvider: Provider = {
   provide: MONGODB_CONFIG_TOKEN,
-  useFactory: () => CONFIGURATION.MONGODB_CONFIG,
+  inject: [APP_CONFIGURATION],
+  useFactory: (config: typeof import('../configuration').CONFIGURATION) => config.MONGODB_CONFIG,
 };
 
 export const mongoConnectionOptionsProvider: Provider = {
   provide: MONGODB_CONNECTION_OPTIONS_TOKEN,
-  inject: [MONGODB_CONFIG_TOKEN],
-  useFactory: (mongoConfig: typeof CONFIGURATION.MONGODB_CONFIG): ConnectOptions => ({
+  inject: [MONGODB_CONFIG_TOKEN, APP_CONFIGURATION],
+  useFactory: (
+    mongoConfig: (typeof import('../configuration').CONFIGURATION)['MONGODB_CONFIG'],
+    config: typeof import('../configuration').CONFIGURATION,
+  ): ConnectOptions => ({
     ...mongoConfig.CONNECTION_OPTIONS,
-    autoIndex: !CONFIGURATION.IS_PRODUCTION,
-    maxConnecting: CONFIGURATION.IS_PRODUCTION ? 4 : 2,
+    autoIndex: !config.IS_PRODUCTION,
+    maxConnecting: config.IS_PRODUCTION ? 4 : 2,
   }),
 };
 
