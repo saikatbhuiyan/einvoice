@@ -3,13 +3,18 @@ import {
   GatewayTimeoutException,
   HttpException,
   HttpStatus,
+  Inject,
   Logger,
   OnModuleInit,
+  Optional,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ClientProxy } from '@nestjs/microservices';
 import { firstValueFrom, timeout, catchError, throwError, TimeoutError } from 'rxjs';
 import { statusTitle } from '@libs/shared/utils';
+import { CIRCUIT_BREAKER_FACTORY } from '@libs/circuit-breaker';
+import type { CircuitBreakerFactory } from '@libs/circuit-breaker';
+import type { ServiceName } from './tcp.config';
 
 /** Default RPC call timeout — override per-service or per-call */
 const DEFAULT_RPC_TIMEOUT_MS = 10_000;
@@ -27,6 +32,11 @@ interface RpcErrorLike {
 export abstract class BaseTcpClient implements OnModuleInit {
   protected abstract readonly logger: Logger;
   protected abstract readonly client: ClientProxy;
+  protected abstract readonly serviceName: ServiceName;
+
+  constructor(
+    @Optional() @Inject(CIRCUIT_BREAKER_FACTORY) private readonly circuitBreakerFactory?: CircuitBreakerFactory,
+  ) {}
 
   /** Called by NestJS — ensures the TCP connection is ready before requests arrive */
   async onModuleInit(): Promise<void> {
@@ -40,30 +50,37 @@ export abstract class BaseTcpClient implements OnModuleInit {
   }
 
   /**
-   * Request-response RPC call.
-   * @param pattern  Message pattern string from TCP_PATTERNS
-   * @param payload  Data to send
-   * @param timeoutMs  Optional per-call timeout (default 10s)
+   * Request-response RPC call with circuit breaker wrapping.
+   * If CircuitBreakerModule is registered, calls go through the per-service circuit.
+   * If not registered (e.g. in invoice service), calls proceed without circuit breaking.
    */
   protected async send<TResult, TInput = unknown>(
     pattern: string,
     payload: TInput,
     timeoutMs = DEFAULT_RPC_TIMEOUT_MS,
   ): Promise<TResult> {
-    return firstValueFrom(
-      this.client.send<TResult, TInput>(pattern, payload).pipe(
-        timeout(timeoutMs),
-        catchError((err) => {
-          if (err instanceof TimeoutError) {
-            this.logger.error(`RPC timeout: pattern="${pattern}" exceeded ${timeoutMs}ms`);
-            return throwError(() => new GatewayTimeoutException(`Downstream RPC timeout for pattern "${pattern}".`));
-          }
+    const execute = () =>
+      firstValueFrom(
+        this.client.send<TResult, TInput>(pattern, payload).pipe(
+          timeout(timeoutMs),
+          catchError((err) => {
+            if (err instanceof TimeoutError) {
+              this.logger.error(`RPC timeout: pattern="${pattern}" exceeded ${timeoutMs}ms`);
+              return throwError(() => new GatewayTimeoutException(`Downstream RPC timeout for pattern "${pattern}".`));
+            }
 
-          this.logger.error(`RPC error: pattern="${pattern}"`, err instanceof Error ? err.stack : String(err));
-          return throwError(() => this.toHttpException(err, pattern));
-        }),
-      ),
-    );
+            this.logger.error(`RPC error: pattern="${pattern}"`, err instanceof Error ? err.stack : String(err));
+            return throwError(() => this.toHttpException(err, pattern));
+          }),
+        ),
+      );
+
+    const breaker = this.circuitBreakerFactory?.get(this.serviceName);
+    if (!breaker) {
+      return execute();
+    }
+
+    return breaker.execute(execute);
   }
 
   /**
