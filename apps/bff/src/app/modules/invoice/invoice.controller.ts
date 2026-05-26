@@ -12,6 +12,7 @@ import {
 } from '@libs/interfaces/gateway';
 import { CursorPaginationMetaDto } from '@libs/shared/types';
 import { ResponseMessage } from '@libs/interceptors';
+import { RateLimit, SkipRateLimit } from '@libs/rate-limit';
 import {
   ApiCorrelationIdHeader,
   ApiEnvelopeResponse,
@@ -90,11 +91,13 @@ const deleteInvoiceResponseExample: DeleteInvoiceResponseDto = {
 
 @ApiTags('Invoices')
 @ApiCorrelationIdHeader()
+@RateLimit({ burst: 60, rate: 4 })
 @Controller('invoices')
 export class InvoiceController {
   constructor(private readonly invoiceService: InvoiceService) {}
 
   @Post()
+  @RateLimit({ burst: 10, rate: 0.5 })
   @ResponseMessage('Invoice created successfully')
   @ApiOperation({
     summary: 'Create invoice',
@@ -166,6 +169,7 @@ export class InvoiceController {
   }
 
   @Patch(':id')
+  @RateLimit({ burst: 10, rate: 0.5 })
   @ResponseMessage('Invoice updated successfully')
   @ApiOperation({
     summary: 'Update invoice',
@@ -208,6 +212,7 @@ export class InvoiceController {
   }
 
   @Delete(':id')
+  @RateLimit({ burst: 5, rate: 0.2 })
   @HttpCode(HttpStatus.OK)
   @ResponseMessage('Invoice deleted successfully')
   @ApiOperation({

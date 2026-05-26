@@ -35,7 +35,9 @@
       "@libs/cache": ["libs/cache/src/index.ts"],
       "@libs/cache/*": ["libs/cache/src/lib/*"],
       "@libs/decorators": ["libs/decorators/src/index.ts"],
-      "@libs/schemas": ["libs/schemas/src/index.ts"]
+      "@libs/schemas": ["libs/schemas/src/index.ts"],
+      "@libs/rate-limit": ["libs/rate-limit/src/index.ts"],
+      "@libs/rate-limit/*": ["libs/rate-limit/src/lib/*"]
     }
   },
   "exclude": ["node_modules", "tmp"]

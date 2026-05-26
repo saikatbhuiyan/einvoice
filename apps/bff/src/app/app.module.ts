@@ -5,6 +5,7 @@ import { AppService } from './app.service';
 import { ConfigModule } from '@nestjs/config';
 import { LoggerMiddleware } from '@libs/middlewares';
 import { InvoiceModule } from './modules/invoice/invoice.module';
+import { RateLimitModule } from '@libs/rate-limit';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { InvoiceModule } from './modules/invoice/invoice.module';
       ignoreEnvFile: CONFIGURATION.IS_PRODUCTION,
     }),
     InvoiceModule,
+    RateLimitModule.forRoot(),
   ],
   controllers: [AppController],
   providers: [AppService],

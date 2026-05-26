@@ -4,6 +4,7 @@ import {
   loadEnvironmentFiles,
   RedisCacheConfiguration,
 } from '@libs/configuration';
+import { RateLimitConfiguration } from '@libs/rate-limit';
 import { Type } from 'class-transformer';
 import { ValidateNested } from 'class-validator';
 
@@ -17,6 +18,10 @@ class Configuration extends BaseConfiguration {
   @ValidateNested()
   @Type(() => RedisCacheConfiguration)
   CACHE_CONFIG: RedisCacheConfiguration = new RedisCacheConfiguration();
+
+  @ValidateNested()
+  @Type(() => RateLimitConfiguration)
+  RATE_LIMIT_CONFIG: RateLimitConfiguration = new RateLimitConfiguration();
 }
 
 // Validated eagerly at module load time

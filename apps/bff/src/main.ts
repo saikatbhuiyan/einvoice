@@ -2,6 +2,7 @@ import { Logger, VersioningType } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import helmet from 'helmet';
 import { HttpAdapterHost, Reflector } from '@nestjs/core';
+import { NestExpressApplication } from '@nestjs/platform-express';
 import { ALLOWED_HTTP_METHODS } from '@libs/constants';
 import { createValidationPipe } from '@libs/shared/utils';
 import { AppModule } from './app/app.module';
@@ -12,6 +13,7 @@ import {
   RpcLoggingInterceptor,
   TimeoutInterceptor,
 } from '@libs/interceptors';
+import { RateLimitGuard } from '@libs/rate-limit';
 import { setupSwagger } from './app/common/swagger/swagger.setup';
 
 async function bootstrap(): Promise<void> {
@@ -19,7 +21,7 @@ async function bootstrap(): Promise<void> {
   const { IS_PRODUCTION, IS_DEVELOPMENT, GLOBAL_PREFIX } = CONFIGURATION;
   const { PORT, CORS_ORIGINS, API_VERSION } = CONFIGURATION.APP_CONFIG;
 
-  const app = await NestFactory.create(AppModule, {
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     logger: IS_PRODUCTION ? ['error', 'warn', 'log'] : ['error', 'warn', 'log', 'debug', 'verbose'],
     bufferLogs: true,
   });
@@ -38,6 +40,8 @@ async function bootstrap(): Promise<void> {
 
   app.setGlobalPrefix(GLOBAL_PREFIX);
 
+  app.set('trust proxy', 1);
+
   app.enableVersioning({
     type: VersioningType.URI,
     defaultVersion: API_VERSION.replace(/^v/, ''), // strip leading "v"
@@ -48,6 +52,7 @@ async function bootstrap(): Promise<void> {
   const httpAdapterHost = app.get(HttpAdapterHost);
   const reflector = app.get(Reflector);
 
+  app.useGlobalGuards(app.get(RateLimitGuard));
   app.useGlobalFilters(new GlobalExceptionFilter(httpAdapterHost));
   app.useGlobalInterceptors(
     new TimeoutInterceptor(reflector),
