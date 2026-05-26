@@ -6,6 +6,7 @@ import { ConfigModule } from '@nestjs/config';
 import { LoggerMiddleware } from '@libs/middlewares';
 import { InvoiceModule } from './modules/invoice/invoice.module';
 import { RateLimitModule } from '@libs/rate-limit';
+import { CircuitBreakerModule } from '@libs/circuit-breaker';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { RateLimitModule } from '@libs/rate-limit';
     }),
     InvoiceModule,
     RateLimitModule.forRoot(),
+    CircuitBreakerModule.forRoot(),
   ],
   controllers: [AppController],
   providers: [AppService],
