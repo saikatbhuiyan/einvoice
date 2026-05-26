@@ -1,14 +1,16 @@
 import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Patch, Post, Query } from '@nestjs/common';
-import { ApiBody, ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
+import { ApiBody, ApiExtraModels, ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
 import {
   CreateInvoiceDto,
   DeleteInvoiceResponseDto,
   FindAllInvoicesDto,
+  FindAllInvoicesCursorResponseDto,
   FindAllInvoicesResponseDto,
   InvoiceIdGatewayDto,
   InvoiceResponseDto,
   UpdateInvoiceDto,
 } from '@libs/interfaces/gateway';
+import { CursorPaginationMetaDto } from '@libs/shared/types';
 import { ResponseMessage } from '@libs/interceptors';
 import {
   ApiCorrelationIdHeader,
@@ -123,14 +125,17 @@ export class InvoiceController {
   @ResponseMessage('Invoices retrieved successfully')
   @ApiOperation({
     summary: 'List invoices',
-    description: 'Returns invoices with pagination and optional filters.',
+    description:
+      'Returns invoices with pagination. Use `page` for offset pagination or `cursor` for cursor-based pagination. Do not use both.',
   })
+  @ApiExtraModels(FindAllInvoicesResponseDto, FindAllInvoicesCursorResponseDto)
   @ApiEnvelopeResponse({
     status: HttpStatus.OK,
-    description: 'Invoices retrieved.',
-    model: FindAllInvoicesResponseDto,
+    description: 'Invoices retrieved. Meta shape depends on pagination mode.',
+    model: InvoiceResponseDto,
     message: 'Invoices retrieved successfully',
     dataExample: findAllResponseExample,
+    isArray: true,
   })
   @ApiProblemResponses(HttpStatus.UNPROCESSABLE_ENTITY, HttpStatus.BAD_GATEWAY)
   findAll(@Query() query: FindAllInvoicesDto) {
