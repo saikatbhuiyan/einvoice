@@ -1,4 +1,5 @@
-import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Patch, Post, Query, Res } from '@nestjs/common';
+import type { Response } from 'express';
 import { ApiBody, ApiExtraModels, ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
 import {
   CreateInvoiceDto,
@@ -140,9 +141,9 @@ export class InvoiceController {
     dataExample: findAllResponseExample,
     isArray: true,
   })
-  @ApiProblemResponses(HttpStatus.UNPROCESSABLE_ENTITY, HttpStatus.BAD_GATEWAY)
-  findAll(@Query() query: FindAllInvoicesDto) {
-    return this.invoiceService.findAll(query);
+  @ApiProblemResponses(HttpStatus.UNPROCESSABLE_ENTITY, HttpStatus.BAD_GATEWAY, HttpStatus.SERVICE_UNAVAILABLE)
+  findAll(@Query() query: FindAllInvoicesDto, @Res({ passthrough: true }) res: Response) {
+    return this.invoiceService.findAll(query, res);
   }
 
   @Get(':id')
@@ -163,9 +164,14 @@ export class InvoiceController {
     message: 'Invoice retrieved successfully',
     dataExample: invoiceResponseExample,
   })
-  @ApiProblemResponses(HttpStatus.UNPROCESSABLE_ENTITY, HttpStatus.NOT_FOUND, HttpStatus.BAD_GATEWAY)
-  findOne(@Param() params: InvoiceIdGatewayDto) {
-    return this.invoiceService.findOne(params.id);
+  @ApiProblemResponses(
+    HttpStatus.UNPROCESSABLE_ENTITY,
+    HttpStatus.NOT_FOUND,
+    HttpStatus.BAD_GATEWAY,
+    HttpStatus.SERVICE_UNAVAILABLE,
+  )
+  findOne(@Param() params: InvoiceIdGatewayDto, @Res({ passthrough: true }) res: Response) {
+    return this.invoiceService.findOne(params.id, res);
   }
 
   @Patch(':id')
