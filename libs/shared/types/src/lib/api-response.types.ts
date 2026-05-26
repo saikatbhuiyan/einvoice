@@ -28,4 +28,22 @@ export interface PaginationMeta {
   hasPreviousPage: boolean;
 }
 
+export interface OffsetPaginationMeta extends PaginationMeta {
+  mode: 'offset';
+}
+
+export interface CursorPaginationMeta {
+  mode: 'cursor';
+  limit: number;
+  hasNextPage: boolean;
+  cursor?: string;
+}
+
+export type PaginationResultMeta = OffsetPaginationMeta | CursorPaginationMeta;
+
+export interface PaginatedResult<T = unknown> {
+  items: T[];
+  meta: PaginationResultMeta;
+}
+
 export type PaginatedEnvelope<T> = ApiEnvelope<T[], PaginationMeta>;

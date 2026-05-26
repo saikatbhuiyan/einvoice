@@ -1,4 +1,10 @@
-import type { InvoiceStatus, PaginationMeta, SupportedCurrency } from '@libs/shared/types';
+import type {
+  CursorPaginationMeta,
+  InvoiceStatus,
+  PaginationMeta,
+  PaginationResultMeta,
+  SupportedCurrency,
+} from '@libs/shared/types';
 
 export { INVOICE_CONSTRAINTS, INVOICE_STATUSES, SUPPORTED_CURRENCIES } from '@libs/shared/types';
 export type { InvoiceStatus, SupportedCurrency } from '@libs/shared/types';
@@ -57,6 +63,7 @@ export interface UpdateInvoiceRequest {
 export interface FindAllInvoicesRequest {
   page?: number;
   limit?: number;
+  cursor?: string;
   status?: InvoiceStatus;
   currency?: SupportedCurrency;
   clientEmail?: string;
@@ -103,6 +110,13 @@ export interface FindAllInvoicesResponse {
   items: InvoiceResponse[];
   meta: PaginationMeta;
 }
+
+export interface FindAllInvoicesCursorResponse {
+  items: InvoiceResponse[];
+  meta: Omit<CursorPaginationMeta, 'mode'>;
+}
+
+export type FindAllInvoicesResult = FindAllInvoicesResponse | FindAllInvoicesCursorResponse;
 
 export interface DeleteInvoiceResponse {
   id: string;
