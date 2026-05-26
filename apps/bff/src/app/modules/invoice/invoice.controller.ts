@@ -12,7 +12,7 @@ import {
 } from '@libs/interfaces/gateway';
 import { CursorPaginationMetaDto } from '@libs/shared/types';
 import { ResponseMessage } from '@libs/interceptors';
-import { RateLimit, SkipRateLimit } from '@libs/rate-limit';
+import { RateLimit } from '@libs/rate-limit';
 import {
   ApiCorrelationIdHeader,
   ApiEnvelopeResponse,
