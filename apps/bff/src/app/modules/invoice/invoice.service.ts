@@ -7,6 +7,7 @@ import { REDIS_CLIENT } from '@libs/cache';
 import {
   CreateInvoiceRequest,
   DeleteInvoiceResponse,
+  FindAllInvoicesCursorResponse,
   FindAllInvoicesRequest,
   FindAllInvoicesResponse,
   InvoiceResponse,
@@ -56,7 +57,7 @@ export class InvoiceService {
     return invoice;
   }
 
-  async findAll(query: FindAllInvoicesRequest): Promise<FindAllInvoicesResponse> {
+  async findAll(query: FindAllInvoicesRequest): Promise<FindAllInvoicesResponse | FindAllInvoicesCursorResponse> {
     const version = await this.getListVersion();
     const hash = this.hashQuery(query);
     const cacheKey = CACHE_KEY_LIST(version, hash);

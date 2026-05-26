@@ -3,13 +3,34 @@ import { CreateInvoiceRequest, FindAllInvoicesRequest, UpdateInvoiceRequest } fr
 
 export const INVOICE_REPOSITORY = Symbol('INVOICE_REPOSITORY');
 
+export interface OffsetPaginationResult {
+  mode: 'offset';
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+  hasNextPage: boolean;
+  hasPreviousPage: boolean;
+}
+
+export interface CursorPaginationResult {
+  mode: 'cursor';
+  limit: number;
+  hasNextPage: boolean;
+  cursor?: string;
+}
+
+export type PaginatedResultMeta = OffsetPaginationResult | CursorPaginationResult;
+
+export interface PaginatedResult<T = InvoiceDocument> {
+  items: T[];
+  meta: PaginatedResultMeta;
+}
+
 export interface IInvoiceRepository {
   create(data: CreateInvoiceRequest): Promise<InvoiceDocument>;
 
-  findAll(query: FindAllInvoicesRequest): Promise<{
-    items: InvoiceDocument[];
-    total: number;
-  }>;
+  findAll(query: FindAllInvoicesRequest): Promise<PaginatedResult>;
 
   findOne(id: string): Promise<InvoiceDocument | null>;
 

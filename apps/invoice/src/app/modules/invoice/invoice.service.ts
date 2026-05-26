@@ -14,16 +14,17 @@ import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import type { Cache } from 'cache-manager';
 import { REDIS_CLIENT } from '@libs/cache';
 import { DEFAULT_LIMIT, DEFAULT_PAGE } from '@libs/constants';
-import { buildPaginationMeta } from '@libs/shared/types';
+import { buildPaginationMeta, type CursorPaginationMeta } from '@libs/shared/types';
 import {
   CreateInvoiceRequest,
   DeleteInvoiceResponse,
+  FindAllInvoicesCursorResponse,
   FindAllInvoicesRequest,
   FindAllInvoicesResponse,
   InvoiceResponse,
   UpdateInvoiceRequest,
 } from '@libs/interfaces/gateway';
-import { INVOICE_REPOSITORY, IInvoiceRepository } from './invoice.repository.interface';
+import { INVOICE_REPOSITORY, IInvoiceRepository, type PaginatedResultMeta } from './invoice.repository.interface';
 
 const SVC_PREFIX = 'svc';
 const CACHE_KEY_ONE = (id: string) => `${SVC_PREFIX}:invoice:one:${id}`;
@@ -57,34 +58,56 @@ export class InvoiceService {
     }
   }
 
-  async findAll(query: FindAllInvoicesRequest): Promise<FindAllInvoicesResponse> {
+  async findAll(query: FindAllInvoicesRequest): Promise<FindAllInvoicesResponse | FindAllInvoicesCursorResponse> {
     const version = await this.getListVersion();
     const hash = this.hashQuery(query);
     const cacheKey = CACHE_KEY_LIST(version, hash);
 
     try {
-      const cached = await this.cacheManager.get<FindAllInvoicesResponse>(cacheKey);
+      const cached = await this.cacheManager.get<FindAllInvoicesResponse | FindAllInvoicesCursorResponse>(cacheKey);
       if (cached) return cached;
     } catch {
       this.logger.warn(`Cache read failed for key "${cacheKey}"`);
     }
 
+    const result = await this.invoiceRepository.findAll(query);
+    const items = result.items.map((invoice) => this.toInvoiceResponse(invoice));
+
+    if (result.meta.mode === 'cursor') {
+      const cursorMeta = result.meta as CursorPaginationMeta;
+      const response: FindAllInvoicesCursorResponse = {
+        items,
+        meta: {
+          limit: cursorMeta.limit,
+          hasNextPage: cursorMeta.hasNextPage,
+          cursor: cursorMeta.cursor,
+        },
+      };
+
+      try {
+        await this.cacheManager.set(cacheKey, response, TTL_LIST_MS);
+      } catch {
+        this.logger.warn(`Cache write failed for key "${cacheKey}"`);
+      }
+
+      return response;
+    }
+
     const page = query.page ?? DEFAULT_PAGE;
     const limit = query.limit ?? DEFAULT_LIMIT;
-    const { items, total } = await this.invoiceRepository.findAll(query);
-
-    const result: FindAllInvoicesResponse = {
-      items: items.map((invoice) => this.toInvoiceResponse(invoice)),
+    const total = result.meta.total;
+    const response: FindAllInvoicesResponse = {
+      items,
       meta: buildPaginationMeta(page, limit, total),
     };
 
     try {
-      await this.cacheManager.set(cacheKey, result, TTL_LIST_MS);
+      await this.cacheManager.set(cacheKey, response, TTL_LIST_MS);
     } catch {
       this.logger.warn(`Cache write failed for key "${cacheKey}"`);
     }
 
-    return result;
+    return response;
   }
 
   async findOne(id: string): Promise<InvoiceResponse> {
