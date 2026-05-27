@@ -1,4 +1,4 @@
-import { CONFIGURATION, TConfiguration } from '../configuration';
+import { CONFIGURATION } from '../configuration';
 import { Module, MiddlewareConsumer } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -25,11 +25,6 @@ import { CircuitBreakerModule } from '@libs/circuit-breaker';
   providers: [AppService],
 })
 export class AppModule {
-  /**
-   * Boot-time escape hatch — prefer injecting ConfigService inside modules.
-   */
-  static readonly CONFIGURATION: TConfiguration = CONFIGURATION;
-
   configure(consumer: MiddlewareConsumer): void {
     consumer.apply(LoggerMiddleware).forRoutes('*');
   }

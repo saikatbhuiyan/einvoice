@@ -2,7 +2,7 @@ import { MiddlewareConsumer, Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
-import { CONFIGURATION, TConfiguration } from '../configuration';
+import { CONFIGURATION } from '../configuration';
 import { LoggerMiddleware } from '@libs/middlewares';
 import { MongoDbModule } from '../database/mongodb.module';
 import { SchemasModule } from '@libs/schemas';
@@ -36,8 +36,6 @@ const hasReadReplicas = !!CONFIGURATION.MONGODB_CONFIG.MONGODB_READ_URI;
   exports: [APP_CONFIGURATION],
 })
 export class AppModule {
-  static readonly CONFIGURATION: TConfiguration = CONFIGURATION;
-
   configure(consumer: MiddlewareConsumer) {
     consumer.apply(LoggerMiddleware).forRoutes('*');
   }
