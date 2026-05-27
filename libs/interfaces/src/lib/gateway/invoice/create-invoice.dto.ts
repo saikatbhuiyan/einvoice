@@ -1,10 +1,35 @@
 import { Type } from 'class-transformer';
-import { ArrayMinSize, IsArray, IsDefined, IsOptional, IsString, ValidateNested } from 'class-validator';
+import {
+  ArrayMinSize,
+  IsArray,
+  IsDateString,
+  IsDefined,
+  IsEnum,
+  IsOptional,
+  IsString,
+  Length,
+  MaxLength,
+  ValidateNested,
+} from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { INVOICE_CONSTRAINTS, INVOICE_STATUSES, SUPPORTED_CURRENCIES } from '@libs/shared/types';
 import type { CreateInvoiceRequest } from './invoice.types';
-import { ClientSnapshotDto, InvoiceFieldsDto, InvoiceItemDto } from './invoice-fields.dto';
+import { ClientSnapshotDto, InvoiceItemDto } from './invoice-fields.dto';
+import type { InvoiceStatus, SupportedCurrency } from './invoice.types';
 
-export class CreateInvoiceDto extends InvoiceFieldsDto implements CreateInvoiceRequest {
+const constraints = INVOICE_CONSTRAINTS;
+
+export class CreateInvoiceDto implements CreateInvoiceRequest {
+  @ApiProperty({
+    example: 'INV-2026-0001',
+    minLength: constraints.invoiceNumber.minLength,
+    maxLength: constraints.invoiceNumber.maxLength,
+    description: 'External invoice number. Must be unique in the invoice service.',
+  })
+  @IsString()
+  @Length(constraints.invoiceNumber.minLength, constraints.invoiceNumber.maxLength)
+  invoiceNumber!: string;
+
   @ApiProperty({
     type: () => ClientSnapshotDto,
     description: 'Client details captured as an immutable invoice snapshot.',
@@ -25,6 +50,53 @@ export class CreateInvoiceDto extends InvoiceFieldsDto implements CreateInvoiceR
   @ValidateNested({ each: true })
   @Type(() => InvoiceItemDto)
   items!: InvoiceItemDto[];
+
+  @ApiProperty({
+    enum: SUPPORTED_CURRENCIES,
+    enumName: 'SupportedCurrency',
+    example: 'BDT',
+    description: 'Currency used for all monetary amounts on the invoice.',
+  })
+  @IsEnum(SUPPORTED_CURRENCIES)
+  currency!: SupportedCurrency;
+
+  @ApiPropertyOptional({
+    enum: INVOICE_STATUSES,
+    enumName: 'InvoiceStatus',
+    example: 'issued',
+    description: 'Lifecycle status. Omit to let the invoice service apply its default.',
+  })
+  @IsOptional()
+  @IsEnum(INVOICE_STATUSES)
+  status?: InvoiceStatus;
+
+  @ApiPropertyOptional({
+    example: '2026-04-28',
+    format: 'date',
+    description: 'Date the invoice is issued.',
+  })
+  @IsOptional()
+  @IsDateString()
+  issueDate?: string;
+
+  @ApiPropertyOptional({
+    example: '2026-05-28',
+    format: 'date',
+    description: 'Payment due date for the invoice.',
+  })
+  @IsOptional()
+  @IsDateString()
+  dueDate?: string;
+
+  @ApiPropertyOptional({
+    example: 'Payment due within 30 days.',
+    maxLength: constraints.notes.maxLength,
+    description: 'Optional notes shown to the client.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(constraints.notes.maxLength)
+  notes?: string;
 
   @ApiPropertyOptional({
     example: 'idempotency-key-uuid-v4',

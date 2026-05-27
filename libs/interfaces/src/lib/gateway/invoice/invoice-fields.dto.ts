@@ -1,19 +1,8 @@
 import { Type } from 'class-transformer';
-import {
-  IsDateString,
-  IsEmail,
-  IsEnum,
-  IsNumber,
-  IsOptional,
-  IsString,
-  Length,
-  Max,
-  MaxLength,
-  Min,
-} from 'class-validator';
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { INVOICE_CONSTRAINTS, INVOICE_STATUSES, SUPPORTED_CURRENCIES } from '@libs/shared/types';
-import type { ClientSnapshotRequest, InvoiceItemRequest, InvoiceStatus, SupportedCurrency } from './invoice.types';
+import { IsEmail, IsNumber, IsString, Length, Max, MaxLength, Min } from 'class-validator';
+import { ApiProperty } from '@nestjs/swagger';
+import { INVOICE_CONSTRAINTS } from '@libs/shared/types';
+import type { ClientSnapshotRequest, InvoiceItemRequest } from './invoice.types';
 
 const constraints = INVOICE_CONSTRAINTS;
 
@@ -105,63 +94,4 @@ export class InvoiceItemDto implements InvoiceItemRequest {
   @Min(constraints.item.vatRate.min)
   @Max(constraints.item.vatRate.max)
   vatRate!: number;
-}
-
-export class InvoiceFieldsDto {
-  @ApiProperty({
-    example: 'INV-2026-0001',
-    minLength: constraints.invoiceNumber.minLength,
-    maxLength: constraints.invoiceNumber.maxLength,
-    description: 'External invoice number. Must be unique in the invoice service.',
-  })
-  @IsString()
-  @Length(constraints.invoiceNumber.minLength, constraints.invoiceNumber.maxLength)
-  invoiceNumber!: string;
-
-  @ApiProperty({
-    enum: SUPPORTED_CURRENCIES,
-    enumName: 'SupportedCurrency',
-    example: 'BDT',
-    description: 'Currency used for all monetary amounts on the invoice.',
-  })
-  @IsEnum(SUPPORTED_CURRENCIES)
-  currency!: SupportedCurrency;
-
-  @ApiPropertyOptional({
-    enum: INVOICE_STATUSES,
-    enumName: 'InvoiceStatus',
-    example: 'issued',
-    description: 'Lifecycle status. Omit to let the invoice service apply its default.',
-  })
-  @IsOptional()
-  @IsEnum(INVOICE_STATUSES)
-  status?: InvoiceStatus;
-
-  @ApiPropertyOptional({
-    example: '2026-04-28',
-    format: 'date',
-    description: 'Date the invoice is issued.',
-  })
-  @IsOptional()
-  @IsDateString()
-  issueDate?: string;
-
-  @ApiPropertyOptional({
-    example: '2026-05-28',
-    format: 'date',
-    description: 'Payment due date for the invoice.',
-  })
-  @IsOptional()
-  @IsDateString()
-  dueDate?: string;
-
-  @ApiPropertyOptional({
-    example: 'Payment due within 30 days.',
-    maxLength: constraints.notes.maxLength,
-    description: 'Optional notes shown to the client.',
-  })
-  @IsOptional()
-  @IsString()
-  @MaxLength(constraints.notes.maxLength)
-  notes?: string;
 }
