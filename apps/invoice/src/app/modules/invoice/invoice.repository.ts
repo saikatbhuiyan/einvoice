@@ -1,25 +1,32 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
+import { BadRequestException, Inject, Injectable } from '@nestjs/common';
 import { Types, isValidObjectId } from 'mongoose';
 import { DEFAULT_LIMIT, DEFAULT_PAGE } from '@libs/constants';
-import { InvoiceDocument, InvoiceModel, InvoiceModelName } from '@libs/schemas';
+import { InvoiceDocument, InvoiceModel } from '@libs/schemas';
 import { CreateInvoiceRequest, FindAllInvoicesRequest, UpdateInvoiceRequest } from '@libs/interfaces/gateway';
 import { buildPaginationMeta } from '@libs/shared/types';
-import { IInvoiceRepository, PaginatedResult } from './invoice.repository.interface';
+import {
+  IInvoiceRepository,
+  INVOICE_READ_MODEL,
+  INVOICE_WRITE_MODEL,
+  PaginatedResult,
+} from './invoice.repository.interface';
 
 @Injectable()
 export class InvoiceRepository implements IInvoiceRepository {
-  constructor(@InjectModel(InvoiceModelName) private readonly invoiceModel: InvoiceModel) {}
+  constructor(
+    @Inject(INVOICE_WRITE_MODEL) private readonly writeModel: InvoiceModel,
+    @Inject(INVOICE_READ_MODEL) private readonly readModel: InvoiceModel,
+  ) {}
 
   async create(data: CreateInvoiceRequest): Promise<InvoiceDocument> {
     if (data.idempotencyKey) {
-      const existing = await this.invoiceModel
+      const existing = await this.writeModel
         .findOne({ idempotencyKey: data.idempotencyKey.trim(), deletedAt: null })
         .exec();
       if (existing) return existing;
     }
 
-    return this.invoiceModel.create(this.toPersistencePayload(data));
+    return this.writeModel.create(this.toPersistencePayload(data));
   }
 
   async findAll(query: FindAllInvoicesRequest): Promise<PaginatedResult<InvoiceDocument>> {
@@ -35,12 +42,12 @@ export class InvoiceRepository implements IInvoiceRepository {
 
   async findOne(id: string): Promise<InvoiceDocument | null> {
     if (!isValidObjectId(id)) return null;
-    return this.invoiceModel.findOne({ _id: id, deletedAt: null }).exec();
+    return this.readModel.findOne({ _id: id, deletedAt: null }).exec();
   }
 
   async update(id: string, data: UpdateInvoiceRequest): Promise<InvoiceDocument | null> {
     if (!isValidObjectId(id)) return null;
-    const invoice = await this.invoiceModel.findOne({ _id: id, deletedAt: null }).exec();
+    const invoice = await this.writeModel.findOne({ _id: id, deletedAt: null }).exec();
     if (!invoice) return null;
 
     invoice.set(this.toPersistencePayload(data));
@@ -50,7 +57,7 @@ export class InvoiceRepository implements IInvoiceRepository {
 
   async remove(id: string): Promise<InvoiceDocument | null> {
     if (!isValidObjectId(id)) return null;
-    return this.invoiceModel
+    return this.writeModel
       .findOneAndUpdate({ _id: id, deletedAt: null }, { deletedAt: new Date() }, { new: true })
       .exec();
   }
@@ -67,7 +74,7 @@ export class InvoiceRepository implements IInvoiceRepository {
       _id: { $lt: new Types.ObjectId(decodedId) },
     };
 
-    const items = await this.invoiceModel
+    const items = await this.readModel
       .find(cursorFilter)
       .sort({ _id: -1 })
       .limit(limit + 1)
@@ -92,8 +99,8 @@ export class InvoiceRepository implements IInvoiceRepository {
     const skip = (page - 1) * limit;
 
     const [items, total] = await Promise.all([
-      this.invoiceModel.find(filter).sort({ issueDate: -1, createdAt: -1 }).skip(skip).limit(limit).exec(),
-      this.invoiceModel.countDocuments(filter).exec(),
+      this.readModel.find(filter).sort({ issueDate: -1, createdAt: -1 }).skip(skip).limit(limit).exec(),
+      this.readModel.countDocuments(filter).exec(),
     ]);
 
     return {

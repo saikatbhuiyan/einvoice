@@ -3,6 +3,9 @@ import { CreateInvoiceRequest, FindAllInvoicesRequest, UpdateInvoiceRequest } fr
 
 export const INVOICE_REPOSITORY = Symbol('INVOICE_REPOSITORY');
 
+export const INVOICE_WRITE_MODEL = Symbol('INVOICE_WRITE_MODEL');
+export const INVOICE_READ_MODEL = Symbol('INVOICE_READ_MODEL');
+
 export interface OffsetPaginationResult {
   mode: 'offset';
   page: number;
