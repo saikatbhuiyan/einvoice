@@ -10,6 +10,8 @@ import { InvoiceModule } from './modules/invoice/invoice.module';
 
 export const APP_CONFIGURATION = Symbol('APP_CONFIGURATION');
 
+const hasReadReplicas = !!CONFIGURATION.MONGODB_CONFIG.MONGODB_READ_URI;
+
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -17,9 +19,11 @@ export const APP_CONFIGURATION = Symbol('APP_CONFIGURATION');
       load: [() => CONFIGURATION],
       ignoreEnvFile: CONFIGURATION.IS_PRODUCTION,
     }),
+    ...MongoDbModule.withReadReplicas(CONFIGURATION.MONGODB_CONFIG),
     MongoDbModule,
     SchemasModule,
-    InvoiceModule,
+    ...SchemasModule.forReadConnection(hasReadReplicas),
+    InvoiceModule.register(hasReadReplicas),
   ],
   controllers: [AppController],
   providers: [
