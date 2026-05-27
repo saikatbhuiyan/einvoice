@@ -17,6 +17,8 @@ import { mongoProviders } from './mongodb.provider';
       ) => ({
         uri: mongoConfig.MONGODB_URI,
         ...connectionOptions,
+        // The default connection backs write paths and must never inherit a replica read preference.
+        readPreference: 'primary',
         connectionFactory: (connection: Connection) => {
           const sanitizedUri = mongoConfig.SANITIZED_URI;
 
