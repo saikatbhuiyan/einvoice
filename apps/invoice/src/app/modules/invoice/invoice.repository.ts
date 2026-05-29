@@ -1,4 +1,4 @@
-import { BadRequestException, Inject, Injectable } from '@nestjs/common';
+import { BadRequestException, ConflictException, Inject, Injectable } from '@nestjs/common';
 import { Types, isValidObjectId } from 'mongoose';
 import { DEFAULT_LIMIT, DEFAULT_PAGE } from '@libs/constants';
 import { InvoiceDocument, InvoiceModel } from '@libs/schemas';
@@ -45,21 +45,50 @@ export class InvoiceRepository implements IInvoiceRepository {
     return this.readModel.findOne({ _id: id, deletedAt: null }).exec();
   }
 
-  async update(id: string, data: UpdateInvoiceRequest): Promise<InvoiceDocument | null> {
+  async update(id: string, data: UpdateInvoiceRequest, version?: number): Promise<InvoiceDocument | null> {
     if (!isValidObjectId(id)) return null;
-    const invoice = await this.writeModel.findOne({ _id: id, deletedAt: null }).exec();
-    if (!invoice) return null;
+
+    const filter: Record<string, unknown> = { _id: id, deletedAt: null };
+    if (version !== undefined) {
+      filter.version = version;
+    }
+
+    const invoice = await this.writeModel.findOne(filter as Record<string, unknown>).exec();
+    if (!invoice) {
+      if (version !== undefined) {
+        const exists = await this.writeModel.exists({ _id: id, deletedAt: null });
+        if (exists) {
+          throw new ConflictException('Invoice was modified by another user. Please refresh and retry.');
+        }
+      }
+      return null;
+    }
 
     invoice.set(this.toPersistencePayload(data));
     await invoice.save();
     return invoice;
   }
 
-  async remove(id: string): Promise<InvoiceDocument | null> {
+  async remove(id: string, version?: number): Promise<InvoiceDocument | null> {
     if (!isValidObjectId(id)) return null;
-    return this.writeModel
-      .findOneAndUpdate({ _id: id, deletedAt: null }, { deletedAt: new Date() }, { new: true })
+
+    const filter: Record<string, unknown> = { _id: id, deletedAt: null };
+    if (version !== undefined) {
+      filter.version = version;
+    }
+
+    const result = await this.writeModel
+      .findOneAndUpdate(filter as Record<string, unknown>, { deletedAt: new Date() }, { new: true })
       .exec();
+
+    if (!result && version !== undefined) {
+      const exists = await this.writeModel.exists({ _id: id, deletedAt: null });
+      if (exists) {
+        throw new ConflictException('Invoice was modified by another user. Please refresh and retry.');
+      }
+    }
+
+    return result;
   }
 
   private async findAllWithCursor(

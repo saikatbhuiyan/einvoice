@@ -31,11 +31,11 @@ export class InvoiceRpcController {
 
   @MessagePattern(TCP_PATTERNS.INVOICE.UPDATE)
   updateByMessage(@Payload() payload: UpdateInvoiceGatewayDto) {
-    return this.invoiceService.update(payload.id, payload.data);
+    return this.invoiceService.update(payload.id, payload.data, payload.version);
   }
 
   @MessagePattern(TCP_PATTERNS.INVOICE.DELETE)
   removeByMessage(@Payload() payload: DeleteInvoiceGatewayDto) {
-    return this.invoiceService.remove(payload.id);
+    return this.invoiceService.remove(payload.id, payload.version);
   }
 }

@@ -14,46 +14,33 @@ import { firstValueFrom, timeout, catchError, throwError, TimeoutError } from 'r
 import { statusTitle } from '@libs/shared/utils';
 import { CIRCUIT_BREAKER_FACTORY } from '@libs/circuit-breaker';
 import type { CircuitBreakerFactory } from '@libs/circuit-breaker';
+import { ConnectionErrorDetector } from './connection-error-detector';
+import { GrpcToHttpMapper } from './grpc-to-http-mapper';
 import type { ServiceName } from './tcp.config';
 
-/** Default RPC call timeout — override per-service or per-call */
 const DEFAULT_RPC_TIMEOUT_MS = 10_000;
-
-const CONNECTION_ERROR_CODES = new Set(['ECONNREFUSED', 'ECONNRESET', 'ENOTFOUND', 'EHOSTUNREACH', 'ETIMEDOUT']);
-
-interface RpcErrorLike {
-  status?: unknown;
-  statusCode?: unknown;
-  code?: unknown;
-  message?: unknown;
-  error?: unknown;
-}
 
 export abstract class BaseTcpClient implements OnModuleInit {
   protected abstract readonly logger: Logger;
   protected abstract readonly client: ClientProxy;
   protected abstract readonly serviceName: ServiceName;
 
+  private readonly connectionErrorDetector = new ConnectionErrorDetector();
+  private readonly grpcToHttpMapper = new GrpcToHttpMapper();
+
   constructor(
     @Optional() @Inject(CIRCUIT_BREAKER_FACTORY) private readonly circuitBreakerFactory?: CircuitBreakerFactory,
   ) {}
 
-  /** Called by NestJS — ensures the TCP connection is ready before requests arrive */
   async onModuleInit(): Promise<void> {
     try {
       await this.client.connect();
       this.logger.log(`TCP client connected`);
     } catch (error) {
       this.logger.error('TCP client failed to connect', (error as Error).stack);
-      // Don't throw — retryAttempts in the client config will handle reconnection
     }
   }
 
-  /**
-   * Request-response RPC call with circuit breaker wrapping.
-   * If CircuitBreakerModule is registered, calls go through the per-service circuit.
-   * If not registered (e.g. in invoice service), calls proceed without circuit breaking.
-   */
   protected async send<TResult, TInput = unknown>(
     pattern: string,
     payload: TInput,
@@ -83,11 +70,6 @@ export abstract class BaseTcpClient implements OnModuleInit {
     return breaker.execute(execute);
   }
 
-  /**
-   * Fire-and-forget event emission (no response expected).
-   * @param pattern  Message pattern string from TCP_PATTERNS
-   * @param payload  Data to emit
-   */
   protected emit<TInput = unknown>(pattern: string, payload: TInput): void {
     this.client.emit<void, TInput>(pattern, payload);
   }
@@ -97,12 +79,12 @@ export abstract class BaseTcpClient implements OnModuleInit {
       return error;
     }
 
-    if (this.isConnectionError(error)) {
+    if (this.connectionErrorDetector.isConnectionError(error)) {
       return new ServiceUnavailableException('Downstream service is unavailable.');
     }
 
-    const rpcError = this.extractRpcError(error);
-    const status = this.resolveHttpStatus(rpcError);
+    const rpcError = this.connectionErrorDetector.extractRpcError(error);
+    const status = this.grpcToHttpMapper.resolveHttpStatus(rpcError);
     const message = this.resolveMessage(rpcError, `Downstream RPC call failed for pattern "${pattern}".`);
 
     if (status) {
@@ -121,79 +103,10 @@ export abstract class BaseTcpClient implements OnModuleInit {
     return new BadGatewayException(message);
   }
 
-  private extractRpcError(error: unknown): RpcErrorLike | undefined {
-    const unwrapped = this.unwrapRpcError(error);
-    return this.isRecord(unwrapped) ? unwrapped : undefined;
-  }
-
-  private unwrapRpcError(error: unknown): unknown {
-    if (!this.isRecord(error)) {
-      return error;
-    }
-
-    if (this.isRecord(error.response)) {
-      return error.response;
-    }
-
-    if (this.isRecord(error.err)) {
-      return error.err;
-    }
-
-    if (this.isRecord(error.error)) {
-      return error.error;
-    }
-
-    return error;
-  }
-
-  private resolveHttpStatus(error?: RpcErrorLike): number | undefined {
-    if (!error) {
-      return undefined;
-    }
-
-    const explicitStatus = this.toHttpStatus(error.status) ?? this.toHttpStatus(error.statusCode);
-    if (explicitStatus) {
-      return explicitStatus;
-    }
-
-    return this.grpcCodeToHttpStatus(error.code);
-  }
-
-  private toHttpStatus(value: unknown): number | undefined {
-    const status = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN;
-    return Number.isInteger(status) && status >= 400 && status < 600 ? status : undefined;
-  }
-
-  private grpcCodeToHttpStatus(value: unknown): number | undefined {
-    const code = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN;
-
-    if (!Number.isInteger(code)) {
-      return undefined;
-    }
-
-    const statusByGrpcCode: Record<number, number> = {
-      1: HttpStatus.BAD_GATEWAY,
-      2: HttpStatus.BAD_GATEWAY,
-      3: HttpStatus.UNPROCESSABLE_ENTITY,
-      4: HttpStatus.GATEWAY_TIMEOUT,
-      5: HttpStatus.NOT_FOUND,
-      6: HttpStatus.CONFLICT,
-      7: HttpStatus.FORBIDDEN,
-      8: HttpStatus.TOO_MANY_REQUESTS,
-      9: HttpStatus.CONFLICT,
-      10: HttpStatus.CONFLICT,
-      11: HttpStatus.UNPROCESSABLE_ENTITY,
-      12: HttpStatus.NOT_IMPLEMENTED,
-      13: HttpStatus.BAD_GATEWAY,
-      14: HttpStatus.SERVICE_UNAVAILABLE,
-      15: HttpStatus.BAD_GATEWAY,
-      16: HttpStatus.UNAUTHORIZED,
-    };
-
-    return statusByGrpcCode[code];
-  }
-
-  private resolveMessage(error: RpcErrorLike | undefined, fallback: string): string | string[] {
+  private resolveMessage(
+    error: import('./connection-error-detector').RpcErrorLike | undefined,
+    fallback: string,
+  ): string | string[] {
     const message = error?.message;
 
     if (Array.isArray(message)) {
@@ -211,23 +124,10 @@ export abstract class BaseTcpClient implements OnModuleInit {
     return fallback;
   }
 
-  private resolveErrorTitle(error: RpcErrorLike | undefined, status: number): string {
+  private resolveErrorTitle(
+    error: import('./connection-error-detector').RpcErrorLike | undefined,
+    status: number,
+  ): string {
     return typeof error?.error === 'string' && error.error.trim() ? error.error : statusTitle(status);
-  }
-
-  private isConnectionError(error: unknown): boolean {
-    const unwrapped = this.unwrapRpcError(error);
-    const record = this.isRecord(unwrapped) ? unwrapped : this.isRecord(error) ? error : undefined;
-    const code = record?.code;
-    const message = error instanceof Error ? error.message : this.isRecord(error) ? String(error.message ?? '') : '';
-
-    return (
-      (typeof code === 'string' && CONNECTION_ERROR_CODES.has(code)) ||
-      [...CONNECTION_ERROR_CODES].some((errorCode) => message.includes(errorCode))
-    );
-  }
-
-  private isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === 'object' && value !== null;
   }
 }

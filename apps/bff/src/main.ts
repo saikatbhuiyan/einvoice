@@ -3,8 +3,9 @@ import { NestFactory } from '@nestjs/core';
 import helmet from 'helmet';
 import { HttpAdapterHost, Reflector } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
+import { json, urlencoded } from 'express';
 import { ConfigService } from '@nestjs/config';
-import { ALLOWED_HTTP_METHODS } from '@libs/constants';
+import { ALLOWED_HTTP_METHODS, BODY_SIZE_LIMIT, SHUTDOWN_DRAIN_TIMEOUT_MS } from '@libs/constants';
 import { createValidationPipe } from '@libs/shared/utils';
 import { AppModule } from './app/app.module';
 import { GlobalExceptionFilter } from '@libs/filters';
@@ -36,6 +37,8 @@ async function bootstrap(): Promise<void> {
 
   app.useLogger(isProduction ? ['error', 'warn', 'log'] : ['error', 'warn', 'log', 'debug', 'verbose']);
   app.use(helmet());
+  app.use(json({ limit: BODY_SIZE_LIMIT }));
+  app.use(urlencoded({ extended: true, limit: BODY_SIZE_LIMIT }));
 
   const allowedOrigins = corsOrigins
     .split(',')
@@ -86,6 +89,19 @@ async function bootstrap(): Promise<void> {
 
   Logger.log(`🚀 Running on: http://localhost:${port}/${globalPrefix}`);
   Logger.log(`   ENV: ${nodeEnv} | Version: ${apiVersion}`);
+
+  const gracefullyDrain = async (signal: string) => {
+    Logger.log(`Received ${signal}. Starting graceful drain (${SHUTDOWN_DRAIN_TIMEOUT_MS}ms)...`);
+    setTimeout(() => {
+      Logger.warn('Drain timeout exceeded. Forcing exit.');
+      process.exit(1);
+    }, SHUTDOWN_DRAIN_TIMEOUT_MS);
+    await app.close();
+    process.exit(0);
+  };
+
+  process.on('SIGTERM', () => gracefullyDrain('SIGTERM'));
+  process.on('SIGINT', () => gracefullyDrain('SIGINT'));
 }
 
 bootstrap().catch((error: unknown) => {

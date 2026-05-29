@@ -3,3 +3,4 @@ export * from './lib/base.schema';
 export * from './lib/client-snapshot.schema';
 export * from './lib/invoice-item.schema';
 export * from './lib/invoice.schema';
+export * from './lib/audit-log.schema';

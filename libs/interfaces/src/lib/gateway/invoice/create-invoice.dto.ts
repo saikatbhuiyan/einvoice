@@ -13,6 +13,7 @@ import {
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { INVOICE_CONSTRAINTS, INVOICE_STATUSES, SUPPORTED_CURRENCIES } from '@libs/shared/types';
+import { Sanitize } from '@libs/decorators';
 import type { CreateInvoiceRequest } from './invoice.types';
 import { ClientSnapshotDto, InvoiceItemDto } from './invoice-fields.dto';
 import type { InvoiceStatus, SupportedCurrency } from './invoice.types';
@@ -26,6 +27,7 @@ export class CreateInvoiceDto implements CreateInvoiceRequest {
     maxLength: constraints.invoiceNumber.maxLength,
     description: 'External invoice number. Must be unique in the invoice service.',
   })
+  @Sanitize({ normalizeWhitespace: false })
   @IsString()
   @Length(constraints.invoiceNumber.minLength, constraints.invoiceNumber.maxLength)
   invoiceNumber!: string;
@@ -94,6 +96,7 @@ export class CreateInvoiceDto implements CreateInvoiceRequest {
     description: 'Optional notes shown to the client.',
   })
   @IsOptional()
+  @Sanitize()
   @IsString()
   @MaxLength(constraints.notes.maxLength)
   notes?: string;
@@ -104,6 +107,7 @@ export class CreateInvoiceDto implements CreateInvoiceRequest {
       'Client-generated idempotency key. If an invoice with this key already exists, the existing invoice is returned instead of creating a duplicate.',
   })
   @IsOptional()
+  @Sanitize({ normalizeWhitespace: false })
   @IsString()
   idempotencyKey?: string;
 }

@@ -40,11 +40,11 @@ export class InvoiceClientService extends BaseTcpClient {
     return this.send<InvoiceResponse, FindOneInvoiceGatewayRequest>(TCP_PATTERNS.INVOICE.FIND_ONE, { id });
   }
 
-  async updateInvoice(id: string, data: UpdateInvoiceRequest): Promise<InvoiceResponse> {
-    return this.send<InvoiceResponse, UpdateInvoiceGatewayRequest>(TCP_PATTERNS.INVOICE.UPDATE, { id, data });
+  async updateInvoice(id: string, data: UpdateInvoiceRequest, version?: number): Promise<InvoiceResponse> {
+    return this.send<InvoiceResponse, UpdateInvoiceGatewayRequest>(TCP_PATTERNS.INVOICE.UPDATE, { id, data, version });
   }
 
-  async removeInvoice(id: string): Promise<DeleteInvoiceResponse> {
-    return this.send<DeleteInvoiceResponse, DeleteInvoiceGatewayRequest>(TCP_PATTERNS.INVOICE.DELETE, { id });
+  async removeInvoice(id: string, version?: number): Promise<DeleteInvoiceResponse> {
+    return this.send<DeleteInvoiceResponse, DeleteInvoiceGatewayRequest>(TCP_PATTERNS.INVOICE.DELETE, { id, version });
   }
 }

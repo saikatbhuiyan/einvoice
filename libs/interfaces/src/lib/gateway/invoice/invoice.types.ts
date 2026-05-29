@@ -76,10 +76,13 @@ export interface InvoiceIdGatewayRequest {
 
 export type FindOneInvoiceGatewayRequest = InvoiceIdGatewayRequest;
 
-export type DeleteInvoiceGatewayRequest = InvoiceIdGatewayRequest;
+export interface DeleteInvoiceGatewayRequest extends InvoiceIdGatewayRequest {
+  version?: number;
+}
 
 export interface UpdateInvoiceGatewayRequest extends InvoiceIdGatewayRequest {
   data: UpdateInvoiceRequest;
+  version?: number;
 }
 
 export type ClientSnapshotResponse = ClientSnapshotRequest;
@@ -101,6 +104,7 @@ export interface InvoiceResponse {
   subtotal: number;
   vatTotal: number;
   total: number;
+  version: number;
   idempotencyKey?: string;
   createdAt: string | Date;
   updatedAt: string | Date;

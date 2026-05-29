@@ -84,6 +84,13 @@ export class InvoiceResponseDto implements InvoiceResponse {
   @ApiProperty({ example: 34500, description: 'Invoice grand total including VAT.' })
   total!: number;
 
+  @ApiProperty({
+    example: 1,
+    description:
+      'Optimistic concurrency version. Incremented on each update. Send this value in the If-Match header for update/delete requests.',
+  })
+  version!: number;
+
   @ApiPropertyOptional({
     example: 'idempotency-key-uuid-v4',
     description: 'Idempotency key echoed back when provided at creation.',

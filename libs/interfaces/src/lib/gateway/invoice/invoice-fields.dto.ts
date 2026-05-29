@@ -2,6 +2,7 @@ import { Type } from 'class-transformer';
 import { IsEmail, IsNumber, IsString, Length, Max, MaxLength, Min } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 import { INVOICE_CONSTRAINTS } from '@libs/shared/types';
+import { Sanitize } from '@libs/decorators';
 import type { ClientSnapshotRequest, InvoiceItemRequest } from './invoice.types';
 
 const constraints = INVOICE_CONSTRAINTS;
@@ -13,6 +14,7 @@ export class ClientSnapshotDto implements ClientSnapshotRequest {
     maxLength: constraints.client.name.maxLength,
     description: 'Legal or trading name captured on the invoice.',
   })
+  @Sanitize()
   @IsString()
   @Length(constraints.client.name.minLength, constraints.client.name.maxLength)
   name!: string;
@@ -23,6 +25,7 @@ export class ClientSnapshotDto implements ClientSnapshotRequest {
     format: 'email',
     description: 'Billing contact email for the client snapshot.',
   })
+  @Sanitize({ stripHtml: true, normalizeWhitespace: false })
   @IsEmail()
   @MaxLength(constraints.client.email.maxLength)
   email!: string;
@@ -33,6 +36,7 @@ export class ClientSnapshotDto implements ClientSnapshotRequest {
     maxLength: constraints.client.address.maxLength,
     description: 'Billing address captured at invoice creation time.',
   })
+  @Sanitize()
   @IsString()
   @Length(constraints.client.address.minLength, constraints.client.address.maxLength)
   address!: string;
@@ -45,6 +49,7 @@ export class InvoiceItemDto implements InvoiceItemRequest {
     maxLength: constraints.item.catalogId.maxLength,
     description: 'Catalog, SKU, or product identifier from the source system.',
   })
+  @Sanitize({ normalizeWhitespace: false })
   @IsString()
   @Length(constraints.item.catalogId.minLength, constraints.item.catalogId.maxLength)
   catalogId!: string;
@@ -55,6 +60,7 @@ export class InvoiceItemDto implements InvoiceItemRequest {
     maxLength: constraints.item.name.maxLength,
     description: 'Human-readable line item name.',
   })
+  @Sanitize()
   @IsString()
   @Length(constraints.item.name.minLength, constraints.item.name.maxLength)
   name!: string;

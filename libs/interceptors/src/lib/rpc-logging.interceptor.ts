@@ -4,6 +4,23 @@ import { Observable, throwError } from 'rxjs';
 import { catchError, tap } from 'rxjs/operators';
 import { randomUUID } from 'crypto';
 
+type TopicContext = { getTopic(): string };
+type MessageContext = { getMessage(): { headers?: Record<string, unknown> } };
+type MetadataContext = { getMetadata(): Map<string, string[]> };
+type RpcContext = TopicContext | MessageContext | MetadataContext;
+
+function isTopicContext(ctx: unknown): ctx is TopicContext {
+  return typeof ctx === 'object' && ctx !== null && typeof (ctx as TopicContext).getTopic === 'function';
+}
+
+function isMessageContext(ctx: unknown): ctx is MessageContext {
+  return typeof ctx === 'object' && ctx !== null && typeof (ctx as MessageContext).getMessage === 'function';
+}
+
+function isMetadataContext(ctx: unknown): ctx is MetadataContext {
+  return typeof ctx === 'object' && ctx !== null && typeof (ctx as MetadataContext).getMetadata === 'function';
+}
+
 @Injectable()
 export class RpcLoggingInterceptor implements NestInterceptor {
   private readonly logger = new Logger('RPC');
@@ -68,8 +85,8 @@ export class RpcLoggingInterceptor implements NestInterceptor {
   }
 
   private extractPattern(context: ExecutionContext, rpcCtx: Record<string, unknown>): string {
-    if (typeof (rpcCtx as any).getTopic === 'function') {
-      return (rpcCtx as any).getTopic() as string;
+    if (isTopicContext(rpcCtx)) {
+      return rpcCtx.getTopic();
     }
 
     const handlerName = context.getHandler().name;
@@ -79,20 +96,20 @@ export class RpcLoggingInterceptor implements NestInterceptor {
 
   private extractCorrelationId(data: Record<string, unknown> | unknown, rpcCtx: Record<string, unknown>): string {
     if (data && typeof data === 'object' && 'correlationId' in data) {
-      return (data as any).correlationId as string;
+      return String((data as Record<string, unknown>).correlationId);
     }
 
-    if (typeof (rpcCtx as any).getMessage === 'function') {
-      const msg = (rpcCtx as any).getMessage();
+    if (isMessageContext(rpcCtx)) {
+      const msg = rpcCtx.getMessage();
       const headers = msg?.headers ?? {};
       const id = headers['x-correlation-id']?.toString() ?? headers['correlation-id']?.toString();
       if (id) return id;
     }
 
-    if (typeof (rpcCtx as any).getMetadata === 'function') {
-      const meta = (rpcCtx as any).getMetadata();
+    if (isMetadataContext(rpcCtx)) {
+      const meta = rpcCtx.getMetadata();
       const id = meta?.get?.('x-correlation-id')?.[0];
-      if (id) return id as string;
+      if (id) return id;
     }
 
     return randomUUID();

@@ -24,6 +24,7 @@ import {
   InvoiceResponse,
   UpdateInvoiceRequest,
 } from '@libs/interfaces/gateway';
+import { AuditLogService } from '@libs/audit-log';
 import { INVOICE_REPOSITORY, IInvoiceRepository, type PaginatedResultMeta } from './invoice.repository.interface';
 
 const SVC_PREFIX = 'svc';
@@ -44,6 +45,7 @@ export class InvoiceService {
     private readonly invoiceRepository: IInvoiceRepository,
     @Inject(CACHE_MANAGER) private readonly cacheManager: Cache,
     @Inject(REDIS_CLIENT) redis: Redis,
+    private readonly auditLog: AuditLogService,
   ) {
     this.redis = redis;
   }
@@ -52,6 +54,11 @@ export class InvoiceService {
     try {
       const createdInvoice = await this.invoiceRepository.create(createInvoiceDto);
       await this.bumpListVersion();
+      await this.auditLog.record({
+        action: 'CREATE',
+        entityType: 'invoice',
+        entityId: createdInvoice._id.toString(),
+      });
       return this.toInvoiceResponse(createdInvoice);
     } catch (error) {
       this.handlePersistenceError(error);
@@ -137,26 +144,40 @@ export class InvoiceService {
     return response;
   }
 
-  async update(id: string, updateInvoiceDto: UpdateInvoiceRequest): Promise<InvoiceResponse> {
-    const invoice = await this.invoiceRepository.update(this.ensureObjectId(id), updateInvoiceDto);
+  async update(id: string, updateInvoiceDto: UpdateInvoiceRequest, version?: number): Promise<InvoiceResponse> {
+    const previous = await this.invoiceRepository.findOne(this.ensureObjectId(id));
+    const invoice = await this.invoiceRepository.update(this.ensureObjectId(id), updateInvoiceDto, version);
 
     if (!invoice) {
       throw new NotFoundException(`Invoice not found for id "${id}".`);
     }
 
     await Promise.all([this.delCacheKey(CACHE_KEY_ONE(id)), this.bumpListVersion()]);
+    await this.auditLog.record({
+      action: 'UPDATE',
+      entityType: 'invoice',
+      entityId: id,
+      previous: previous ? (previous.toJSON() as unknown as Record<string, unknown>) : undefined,
+    });
 
     return this.toInvoiceResponse(invoice);
   }
 
-  async remove(id: string): Promise<DeleteInvoiceResponse> {
-    const invoice = await this.invoiceRepository.remove(this.ensureObjectId(id));
+  async remove(id: string, version?: number): Promise<DeleteInvoiceResponse> {
+    const previous = await this.invoiceRepository.findOne(this.ensureObjectId(id));
+    const invoice = await this.invoiceRepository.remove(this.ensureObjectId(id), version);
 
     if (!invoice) {
       throw new NotFoundException(`Invoice not found for id "${id}".`);
     }
 
     await Promise.all([this.delCacheKey(CACHE_KEY_ONE(id)), this.bumpListVersion()]);
+    await this.auditLog.record({
+      action: 'DELETE',
+      entityType: 'invoice',
+      entityId: id,
+      previous: previous ? (previous.toJSON() as unknown as Record<string, unknown>) : undefined,
+    });
 
     return {
       id,

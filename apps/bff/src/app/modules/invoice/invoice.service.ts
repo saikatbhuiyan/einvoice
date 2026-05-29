@@ -145,14 +145,14 @@ export class InvoiceService {
     return invoice;
   }
 
-  async update(id: string, payload: UpdateInvoiceRequest): Promise<InvoiceResponse> {
-    const invoice = await this.invoiceClient.updateInvoice(id, payload);
+  async update(id: string, payload: UpdateInvoiceRequest, version?: number): Promise<InvoiceResponse> {
+    const invoice = await this.invoiceClient.updateInvoice(id, payload, version);
     await Promise.all([this.delCacheKey(CACHE_KEY_ONE(id)), this.bumpListVersion()]);
     return invoice;
   }
 
-  async remove(id: string): Promise<DeleteInvoiceResponse> {
-    const result = await this.invoiceClient.removeInvoice(id);
+  async remove(id: string, version?: number): Promise<DeleteInvoiceResponse> {
+    const result = await this.invoiceClient.removeInvoice(id, version);
     await Promise.all([this.delCacheKey(CACHE_KEY_ONE(id)), this.bumpListVersion()]);
     return result;
   }

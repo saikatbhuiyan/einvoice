@@ -12,6 +12,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { INVOICE_CONSTRAINTS, INVOICE_STATUSES, SUPPORTED_CURRENCIES } from '@libs/shared/types';
+import { Sanitize } from '@libs/decorators';
 import type { UpdateClientSnapshotRequest, UpdateInvoiceItemRequest, UpdateInvoiceRequest } from './invoice.types';
 import { ClientSnapshotDto, InvoiceItemDto } from './invoice-fields.dto';
 import type { InvoiceStatus, SupportedCurrency } from './invoice.types';
@@ -30,6 +31,7 @@ export class UpdateInvoiceDto implements UpdateInvoiceRequest {
     description: 'External invoice number. Must be unique in the invoice service.',
   })
   @IsOptional()
+  @Sanitize({ normalizeWhitespace: false })
   @IsString()
   @Length(constraints.invoiceNumber.minLength, constraints.invoiceNumber.maxLength)
   invoiceNumber?: string;
@@ -100,6 +102,7 @@ export class UpdateInvoiceDto implements UpdateInvoiceRequest {
     description: 'Optional notes shown to the client.',
   })
   @IsOptional()
+  @Sanitize()
   @IsString()
   @MaxLength(constraints.notes.maxLength)
   notes?: string;

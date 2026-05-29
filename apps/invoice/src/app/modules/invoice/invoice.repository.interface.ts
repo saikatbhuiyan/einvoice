@@ -37,7 +37,7 @@ export interface IInvoiceRepository {
 
   findOne(id: string): Promise<InvoiceDocument | null>;
 
-  update(id: string, data: UpdateInvoiceRequest): Promise<InvoiceDocument | null>;
+  update(id: string, data: UpdateInvoiceRequest, version?: number): Promise<InvoiceDocument | null>;
 
-  remove(id: string): Promise<InvoiceDocument | null>;
+  remove(id: string, version?: number): Promise<InvoiceDocument | null>;
 }
