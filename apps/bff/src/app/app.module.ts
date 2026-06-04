@@ -1,10 +1,12 @@
-import { CONFIGURATION, TConfiguration } from '../configuration';
+import { CONFIGURATION } from '../configuration';
 import { Module, MiddlewareConsumer } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { ConfigModule } from '@nestjs/config';
 import { LoggerMiddleware } from '@libs/middlewares';
 import { InvoiceModule } from './modules/invoice/invoice.module';
+import { RateLimitModule } from '@libs/rate-limit';
+import { CircuitBreakerModule } from '@libs/circuit-breaker';
 
 @Module({
   imports: [
@@ -16,16 +18,13 @@ import { InvoiceModule } from './modules/invoice/invoice.module';
       ignoreEnvFile: CONFIGURATION.IS_PRODUCTION,
     }),
     InvoiceModule,
+    RateLimitModule.forRoot(),
+    CircuitBreakerModule.forRoot(),
   ],
   controllers: [AppController],
   providers: [AppService],
 })
 export class AppModule {
-  /**
-   * Boot-time escape hatch — prefer injecting ConfigService inside modules.
-   */
-  static readonly CONFIGURATION: TConfiguration = CONFIGURATION;
-
   configure(consumer: MiddlewareConsumer): void {
     consumer.apply(LoggerMiddleware).forRoutes('*');
   }

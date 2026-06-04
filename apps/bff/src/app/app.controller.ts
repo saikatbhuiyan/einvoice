@@ -1,6 +1,7 @@
 import { Controller, Get } from '@nestjs/common';
 import { ApiOperation, ApiProperty, ApiTags } from '@nestjs/swagger';
 import { ResponseMessage } from '@libs/interceptors';
+import { SkipRateLimit } from '@libs/rate-limit';
 import { ApiCorrelationIdHeader, ApiEnvelopeResponse } from './common/swagger/api-response.decorator';
 import { AppService } from './app.service';
 
@@ -11,6 +12,7 @@ class AppStatusDto {
 
 @ApiTags('System')
 @ApiCorrelationIdHeader()
+@SkipRateLimit()
 @Controller()
 export class AppController {
   constructor(private readonly appService: AppService) {}

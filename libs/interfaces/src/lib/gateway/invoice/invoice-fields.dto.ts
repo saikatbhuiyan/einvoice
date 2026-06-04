@@ -1,19 +1,9 @@
 import { Type } from 'class-transformer';
-import {
-  IsDateString,
-  IsEmail,
-  IsEnum,
-  IsNumber,
-  IsOptional,
-  IsString,
-  Length,
-  Max,
-  MaxLength,
-  Min,
-} from 'class-validator';
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { INVOICE_CONSTRAINTS, INVOICE_STATUSES, SUPPORTED_CURRENCIES } from '@libs/shared/types';
-import type { ClientSnapshotRequest, InvoiceItemRequest, InvoiceStatus, SupportedCurrency } from './invoice.types';
+import { IsEmail, IsNumber, IsString, Length, Max, MaxLength, Min } from 'class-validator';
+import { ApiProperty } from '@nestjs/swagger';
+import { INVOICE_CONSTRAINTS } from '@libs/shared/types';
+import { Sanitize } from '@libs/decorators';
+import type { ClientSnapshotRequest, InvoiceItemRequest } from './invoice.types';
 
 const constraints = INVOICE_CONSTRAINTS;
 
@@ -24,6 +14,7 @@ export class ClientSnapshotDto implements ClientSnapshotRequest {
     maxLength: constraints.client.name.maxLength,
     description: 'Legal or trading name captured on the invoice.',
   })
+  @Sanitize()
   @IsString()
   @Length(constraints.client.name.minLength, constraints.client.name.maxLength)
   name!: string;
@@ -34,6 +25,7 @@ export class ClientSnapshotDto implements ClientSnapshotRequest {
     format: 'email',
     description: 'Billing contact email for the client snapshot.',
   })
+  @Sanitize({ stripHtml: true, normalizeWhitespace: false })
   @IsEmail()
   @MaxLength(constraints.client.email.maxLength)
   email!: string;
@@ -44,6 +36,7 @@ export class ClientSnapshotDto implements ClientSnapshotRequest {
     maxLength: constraints.client.address.maxLength,
     description: 'Billing address captured at invoice creation time.',
   })
+  @Sanitize()
   @IsString()
   @Length(constraints.client.address.minLength, constraints.client.address.maxLength)
   address!: string;
@@ -56,6 +49,7 @@ export class InvoiceItemDto implements InvoiceItemRequest {
     maxLength: constraints.item.catalogId.maxLength,
     description: 'Catalog, SKU, or product identifier from the source system.',
   })
+  @Sanitize({ normalizeWhitespace: false })
   @IsString()
   @Length(constraints.item.catalogId.minLength, constraints.item.catalogId.maxLength)
   catalogId!: string;
@@ -66,6 +60,7 @@ export class InvoiceItemDto implements InvoiceItemRequest {
     maxLength: constraints.item.name.maxLength,
     description: 'Human-readable line item name.',
   })
+  @Sanitize()
   @IsString()
   @Length(constraints.item.name.minLength, constraints.item.name.maxLength)
   name!: string;
@@ -105,63 +100,4 @@ export class InvoiceItemDto implements InvoiceItemRequest {
   @Min(constraints.item.vatRate.min)
   @Max(constraints.item.vatRate.max)
   vatRate!: number;
-}
-
-export class InvoiceFieldsDto {
-  @ApiProperty({
-    example: 'INV-2026-0001',
-    minLength: constraints.invoiceNumber.minLength,
-    maxLength: constraints.invoiceNumber.maxLength,
-    description: 'External invoice number. Must be unique in the invoice service.',
-  })
-  @IsString()
-  @Length(constraints.invoiceNumber.minLength, constraints.invoiceNumber.maxLength)
-  invoiceNumber!: string;
-
-  @ApiProperty({
-    enum: SUPPORTED_CURRENCIES,
-    enumName: 'SupportedCurrency',
-    example: 'BDT',
-    description: 'Currency used for all monetary amounts on the invoice.',
-  })
-  @IsEnum(SUPPORTED_CURRENCIES)
-  currency!: SupportedCurrency;
-
-  @ApiPropertyOptional({
-    enum: INVOICE_STATUSES,
-    enumName: 'InvoiceStatus',
-    example: 'issued',
-    description: 'Lifecycle status. Omit to let the invoice service apply its default.',
-  })
-  @IsOptional()
-  @IsEnum(INVOICE_STATUSES)
-  status?: InvoiceStatus;
-
-  @ApiPropertyOptional({
-    example: '2026-04-28',
-    format: 'date',
-    description: 'Date the invoice is issued.',
-  })
-  @IsOptional()
-  @IsDateString()
-  issueDate?: string;
-
-  @ApiPropertyOptional({
-    example: '2026-05-28',
-    format: 'date',
-    description: 'Payment due date for the invoice.',
-  })
-  @IsOptional()
-  @IsDateString()
-  dueDate?: string;
-
-  @ApiPropertyOptional({
-    example: 'Payment due within 30 days.',
-    maxLength: constraints.notes.maxLength,
-    description: 'Optional notes shown to the client.',
-  })
-  @IsOptional()
-  @IsString()
-  @MaxLength(constraints.notes.maxLength)
-  notes?: string;
 }

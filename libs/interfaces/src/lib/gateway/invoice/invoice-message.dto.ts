@@ -1,6 +1,6 @@
 import { Type } from 'class-transformer';
-import { IsDefined, IsMongoId, ValidateNested } from 'class-validator';
-import { ApiProperty } from '@nestjs/swagger';
+import { IsDefined, IsMongoId, IsOptional, IsNumber, ValidateNested } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import type {
   DeleteInvoiceGatewayRequest,
   FindOneInvoiceGatewayRequest,
@@ -21,7 +21,17 @@ export class InvoiceIdGatewayDto implements InvoiceIdGatewayRequest {
 
 export class FindOneInvoiceGatewayDto extends InvoiceIdGatewayDto implements FindOneInvoiceGatewayRequest {}
 
-export class DeleteInvoiceGatewayDto extends InvoiceIdGatewayDto implements DeleteInvoiceGatewayRequest {}
+export class DeleteInvoiceGatewayDto extends InvoiceIdGatewayDto implements DeleteInvoiceGatewayRequest {
+  @ApiPropertyOptional({
+    description:
+      'Optimistic concurrency version from a previous GET response. If provided, the delete will only succeed if the version matches.',
+    example: 1,
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  version?: number;
+}
 
 export class UpdateInvoiceGatewayDto extends InvoiceIdGatewayDto implements UpdateInvoiceGatewayRequest {
   @ApiProperty({
@@ -32,4 +42,14 @@ export class UpdateInvoiceGatewayDto extends InvoiceIdGatewayDto implements Upda
   @ValidateNested()
   @Type(() => UpdateInvoiceDto)
   data!: UpdateInvoiceDto;
+
+  @ApiPropertyOptional({
+    description:
+      'Optimistic concurrency version from a previous GET response. If provided, the update will only succeed if the version matches.',
+    example: 1,
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  version?: number;
 }

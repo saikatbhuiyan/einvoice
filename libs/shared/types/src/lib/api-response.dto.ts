@@ -21,6 +21,20 @@ export class PaginationMetaDto implements PaginationMeta {
   hasPreviousPage!: boolean;
 }
 
+export class CursorPaginationMetaDto {
+  @ApiProperty({ example: 20, minimum: 1, maximum: 100, description: 'Maximum records returned per page.' })
+  limit!: number;
+
+  @ApiProperty({ example: true, description: 'Whether another page exists after the current result set.' })
+  hasNextPage!: boolean;
+
+  @ApiPropertyOptional({
+    example: 'eyJfdWlkIjoiNjJmOWQzOGYyYWI3YzAwMWY1MmM5MDEifQ==',
+    description: 'Opaque cursor to pass as the `cursor` query parameter for the next page. Absent on the last page.',
+  })
+  cursor?: string;
+}
+
 export class ApiEnvelopeDto<T = unknown, M = unknown> implements ApiEnvelope<T, M> {
   @ApiProperty({ example: true, description: 'Indicates that the request completed successfully.' })
   success!: boolean;

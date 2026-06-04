@@ -1,5 +1,7 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { ClientProxy } from '@nestjs/microservices';
+import { CIRCUIT_BREAKER_FACTORY } from '@libs/circuit-breaker';
+import type { CircuitBreakerFactory } from '@libs/circuit-breaker';
 import {
   CreateInvoiceRequest,
   DeleteInvoiceGatewayRequest,
@@ -16,12 +18,14 @@ import { BaseTcpClient, ServiceName, TCP_CLIENT_TOKENS, TCP_PATTERNS } from '@li
 @Injectable()
 export class InvoiceClientService extends BaseTcpClient {
   protected readonly logger = new Logger(InvoiceClientService.name);
+  protected readonly serviceName = ServiceName.INVOICE;
 
   constructor(
     @Inject(TCP_CLIENT_TOKENS[ServiceName.INVOICE])
     protected readonly client: ClientProxy,
+    @Optional() @Inject(CIRCUIT_BREAKER_FACTORY) circuitBreakerFactory?: CircuitBreakerFactory,
   ) {
-    super();
+    super(circuitBreakerFactory);
   }
 
   async createInvoice(data: CreateInvoiceRequest): Promise<InvoiceResponse> {
@@ -36,11 +40,11 @@ export class InvoiceClientService extends BaseTcpClient {
     return this.send<InvoiceResponse, FindOneInvoiceGatewayRequest>(TCP_PATTERNS.INVOICE.FIND_ONE, { id });
   }
 
-  async updateInvoice(id: string, data: UpdateInvoiceRequest): Promise<InvoiceResponse> {
-    return this.send<InvoiceResponse, UpdateInvoiceGatewayRequest>(TCP_PATTERNS.INVOICE.UPDATE, { id, data });
+  async updateInvoice(id: string, data: UpdateInvoiceRequest, version?: number): Promise<InvoiceResponse> {
+    return this.send<InvoiceResponse, UpdateInvoiceGatewayRequest>(TCP_PATTERNS.INVOICE.UPDATE, { id, data, version });
   }
 
-  async removeInvoice(id: string): Promise<DeleteInvoiceResponse> {
-    return this.send<DeleteInvoiceResponse, DeleteInvoiceGatewayRequest>(TCP_PATTERNS.INVOICE.DELETE, { id });
+  async removeInvoice(id: string, version?: number): Promise<DeleteInvoiceResponse> {
+    return this.send<DeleteInvoiceResponse, DeleteInvoiceGatewayRequest>(TCP_PATTERNS.INVOICE.DELETE, { id, version });
   }
 }

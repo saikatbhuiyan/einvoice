@@ -1,4 +1,14 @@
-import { IsEnum, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+import {
+  IsEnum,
+  IsInt,
+  IsOptional,
+  IsString,
+  Max,
+  Min,
+  Validate,
+  ValidatorConstraint,
+  ValidatorConstraintInterface,
+} from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { DEFAULT_LIMIT, DEFAULT_PAGE, MAX_LIMIT } from '@libs/constants';
@@ -7,6 +17,17 @@ import { PaginationMeta } from './api-response.types';
 export enum SortOrder {
   ASC = 'ASC',
   DESC = 'DESC',
+}
+
+@ValidatorConstraint({ name: 'mutuallyExclusivePageCursor', async: false })
+export class MutuallyExclusivePageCursor implements ValidatorConstraintInterface {
+  validate(value: { cursor?: string; page?: number }): boolean {
+    return !(value.cursor && value.page !== undefined);
+  }
+
+  defaultMessage(): string {
+    return 'Cannot use both `cursor` and `page` in the same request. Use one or the other.';
+  }
 }
 
 export class PaginationQueryDto {
@@ -21,6 +42,29 @@ export class PaginationQueryDto {
   @IsInt()
   @Min(1)
   page = DEFAULT_PAGE;
+
+  @ApiPropertyOptional({
+    default: DEFAULT_LIMIT,
+    minimum: 1,
+    maximum: MAX_LIMIT,
+    example: DEFAULT_LIMIT,
+    description: 'Maximum number of records to return.',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(MAX_LIMIT)
+  limit = DEFAULT_LIMIT;
+}
+
+export class CursorPaginationQueryDto {
+  @ApiPropertyOptional({
+    description: 'Opaque cursor from a previous response. Pass this to fetch the next page. Omit for the first page.',
+  })
+  @IsOptional()
+  @IsString()
+  cursor?: string;
 
   @ApiPropertyOptional({
     default: DEFAULT_LIMIT,

@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Headers, Param, Patch, Post, Query } from '@nestjs/common';
 import { CreateInvoiceDto, FindAllInvoicesDto, UpdateInvoiceDto } from '@libs/interfaces/gateway';
 import { InvoiceService } from './invoice.service';
 
@@ -22,12 +22,14 @@ export class InvoiceHttpController {
   }
 
   @Patch(':id')
-  update(@Param('id') id: string, @Body() updateInvoiceDto: UpdateInvoiceDto) {
-    return this.invoiceService.update(id, updateInvoiceDto);
+  update(@Param('id') id: string, @Body() updateInvoiceDto: UpdateInvoiceDto, @Headers('if-match') ifMatch?: string) {
+    const version = ifMatch ? Number(ifMatch) : undefined;
+    return this.invoiceService.update(id, updateInvoiceDto, isNaN(version as number) ? undefined : version);
   }
 
   @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.invoiceService.remove(id);
+  remove(@Param('id') id: string, @Headers('if-match') ifMatch?: string) {
+    const version = ifMatch ? Number(ifMatch) : undefined;
+    return this.invoiceService.remove(id, isNaN(version as number) ? undefined : version);
   }
 }

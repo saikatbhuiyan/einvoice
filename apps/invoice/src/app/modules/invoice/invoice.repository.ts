@@ -1,63 +1,155 @@
-import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { isValidObjectId } from 'mongoose';
+import { BadRequestException, ConflictException, Inject, Injectable } from '@nestjs/common';
+import { Types, isValidObjectId } from 'mongoose';
 import { DEFAULT_LIMIT, DEFAULT_PAGE } from '@libs/constants';
-import { InvoiceDocument, InvoiceModel, InvoiceModelName } from '@libs/schemas';
+import { InvoiceDocument, InvoiceModel } from '@libs/schemas';
 import { CreateInvoiceRequest, FindAllInvoicesRequest, UpdateInvoiceRequest } from '@libs/interfaces/gateway';
-import { IInvoiceRepository } from './invoice.repository.interface';
+import { buildPaginationMeta } from '@libs/shared/types';
+import {
+  IInvoiceRepository,
+  INVOICE_READ_MODEL,
+  INVOICE_WRITE_MODEL,
+  PaginatedResult,
+} from './invoice.repository.interface';
 
 @Injectable()
 export class InvoiceRepository implements IInvoiceRepository {
-  constructor(@InjectModel(InvoiceModelName) private readonly invoiceModel: InvoiceModel) {}
+  constructor(
+    @Inject(INVOICE_WRITE_MODEL) private readonly writeModel: InvoiceModel,
+    @Inject(INVOICE_READ_MODEL) private readonly readModel: InvoiceModel,
+  ) {}
 
   async create(data: CreateInvoiceRequest): Promise<InvoiceDocument> {
     if (data.idempotencyKey) {
-      const existing = await this.invoiceModel
+      const existing = await this.writeModel
         .findOne({ idempotencyKey: data.idempotencyKey.trim(), deletedAt: null })
         .exec();
       if (existing) return existing;
     }
 
-    return this.invoiceModel.create(this.toPersistencePayload(data));
+    return this.writeModel.create(this.toPersistencePayload(data));
   }
 
-  async findAll(query: FindAllInvoicesRequest): Promise<{
-    items: InvoiceDocument[];
-    total: number;
-  }> {
-    const page = query.page ?? DEFAULT_PAGE;
+  async findAll(query: FindAllInvoicesRequest): Promise<PaginatedResult<InvoiceDocument>> {
     const limit = query.limit ?? DEFAULT_LIMIT;
-    const skip = (page - 1) * limit;
     const filter = this.buildFilter(query);
 
-    const [items, total] = await Promise.all([
-      this.invoiceModel.find(filter).sort({ issueDate: -1, createdAt: -1 }).skip(skip).limit(limit).exec(),
-      this.invoiceModel.countDocuments(filter).exec(),
-    ]);
+    if (query.cursor) {
+      return this.findAllWithCursor(query.cursor, limit, filter);
+    }
 
-    return { items, total };
+    return this.findAllWithOffset(query, limit, filter);
   }
 
   async findOne(id: string): Promise<InvoiceDocument | null> {
     if (!isValidObjectId(id)) return null;
-    return this.invoiceModel.findOne({ _id: id, deletedAt: null }).exec();
+    return this.readModel.findOne({ _id: id, deletedAt: null }).exec();
   }
 
-  async update(id: string, data: UpdateInvoiceRequest): Promise<InvoiceDocument | null> {
+  async update(id: string, data: UpdateInvoiceRequest, version?: number): Promise<InvoiceDocument | null> {
     if (!isValidObjectId(id)) return null;
-    const invoice = await this.invoiceModel.findOne({ _id: id, deletedAt: null }).exec();
-    if (!invoice) return null;
+
+    const filter: Record<string, unknown> = { _id: id, deletedAt: null };
+    if (version !== undefined) {
+      filter.version = version;
+    }
+
+    const invoice = await this.writeModel.findOne(filter as Record<string, unknown>).exec();
+    if (!invoice) {
+      if (version !== undefined) {
+        const exists = await this.writeModel.exists({ _id: id, deletedAt: null });
+        if (exists) {
+          throw new ConflictException('Invoice was modified by another user. Please refresh and retry.');
+        }
+      }
+      return null;
+    }
 
     invoice.set(this.toPersistencePayload(data));
     await invoice.save();
     return invoice;
   }
 
-  async remove(id: string): Promise<InvoiceDocument | null> {
+  async remove(id: string, version?: number): Promise<InvoiceDocument | null> {
     if (!isValidObjectId(id)) return null;
-    return this.invoiceModel
-      .findOneAndUpdate({ _id: id, deletedAt: null }, { deletedAt: new Date() }, { new: true })
+
+    const filter: Record<string, unknown> = { _id: id, deletedAt: null };
+    if (version !== undefined) {
+      filter.version = version;
+    }
+
+    const result = await this.writeModel
+      .findOneAndUpdate(filter as Record<string, unknown>, { deletedAt: new Date() }, { new: true })
       .exec();
+
+    if (!result && version !== undefined) {
+      const exists = await this.writeModel.exists({ _id: id, deletedAt: null });
+      if (exists) {
+        throw new ConflictException('Invoice was modified by another user. Please refresh and retry.');
+      }
+    }
+
+    return result;
+  }
+
+  private async findAllWithCursor(
+    cursor: string,
+    limit: number,
+    filter: Record<string, unknown>,
+  ): Promise<PaginatedResult<InvoiceDocument>> {
+    const decodedId = this.decodeCursor(cursor);
+
+    const cursorFilter = {
+      ...filter,
+      _id: { $lt: new Types.ObjectId(decodedId) },
+    };
+
+    const items = await this.readModel
+      .find(cursorFilter)
+      .sort({ _id: -1 })
+      .limit(limit + 1)
+      .exec();
+
+    const hasNextPage = items.length > limit;
+    const trimmed = hasNextPage ? items.slice(0, limit) : items;
+    const nextCursor = hasNextPage ? this.encodeCursor(trimmed[trimmed.length - 1]._id.toString()) : undefined;
+
+    return {
+      items: trimmed,
+      meta: { mode: 'cursor', limit, hasNextPage, cursor: nextCursor },
+    };
+  }
+
+  private async findAllWithOffset(
+    query: FindAllInvoicesRequest,
+    limit: number,
+    filter: Record<string, unknown>,
+  ): Promise<PaginatedResult<InvoiceDocument>> {
+    const page = query.page ?? DEFAULT_PAGE;
+    const skip = (page - 1) * limit;
+
+    const [items, total] = await Promise.all([
+      this.readModel.find(filter).sort({ issueDate: -1, createdAt: -1 }).skip(skip).limit(limit).exec(),
+      this.readModel.countDocuments(filter).exec(),
+    ]);
+
+    return {
+      items,
+      meta: { mode: 'offset', ...buildPaginationMeta(page, limit, total) },
+    };
+  }
+
+  private encodeCursor(id: string): string {
+    return Buffer.from(id).toString('base64url');
+  }
+
+  private decodeCursor(cursor: string): string {
+    const decoded = Buffer.from(cursor, 'base64url').toString('utf-8');
+
+    if (!/^[0-9a-fA-F]{24}$/.test(decoded) || !isValidObjectId(decoded)) {
+      throw new BadRequestException('Invalid cursor.');
+    }
+
+    return decoded;
   }
 
   private buildFilter(query: FindAllInvoicesRequest): Record<string, unknown> {

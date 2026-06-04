@@ -1,4 +1,10 @@
-import type { InvoiceStatus, PaginationMeta, SupportedCurrency } from '@libs/shared/types';
+import type {
+  CursorPaginationMeta,
+  InvoiceStatus,
+  PaginationMeta,
+  PaginationResultMeta,
+  SupportedCurrency,
+} from '@libs/shared/types';
 
 export { INVOICE_CONSTRAINTS, INVOICE_STATUSES, SUPPORTED_CURRENCIES } from '@libs/shared/types';
 export type { InvoiceStatus, SupportedCurrency } from '@libs/shared/types';
@@ -57,6 +63,7 @@ export interface UpdateInvoiceRequest {
 export interface FindAllInvoicesRequest {
   page?: number;
   limit?: number;
+  cursor?: string;
   status?: InvoiceStatus;
   currency?: SupportedCurrency;
   clientEmail?: string;
@@ -69,10 +76,13 @@ export interface InvoiceIdGatewayRequest {
 
 export type FindOneInvoiceGatewayRequest = InvoiceIdGatewayRequest;
 
-export type DeleteInvoiceGatewayRequest = InvoiceIdGatewayRequest;
+export interface DeleteInvoiceGatewayRequest extends InvoiceIdGatewayRequest {
+  version?: number;
+}
 
 export interface UpdateInvoiceGatewayRequest extends InvoiceIdGatewayRequest {
   data: UpdateInvoiceRequest;
+  version?: number;
 }
 
 export type ClientSnapshotResponse = ClientSnapshotRequest;
@@ -94,6 +104,7 @@ export interface InvoiceResponse {
   subtotal: number;
   vatTotal: number;
   total: number;
+  version: number;
   idempotencyKey?: string;
   createdAt: string | Date;
   updatedAt: string | Date;
@@ -103,6 +114,13 @@ export interface FindAllInvoicesResponse {
   items: InvoiceResponse[];
   meta: PaginationMeta;
 }
+
+export interface FindAllInvoicesCursorResponse {
+  items: InvoiceResponse[];
+  meta: Omit<CursorPaginationMeta, 'mode'>;
+}
+
+export type FindAllInvoicesResult = FindAllInvoicesResponse | FindAllInvoicesCursorResponse;
 
 export interface DeleteInvoiceResponse {
   id: string;

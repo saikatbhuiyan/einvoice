@@ -4,7 +4,7 @@ import { HydratedDocument, SchemaOptions, Types } from 'mongoose';
 type SerializedDocument = {
   _id?: unknown;
   id?: string;
-  __v?: number;
+  version?: number;
   [key: string]: unknown;
 };
 
@@ -19,7 +19,7 @@ const serializeDocument = (_: unknown, ret: SerializedDocument): SerializedDocum
 
 export const BASE_SCHEMA_OPTIONS: SchemaOptions = {
   timestamps: true,
-  versionKey: false,
+  versionKey: 'version',
   toJSON: {
     virtuals: true,
     transform: serializeDocument,
@@ -40,8 +40,10 @@ export const EMBEDDED_SCHEMA_OPTIONS: SchemaOptions = {
 export abstract class BaseSchema {
   _id!: Types.ObjectId;
 
-  // Managed by Mongoose timestamps
+  version!: number;
+
   createdAt!: Date;
+
   updatedAt!: Date;
 }
 

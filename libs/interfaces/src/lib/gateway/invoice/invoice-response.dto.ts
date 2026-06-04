@@ -1,9 +1,10 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { PaginationMetaDto } from '@libs/shared/types';
+import { CursorPaginationMetaDto, PaginationMetaDto } from '@libs/shared/types';
 import { INVOICE_STATUSES, SUPPORTED_CURRENCIES } from '@libs/shared/types';
 import type {
   ClientSnapshotResponse,
   DeleteInvoiceResponse,
+  FindAllInvoicesCursorResponse,
   FindAllInvoicesResponse,
   InvoiceItemResponse,
   InvoiceResponse,
@@ -83,6 +84,13 @@ export class InvoiceResponseDto implements InvoiceResponse {
   @ApiProperty({ example: 34500, description: 'Invoice grand total including VAT.' })
   total!: number;
 
+  @ApiProperty({
+    example: 1,
+    description:
+      'Optimistic concurrency version. Incremented on each update. Send this value in the If-Match header for update/delete requests.',
+  })
+  version!: number;
+
   @ApiPropertyOptional({
     example: 'idempotency-key-uuid-v4',
     description: 'Idempotency key echoed back when provided at creation.',
@@ -102,6 +110,14 @@ export class FindAllInvoicesResponseDto implements FindAllInvoicesResponse {
 
   @ApiProperty({ type: () => PaginationMetaDto })
   meta!: PaginationMetaDto;
+}
+
+export class FindAllInvoicesCursorResponseDto implements FindAllInvoicesCursorResponse {
+  @ApiProperty({ type: () => InvoiceResponseDto, isArray: true })
+  items!: InvoiceResponseDto[];
+
+  @ApiProperty({ type: () => CursorPaginationMetaDto })
+  meta!: CursorPaginationMetaDto;
 }
 
 export class DeleteInvoiceResponseDto implements DeleteInvoiceResponse {

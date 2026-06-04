@@ -1,12 +1,18 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { createHash } from 'crypto';
+import type express from 'express';
 import Redis from 'ioredis';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import type { Cache } from 'cache-manager';
 import { REDIS_CLIENT } from '@libs/cache';
+import { CIRCUIT_BREAKER_FACTORY } from '@libs/circuit-breaker';
+import type { CircuitBreakerFactory } from '@libs/circuit-breaker';
+import { ServiceName } from '@libs/transports';
+import { ServiceUnavailableException } from '@nestjs/common';
 import {
   CreateInvoiceRequest,
   DeleteInvoiceResponse,
+  FindAllInvoicesCursorResponse,
   FindAllInvoicesRequest,
   FindAllInvoicesResponse,
   InvoiceResponse,
@@ -31,11 +37,12 @@ export class InvoiceService {
     private readonly invoiceClient: InvoiceClientService,
     @Inject(CACHE_MANAGER) private readonly cacheManager: Cache,
     @Inject(REDIS_CLIENT) redis: Redis,
+    @Optional() @Inject(CIRCUIT_BREAKER_FACTORY) private readonly cbFactory?: CircuitBreakerFactory,
   ) {
     this.redis = redis;
   }
 
-  async findOne(id: string): Promise<InvoiceResponse> {
+  async findOne(id: string, res?: express.Response): Promise<InvoiceResponse> {
     const cacheKey = CACHE_KEY_ONE(id);
 
     try {
@@ -45,18 +52,46 @@ export class InvoiceService {
       this.logger.warn(`Cache read failed for key "${cacheKey}"`);
     }
 
-    const invoice = await this.invoiceClient.findOneInvoice(id);
-
     try {
-      await this.cacheManager.set(cacheKey, invoice, TTL_ONE_MS);
-    } catch {
-      this.logger.warn(`Cache write failed for key "${cacheKey}"`);
-    }
+      const invoice = await this.invoiceClient.findOneInvoice(id);
 
-    return invoice;
+      try {
+        await this.cacheManager.set(cacheKey, invoice, TTL_ONE_MS);
+      } catch {
+        this.logger.warn(`Cache write failed for key "${cacheKey}"`);
+      }
+
+      return invoice;
+    } catch (error) {
+      if (error instanceof ServiceUnavailableException) {
+        const breaker = this.cbFactory?.get(ServiceName.INVOICE);
+        const circuitState = breaker?.getMetrics().state;
+
+        if (circuitState && res) {
+          res.setHeader('X-Circuit-State', circuitState);
+        }
+
+        try {
+          const cached = await this.cacheManager.get<InvoiceResponse>(cacheKey);
+          if (cached) {
+            if (res) {
+              res.setHeader('X-Served-From', 'cache');
+            }
+            this.logger.warn(`Circuit open for invoice service. Returning cached data for id="${id}".`);
+            return cached;
+          }
+        } catch {
+          this.logger.warn(`Cache read failed for key "${cacheKey}" during circuit open fallback`);
+        }
+      }
+      throw error;
+    }
   }
 
-  async findAll(query: FindAllInvoicesRequest): Promise<FindAllInvoicesResponse> {
+  async findAll(
+    query: FindAllInvoicesRequest,
+    res?: express.Response,
+  ): Promise<FindAllInvoicesResponse | FindAllInvoicesCursorResponse> {
     const version = await this.getListVersion();
     const hash = this.hashQuery(query);
     const cacheKey = CACHE_KEY_LIST(version, hash);
@@ -68,15 +103,40 @@ export class InvoiceService {
       this.logger.warn(`Cache read failed for key "${cacheKey}"`);
     }
 
-    const result = await this.invoiceClient.findAllInvoices(query);
-
     try {
-      await this.cacheManager.set(cacheKey, result, TTL_LIST_MS);
-    } catch {
-      this.logger.warn(`Cache write failed for key "${cacheKey}"`);
-    }
+      const result = await this.invoiceClient.findAllInvoices(query);
 
-    return result;
+      try {
+        await this.cacheManager.set(cacheKey, result, TTL_LIST_MS);
+      } catch {
+        this.logger.warn(`Cache write failed for key "${cacheKey}"`);
+      }
+
+      return result;
+    } catch (error) {
+      if (error instanceof ServiceUnavailableException) {
+        const breaker = this.cbFactory?.get(ServiceName.INVOICE);
+        const circuitState = breaker?.getMetrics().state;
+
+        if (circuitState && res) {
+          res.setHeader('X-Circuit-State', circuitState);
+        }
+
+        try {
+          const cached = await this.cacheManager.get<FindAllInvoicesResponse>(cacheKey);
+          if (cached) {
+            if (res) {
+              res.setHeader('X-Served-From', 'cache');
+            }
+            this.logger.warn(`Circuit open for invoice service. Returning cached list data.`);
+            return cached;
+          }
+        } catch {
+          this.logger.warn(`Cache read failed for key "${cacheKey}" during circuit open fallback`);
+        }
+      }
+      throw error;
+    }
   }
 
   async create(payload: CreateInvoiceRequest): Promise<InvoiceResponse> {
@@ -85,14 +145,14 @@ export class InvoiceService {
     return invoice;
   }
 
-  async update(id: string, payload: UpdateInvoiceRequest): Promise<InvoiceResponse> {
-    const invoice = await this.invoiceClient.updateInvoice(id, payload);
+  async update(id: string, payload: UpdateInvoiceRequest, version?: number): Promise<InvoiceResponse> {
+    const invoice = await this.invoiceClient.updateInvoice(id, payload, version);
     await Promise.all([this.delCacheKey(CACHE_KEY_ONE(id)), this.bumpListVersion()]);
     return invoice;
   }
 
-  async remove(id: string): Promise<DeleteInvoiceResponse> {
-    const result = await this.invoiceClient.removeInvoice(id);
+  async remove(id: string, version?: number): Promise<DeleteInvoiceResponse> {
+    const result = await this.invoiceClient.removeInvoice(id, version);
     await Promise.all([this.delCacheKey(CACHE_KEY_ONE(id)), this.bumpListVersion()]);
     return result;
   }

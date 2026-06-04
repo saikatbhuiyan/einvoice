@@ -97,11 +97,19 @@ export class MongoDbConfiguration {
 
   @IsOptional()
   @IsString()
+  @Matches(/^mongodb(\+srv)?:\/\//, {
+    message: 'MONGODB_READ_URI must start with mongodb:// or mongodb+srv://',
+  })
+  MONGODB_READ_URI?: string;
+
+  @IsOptional()
+  @IsString()
   @IsNotEmpty()
   MONGODB_APP_NAME?: string;
 
   constructor() {
     this.MONGODB_URI = process.env['MONGODB_URI'] ?? '';
+    this.MONGODB_READ_URI = process.env['MONGODB_READ_URI']?.trim() || undefined;
     this.MONGODB_DB_NAME =
       process.env['MONGODB_DB_NAME'] ?? process.env['MONGO_DB'] ?? inferDatabaseName(this.MONGODB_URI, '');
     this.MONGODB_MIN_POOL_SIZE = parseInteger(process.env['MONGODB_MIN_POOL_SIZE'], 2);
@@ -136,6 +144,29 @@ export class MongoDbConfiguration {
       return serialized.replace(/\/$/, '');
     } catch {
       return '[invalid-mongodb-uri]';
+    }
+  }
+
+  get SANITIZED_READ_URI(): string {
+    if (!this.MONGODB_READ_URI) return '';
+
+    try {
+      const normalized = this.MONGODB_READ_URI.startsWith('mongodb+srv://')
+        ? this.MONGODB_READ_URI.replace('mongodb+srv://', 'http://')
+        : this.MONGODB_READ_URI.replace('mongodb://', 'http://');
+      const parsed = new URL(normalized);
+
+      if (parsed.username || parsed.password) {
+        parsed.username = parsed.username ? '***' : '';
+        parsed.password = parsed.password ? '***' : '';
+      }
+
+      const serialized = parsed
+        .toString()
+        .replace(/^http:\/\//, this.MONGODB_READ_URI.startsWith('mongodb+srv://') ? 'mongodb+srv://' : 'mongodb://');
+      return serialized.replace(/\/$/, '');
+    } catch {
+      return '[invalid-mongodb-read-uri]';
     }
   }
 

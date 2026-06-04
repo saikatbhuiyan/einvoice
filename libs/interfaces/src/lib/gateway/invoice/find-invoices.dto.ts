@@ -1,8 +1,28 @@
 import { Transform } from 'class-transformer';
-import { IsEmail, IsEnum, IsOptional, IsString } from 'class-validator';
+import {
+  IsEmail,
+  IsEnum,
+  IsOptional,
+  IsString,
+  Validate,
+  ValidatorConstraint,
+  ValidatorConstraintInterface,
+} from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { INVOICE_STATUSES, PaginationQueryDto, SUPPORTED_CURRENCIES } from '@libs/shared/types';
 import type { FindAllInvoicesRequest, InvoiceStatus, SupportedCurrency } from './invoice.types';
+
+@ValidatorConstraint({ name: 'mutuallyExclusivePageCursor', async: false })
+export class MutuallyExclusivePageCursor implements ValidatorConstraintInterface {
+  validate(value: string | undefined, args: object): boolean {
+    const dto = (args as { object: FindAllInvoicesRequest }).object;
+    return !(dto.cursor && dto.page !== undefined);
+  }
+
+  defaultMessage(): string {
+    return 'Cannot use both `cursor` and `page` in the same request. Use one or the other.';
+  }
+}
 
 export class FindAllInvoicesDto extends PaginationQueryDto implements FindAllInvoicesRequest {
   @ApiPropertyOptional({
@@ -44,4 +64,13 @@ export class FindAllInvoicesDto extends PaginationQueryDto implements FindAllInv
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @IsString()
   search?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Opaque cursor from a previous response. Use instead of page for stable, efficient pagination. Cannot be used together with page.',
+  })
+  @IsOptional()
+  @IsString()
+  @Validate(MutuallyExclusivePageCursor)
+  cursor?: string;
 }
