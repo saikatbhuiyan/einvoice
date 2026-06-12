@@ -17,6 +17,7 @@ import type { CircuitBreakerFactory } from '@libs/circuit-breaker';
 import { ConnectionErrorDetector } from './connection-error-detector';
 import { GrpcToHttpMapper } from './grpc-to-http-mapper';
 import type { ServiceName } from './tcp.config';
+import { createRpcEnvelope, type RpcEnvelope } from './rpc-envelope';
 
 const DEFAULT_RPC_TIMEOUT_MS = 10_000;
 
@@ -24,6 +25,7 @@ export abstract class BaseTcpClient implements OnModuleInit {
   protected abstract readonly logger: Logger;
   protected abstract readonly client: ClientProxy;
   protected abstract readonly serviceName: ServiceName;
+  protected readonly sourceService: string = 'unknown';
 
   private readonly connectionErrorDetector = new ConnectionErrorDetector();
   private readonly grpcToHttpMapper = new GrpcToHttpMapper();
@@ -46,17 +48,35 @@ export abstract class BaseTcpClient implements OnModuleInit {
     payload: TInput,
     timeoutMs = DEFAULT_RPC_TIMEOUT_MS,
   ): Promise<TResult> {
+    const envelope = createRpcEnvelope(payload, this.sourceService);
     const execute = () =>
       firstValueFrom(
-        this.client.send<TResult, TInput>(pattern, payload).pipe(
+        this.client.send<TResult, RpcEnvelope<TInput>>(pattern, envelope).pipe(
           timeout(timeoutMs),
           catchError((err) => {
             if (err instanceof TimeoutError) {
-              this.logger.error(`RPC timeout: pattern="${pattern}" exceeded ${timeoutMs}ms`);
+              this.logger.error({
+                event: 'rpc_timeout',
+                pattern,
+                service: this.serviceName,
+                sourceService: this.sourceService,
+                correlationId: envelope.meta.correlationId,
+                traceId: envelope.meta.traceId,
+                timeoutMs,
+              });
               return throwError(() => new GatewayTimeoutException(`Downstream RPC timeout for pattern "${pattern}".`));
             }
 
-            this.logger.error(`RPC error: pattern="${pattern}"`, err instanceof Error ? err.stack : String(err));
+            this.logger.error({
+              event: 'rpc_client_error',
+              pattern,
+              service: this.serviceName,
+              sourceService: this.sourceService,
+              correlationId: envelope.meta.correlationId,
+              traceId: envelope.meta.traceId,
+              error: err instanceof Error ? err.message : String(err),
+              stack: err instanceof Error ? err.stack : undefined,
+            });
             return throwError(() => this.toHttpException(err, pattern));
           }),
         ),
@@ -71,7 +91,7 @@ export abstract class BaseTcpClient implements OnModuleInit {
   }
 
   protected emit<TInput = unknown>(pattern: string, payload: TInput): void {
-    this.client.emit<void, TInput>(pattern, payload);
+    this.client.emit<void, RpcEnvelope<TInput>>(pattern, createRpcEnvelope(payload, this.sourceService));
   }
 
   private toHttpException(error: unknown, pattern: string): HttpException {

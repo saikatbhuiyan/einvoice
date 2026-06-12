@@ -3,7 +3,8 @@ import { Module, MiddlewareConsumer } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { ConfigModule } from '@nestjs/config';
-import { CorrelationIdMiddleware, LoggerMiddleware } from '@libs/middlewares';
+import { CorrelationIdMiddleware } from '@libs/middlewares';
+import { LoggingModule } from '@libs/logging';
 import { InvoiceModule } from './modules/invoice/invoice.module';
 import { RateLimitModule } from '@libs/rate-limit';
 import { CircuitBreakerModule } from '@libs/circuit-breaker';
@@ -17,6 +18,7 @@ import { CircuitBreakerModule } from '@libs/circuit-breaker';
       // Use platform env vars directly in production, ignore .env file
       ignoreEnvFile: CONFIGURATION.IS_PRODUCTION,
     }),
+    LoggingModule.forRoot({ serviceName: 'bff' }),
     InvoiceModule,
     RateLimitModule.forRoot(),
     CircuitBreakerModule.forRoot(),
@@ -26,6 +28,6 @@ import { CircuitBreakerModule } from '@libs/circuit-breaker';
 })
 export class AppModule {
   configure(consumer: MiddlewareConsumer): void {
-    consumer.apply(CorrelationIdMiddleware, LoggerMiddleware).forRoutes('*');
+    consumer.apply(CorrelationIdMiddleware).forRoutes('*');
   }
 }

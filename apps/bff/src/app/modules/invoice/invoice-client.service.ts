@@ -19,6 +19,7 @@ import { BaseTcpClient, ServiceName, TCP_CLIENT_TOKENS, TCP_PATTERNS } from '@li
 export class InvoiceClientService extends BaseTcpClient {
   protected readonly logger = new Logger(InvoiceClientService.name);
   protected readonly serviceName = ServiceName.INVOICE;
+  protected override readonly sourceService = 'bff';
 
   constructor(
     @Inject(TCP_CLIENT_TOKENS[ServiceName.INVOICE])

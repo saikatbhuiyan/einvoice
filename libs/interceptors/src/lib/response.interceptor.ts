@@ -27,9 +27,10 @@ export class ResponseInterceptor<T> implements NestInterceptor<T, ApiEnvelope<T>
     const request = http.getRequest<TimedRequest>();
     const response = http.getResponse<Response>();
 
-    const correlationId = (request.headers['x-correlation-id'] as string) ?? 'unknown';
+    const correlationId =
+      request.correlationId ?? (request.headers['x-correlation-id'] as string | undefined) ?? 'unknown';
 
-    // Capture request start time set by LoggerMiddleware (if available)
+    // Capture request start time set by request context middleware (if available).
     const startTime: bigint | undefined = request._startTime;
 
     const message = this.reflector.getAllAndOverride<string>(RESPONSE_MESSAGE_KEY, [

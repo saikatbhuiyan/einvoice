@@ -27,7 +27,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
 
     if (problemDetail.status >= 500) {
       this.logger.error(
-        JSON.stringify({
+        {
           event: 'unhandled_exception',
           correlationId,
           status: problemDetail.status,
@@ -35,20 +35,18 @@ export class GlobalExceptionFilter implements ExceptionFilter {
           detail: problemDetail.detail,
           path: request.url,
           method: request.method,
-        }),
+        },
         exception instanceof Error ? exception.stack : undefined,
       );
     } else if (problemDetail.status >= 400) {
-      this.logger.warn(
-        JSON.stringify({
-          event: 'http_exception',
-          correlationId,
-          status: problemDetail.status,
-          title: problemDetail.title,
-          path: request.url,
-          method: request.method,
-        }),
-      );
+      this.logger.warn({
+        event: 'http_exception',
+        correlationId,
+        status: problemDetail.status,
+        title: problemDetail.title,
+        path: request.url,
+        method: request.method,
+      });
     }
 
     httpAdapter.setHeader(ctx.getResponse(), 'Content-Type', 'application/problem+json');

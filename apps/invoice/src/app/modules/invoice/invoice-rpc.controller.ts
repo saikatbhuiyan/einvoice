@@ -1,6 +1,6 @@
 import { Controller } from '@nestjs/common';
 import { MessagePattern, Payload } from '@nestjs/microservices';
-import { TCP_PATTERNS } from '@libs/transports';
+import { TCP_PATTERNS, unwrapRpcPayload, type RpcEnvelope } from '@libs/transports';
 import {
   CreateInvoiceDto,
   DeleteInvoiceGatewayDto,
@@ -15,27 +15,32 @@ export class InvoiceRpcController {
   constructor(private readonly invoiceService: InvoiceService) {}
 
   @MessagePattern(TCP_PATTERNS.INVOICE.CREATE)
-  createByMessage(@Payload() payload: CreateInvoiceDto) {
-    return this.invoiceService.create(payload);
+  createByMessage(@Payload() payload: RpcEnvelope<CreateInvoiceDto> | CreateInvoiceDto) {
+    return this.invoiceService.create(unwrapRpcPayload(payload));
   }
 
   @MessagePattern(TCP_PATTERNS.INVOICE.FIND_ALL)
-  findAllByMessage(@Payload() payload: FindAllInvoicesDto = new FindAllInvoicesDto()) {
-    return this.invoiceService.findAll(payload);
+  findAllByMessage(
+    @Payload() payload: RpcEnvelope<FindAllInvoicesDto> | FindAllInvoicesDto = new FindAllInvoicesDto(),
+  ) {
+    return this.invoiceService.findAll(unwrapRpcPayload(payload));
   }
 
   @MessagePattern(TCP_PATTERNS.INVOICE.FIND_ONE)
-  findOneByMessage(@Payload() payload: FindOneInvoiceGatewayDto) {
-    return this.invoiceService.findOne(payload.id);
+  findOneByMessage(@Payload() payload: RpcEnvelope<FindOneInvoiceGatewayDto> | FindOneInvoiceGatewayDto) {
+    const data = unwrapRpcPayload(payload);
+    return this.invoiceService.findOne(data.id);
   }
 
   @MessagePattern(TCP_PATTERNS.INVOICE.UPDATE)
-  updateByMessage(@Payload() payload: UpdateInvoiceGatewayDto) {
-    return this.invoiceService.update(payload.id, payload.data, payload.version);
+  updateByMessage(@Payload() payload: RpcEnvelope<UpdateInvoiceGatewayDto> | UpdateInvoiceGatewayDto) {
+    const data = unwrapRpcPayload(payload);
+    return this.invoiceService.update(data.id, data.data, data.version);
   }
 
   @MessagePattern(TCP_PATTERNS.INVOICE.DELETE)
-  removeByMessage(@Payload() payload: DeleteInvoiceGatewayDto) {
-    return this.invoiceService.remove(payload.id, payload.version);
+  removeByMessage(@Payload() payload: RpcEnvelope<DeleteInvoiceGatewayDto> | DeleteInvoiceGatewayDto) {
+    const data = unwrapRpcPayload(payload);
+    return this.invoiceService.remove(data.id, data.version);
   }
 }

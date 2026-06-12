@@ -1,10 +1,11 @@
-import { Logger, VersioningType } from '@nestjs/common';
+import { Logger as NestLogger, VersioningType } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import helmet from 'helmet';
 import { HttpAdapterHost, Reflector } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { json, urlencoded } from 'express';
 import { ConfigService } from '@nestjs/config';
+import { Logger, LoggerErrorInterceptor } from 'nestjs-pino';
 import { ALLOWED_HTTP_METHODS, BODY_SIZE_LIMIT, SHUTDOWN_DRAIN_TIMEOUT_MS } from '@libs/constants';
 import { createValidationPipe } from '@libs/shared/utils';
 import { AppModule } from './app/app.module';
@@ -23,6 +24,7 @@ async function bootstrap(): Promise<void> {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     bufferLogs: true,
   });
+  app.useLogger(app.get(Logger));
 
   const configService = app.get(ConfigService<TConfiguration>);
   const isProduction = configService.get('IS_PRODUCTION', { infer: true });
@@ -35,7 +37,6 @@ async function bootstrap(): Promise<void> {
   const corsOrigins = configService.get('APP_CONFIG.CORS_ORIGINS', { infer: true });
   const nodeEnv = configService.get('NODE_ENV', { infer: true });
 
-  app.useLogger(isProduction ? ['error', 'warn', 'log'] : ['error', 'warn', 'log', 'debug', 'verbose']);
   app.use(helmet());
   app.use(json({ limit: BODY_SIZE_LIMIT }));
   app.use(urlencoded({ extended: true, limit: BODY_SIZE_LIMIT }));
@@ -68,6 +69,7 @@ async function bootstrap(): Promise<void> {
   app.useGlobalGuards(app.get(RateLimitGuard));
   app.useGlobalFilters(new GlobalExceptionFilter(httpAdapterHost));
   app.useGlobalInterceptors(
+    new LoggerErrorInterceptor(),
     new TimeoutInterceptor(reflector),
     new ResponseInterceptor(reflector),
     new RpcLoggingInterceptor(),
@@ -87,13 +89,14 @@ async function bootstrap(): Promise<void> {
 
   await app.listen(port);
 
-  Logger.log(`🚀 Running on: http://localhost:${port}/${globalPrefix}`);
-  Logger.log(`   ENV: ${nodeEnv} | Version: ${apiVersion}`);
+  const logger = app.get(Logger);
+  logger.log(`Running on: http://localhost:${port}/${globalPrefix}`);
+  logger.log(`ENV: ${nodeEnv} | Version: ${apiVersion}`);
 
   const gracefullyDrain = async (signal: string) => {
-    Logger.log(`Received ${signal}. Starting graceful drain (${SHUTDOWN_DRAIN_TIMEOUT_MS}ms)...`);
+    logger.log(`Received ${signal}. Starting graceful drain (${SHUTDOWN_DRAIN_TIMEOUT_MS}ms)...`);
     setTimeout(() => {
-      Logger.warn('Drain timeout exceeded. Forcing exit.');
+      logger.warn('Drain timeout exceeded. Forcing exit.');
       process.exit(1);
     }, SHUTDOWN_DRAIN_TIMEOUT_MS);
     await app.close();
@@ -105,6 +108,6 @@ async function bootstrap(): Promise<void> {
 }
 
 bootstrap().catch((error: unknown) => {
-  Logger.error('Application failed to start', error instanceof Error ? error.stack : String(error), 'Bootstrap');
+  NestLogger.error('Application failed to start', error instanceof Error ? error.stack : String(error), 'Bootstrap');
   process.exit(1);
 });

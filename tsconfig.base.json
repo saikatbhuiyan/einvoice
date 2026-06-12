@@ -26,6 +26,8 @@
       "@libs/shared/utils/*": ["libs/shared/utils/src/lib/*"],
       "@libs/interceptors": ["libs/interceptors/src/index.ts"],
       "@libs/interceptors/*": ["libs/interceptors/src/lib/*"],
+      "@libs/logging": ["libs/logging/src/index.ts"],
+      "@libs/logging/*": ["libs/logging/src/lib/*"],
       "@libs/interfaces": ["libs/interfaces/src/index.ts"],
       "@libs/interfaces/*": ["libs/interfaces/src/lib/*"],
       "@libs/filters": ["libs/filters/src/index.ts"],

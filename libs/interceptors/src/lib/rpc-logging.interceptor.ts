@@ -3,6 +3,7 @@ import { RpcException } from '@nestjs/microservices';
 import { Observable, throwError } from 'rxjs';
 import { catchError, tap } from 'rxjs/operators';
 import { randomUUID } from 'crypto';
+import { getRpcMeta, type RpcMeta } from '@libs/transports';
 
 type TopicContext = { getTopic(): string };
 type MessageContext = { getMessage(): { headers?: Record<string, unknown> } };
@@ -35,29 +36,29 @@ export class RpcLoggingInterceptor implements NestInterceptor {
     const rpcCtxObject = rpcContext.getContext<Record<string, unknown>>();
 
     const pattern = this.extractPattern(context, rpcCtxObject);
-    const correlationId = this.extractCorrelationId(data, rpcCtxObject);
+    const meta = this.extractRpcMeta(data, rpcCtxObject);
     const startAt = process.hrtime.bigint();
 
-    this.logger.log(
-      JSON.stringify({
-        event: 'rpc_request',
-        pattern,
-        correlationId,
-        payloadKeys: data && typeof data === 'object' ? Object.keys(data) : [],
-      }),
-    );
+    this.logger.log({
+      event: 'rpc_request',
+      pattern,
+      correlationId: meta.correlationId,
+      traceId: meta.traceId,
+      sourceService: meta.sourceService,
+      payloadKeys: data && typeof data === 'object' ? Object.keys(data) : [],
+    });
 
     return next.handle().pipe(
       tap(() => {
-        this.logger.log(
-          JSON.stringify({
-            event: 'rpc_response',
-            pattern,
-            correlationId,
-            durationMs: this.elapsedMs(startAt),
-            status: 'success',
-          }),
-        );
+        this.logger.log({
+          event: 'rpc_response',
+          pattern,
+          correlationId: meta.correlationId,
+          traceId: meta.traceId,
+          sourceService: meta.sourceService,
+          durationMs: this.elapsedMs(startAt),
+          status: 'success',
+        });
       }),
       catchError((err: unknown) => {
         const isRpcException = err instanceof RpcException;
@@ -67,17 +68,17 @@ export class RpcLoggingInterceptor implements NestInterceptor {
             ? err.message
             : String(err);
 
-        this.logger.error(
-          JSON.stringify({
-            event: 'rpc_error',
-            pattern,
-            correlationId,
-            durationMs: this.elapsedMs(startAt),
-            status: 'error',
-            error: message,
-          }),
-          err instanceof Error ? err.stack : undefined,
-        );
+        this.logger.error({
+          event: 'rpc_error',
+          pattern,
+          correlationId: meta.correlationId,
+          traceId: meta.traceId,
+          sourceService: meta.sourceService,
+          durationMs: this.elapsedMs(startAt),
+          status: 'error',
+          error: message,
+          stack: err instanceof Error ? err.stack : undefined,
+        });
 
         return throwError(() => err);
       }),
@@ -92,6 +93,21 @@ export class RpcLoggingInterceptor implements NestInterceptor {
     const handlerName = context.getHandler().name;
     const className = context.getClass().name;
     return `${className}.${handlerName}`;
+  }
+
+  private extractRpcMeta(data: Record<string, unknown> | unknown, rpcCtx: Record<string, unknown>): RpcMeta {
+    const envelopeMeta = getRpcMeta(data);
+    if (envelopeMeta) return envelopeMeta;
+
+    const correlationId = this.extractCorrelationId(data, rpcCtx);
+    const traceId = this.extractTraceId(data, rpcCtx) ?? correlationId;
+
+    return {
+      correlationId,
+      traceId,
+      sourceService: 'legacy',
+      timestamp: new Date().toISOString(),
+    };
   }
 
   private extractCorrelationId(data: Record<string, unknown> | unknown, rpcCtx: Record<string, unknown>): string {
@@ -113,6 +129,27 @@ export class RpcLoggingInterceptor implements NestInterceptor {
     }
 
     return randomUUID();
+  }
+
+  private extractTraceId(data: Record<string, unknown> | unknown, rpcCtx: Record<string, unknown>): string | undefined {
+    if (data && typeof data === 'object' && 'traceId' in data) {
+      return String((data as Record<string, unknown>).traceId);
+    }
+
+    if (isMessageContext(rpcCtx)) {
+      const msg = rpcCtx.getMessage();
+      const headers = msg?.headers ?? {};
+      const id = headers['x-trace-id']?.toString() ?? headers['trace-id']?.toString();
+      if (id) return id;
+    }
+
+    if (isMetadataContext(rpcCtx)) {
+      const meta = rpcCtx.getMetadata();
+      const id = meta?.get?.('x-trace-id')?.[0];
+      if (id) return id;
+    }
+
+    return undefined;
   }
 
   private elapsedMs(startAt: bigint): number {
