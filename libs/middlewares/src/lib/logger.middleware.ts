@@ -1,7 +1,6 @@
 import { Injectable, Logger, NestMiddleware } from '@nestjs/common';
 import { NextFunction, Response } from 'express';
 import { TimedRequest } from '@libs/shared/types';
-import { randomUUID } from 'crypto';
 
 const SENSITIVE_HEADERS = new Set([
   'authorization',
@@ -28,17 +27,11 @@ export class LoggerMiddleware implements NestMiddleware {
   private readonly logger = new Logger('HTTP');
 
   use(req: TimedRequest, res: Response, next: NextFunction): void {
-    const correlationId =
-      (req.headers['x-correlation-id'] as string) ?? (req.headers['x-request-id'] as string) ?? randomUUID();
-
-    const traceId =
-      (req.headers['x-b3-traceid'] as string) ?? (req.headers['traceparent'] as string)?.split('-')[1] ?? correlationId;
-
-    req.headers['x-correlation-id'] = correlationId;
-    res.setHeader('x-correlation-id', correlationId);
-    res.setHeader('x-trace-id', traceId);
+    const correlationId = req.correlationId ?? (req.headers['x-correlation-id'] as string | undefined) ?? 'unknown';
+    const traceId = req.traceId ?? correlationId;
 
     const path = req.path ?? req.url;
+
     if (SUPPRESSED_PATHS.has(path)) return next();
 
     const startAt = process.hrtime.bigint();

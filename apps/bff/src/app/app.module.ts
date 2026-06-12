@@ -3,7 +3,7 @@ import { Module, MiddlewareConsumer } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { ConfigModule } from '@nestjs/config';
-import { LoggerMiddleware } from '@libs/middlewares';
+import { CorrelationIdMiddleware, LoggerMiddleware } from '@libs/middlewares';
 import { InvoiceModule } from './modules/invoice/invoice.module';
 import { RateLimitModule } from '@libs/rate-limit';
 import { CircuitBreakerModule } from '@libs/circuit-breaker';
@@ -26,6 +26,6 @@ import { CircuitBreakerModule } from '@libs/circuit-breaker';
 })
 export class AppModule {
   configure(consumer: MiddlewareConsumer): void {
-    consumer.apply(LoggerMiddleware).forRoutes('*');
+    consumer.apply(CorrelationIdMiddleware, LoggerMiddleware).forRoutes('*');
   }
 }
