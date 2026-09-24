@@ -22,7 +22,13 @@
     "invoice:test": "nx test invoice",
     "invoice:lint": "nx lint invoice",
     "invoice:format": "nx format invoice",
-    "invoice:type-check": "nx type-check invoice"
+    "invoice:type-check": "nx type-check invoice",
+    "product:dev": "nx serve product",
+    "product:build": "nx build product",
+    "product:test": "nx test product",
+    "product:lint": "nx lint product",
+    "product:format": "nx format product",
+    "product:type-check": "nx type-check product"
   },
   "private": true,
   "dependencies": {
