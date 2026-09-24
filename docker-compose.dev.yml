@@ -197,6 +197,26 @@ services:
     networks:
       - backend
 
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    restart: unless-stopped
+    env_file:
+      - .env
+      - .env.dev
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@einvoice.local}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-dev-pgadmin-password}
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+    ports:
+      - "${PGADMIN_PORT:-5050}:80"
+    volumes:
+      - pgadmin_dev_data:/var/lib/pgadmin
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - backend
+
   mongodb:
     image: mongo:7
     restart: unless-stopped
@@ -226,6 +246,7 @@ services:
 
 volumes:
   postgres_dev_data:
+  pgadmin_dev_data:
   mongodb_dev_data:
   redis_dev_data:
   pnpm_store:
