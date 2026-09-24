@@ -46,6 +46,9 @@ Thumbs.db
 .claude/worktrees
 .claude/settings.local.json
 
+# Kilo Code
+.kilo/worktrees
+
 # Environment files (sensitive)
 .env
 .env.dev
