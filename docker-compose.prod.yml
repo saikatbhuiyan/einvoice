@@ -97,6 +97,36 @@ services:
     networks:
       - backend
 
+  product:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        APP_NAME: product
+    image: einvoice/product:prod
+    restart: unless-stopped
+    env_file:
+      - .env
+      - .env.prod
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      GLOBAL_PREFIX: ${GLOBAL_PREFIX:-api}
+      PRODUCT_HTTP_PORT: ${PRODUCT_HTTP_PORT:-3303}
+    expose:
+      - "${PRODUCT_HTTP_PORT:-3303}"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"const net = require('net'); const socket = net.connect({ host: '127.0.0.1', port: Number(process.env.PRODUCT_HTTP_PORT || 3303) }, () => { socket.end(); process.exit(0); }); socket.on('error', () => process.exit(1));\"",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+    networks:
+      - backend
+
   redis:
     image: redis:7-alpine
     restart: unless-stopped
