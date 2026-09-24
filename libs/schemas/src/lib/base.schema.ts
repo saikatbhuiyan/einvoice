@@ -20,6 +20,10 @@ const serializeDocument = (_: unknown, ret: SerializedDocument): SerializedDocum
 export const BASE_SCHEMA_OPTIONS: SchemaOptions = {
   timestamps: true,
   versionKey: 'version',
+  // Without this, Mongoose only bumps the version key on array push/pull, so a plain
+  // `.set()` + `.save()` update never changes `version` and the If-Match optimistic
+  // concurrency check silently never triggers.
+  optimisticConcurrency: true,
   toJSON: {
     virtuals: true,
     transform: serializeDocument,

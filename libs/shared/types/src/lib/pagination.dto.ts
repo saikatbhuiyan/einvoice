@@ -41,7 +41,7 @@ export class PaginationQueryDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  page = DEFAULT_PAGE;
+  page?: number;
 
   @ApiPropertyOptional({
     default: DEFAULT_LIMIT,

@@ -182,10 +182,18 @@ export class InvoiceRepository implements IInvoiceRepository {
   }
 
   private toPersistencePayload(payload: Partial<CreateInvoiceRequest | UpdateInvoiceRequest>) {
-    return {
-      ...payload,
-      issueDate: payload.issueDate ? new Date(payload.issueDate) : payload.issueDate,
-      dueDate: payload.dueDate ? new Date(payload.dueDate) : payload.dueDate,
-    };
+    const result: Record<string, unknown> = { ...payload };
+
+    // Only touch these keys when actually provided: unconditionally assigning them (even to
+    // `undefined`) would make a partial update's `.set()` call clear existing values on the document.
+    if (payload.issueDate) {
+      result.issueDate = new Date(payload.issueDate);
+    }
+
+    if (payload.dueDate) {
+      result.dueDate = new Date(payload.dueDate);
+    }
+
+    return result;
   }
 }
