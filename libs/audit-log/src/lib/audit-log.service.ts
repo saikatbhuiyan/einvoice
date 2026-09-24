@@ -1,13 +1,14 @@
-import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
+import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import { AUDIT_LOG_MODEL_DEFINITION, AuditLog, AuditLogDocument } from '@libs/schemas';
+import { AuditLogDocument, AuditLogModelName } from '@libs/schemas';
 
 @Injectable()
 export class AuditLogService {
   private readonly logger = new Logger(AuditLogService.name);
 
   constructor(
-    @Inject(AUDIT_LOG_MODEL_DEFINITION.name)
+    @InjectModel(AuditLogModelName)
     private readonly auditLogModel: Model<AuditLogDocument>,
   ) {}
 
