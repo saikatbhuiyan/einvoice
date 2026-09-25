@@ -8,8 +8,10 @@ import { LoggingModule } from '@libs/logging';
 import { InvoiceModule } from './modules/invoice/invoice.module';
 import { ProductModule } from './modules/product/product.module';
 import { UserModule } from './modules/user/user.module';
+import { AuthModule } from './modules/auth/auth.module';
 import { RateLimitModule } from '@libs/rate-limit';
 import { CircuitBreakerModule } from '@libs/circuit-breaker';
+import { KeycloakAuthModule } from '@libs/auth';
 
 @Module({
   imports: [
@@ -21,9 +23,11 @@ import { CircuitBreakerModule } from '@libs/circuit-breaker';
       ignoreEnvFile: CONFIGURATION.IS_PRODUCTION,
     }),
     LoggingModule.forRoot({ serviceName: 'bff' }),
+    KeycloakAuthModule.forRoot(),
     InvoiceModule,
     ProductModule,
     UserModule,
+    AuthModule,
     RateLimitModule.forRoot(),
     CircuitBreakerModule.forRoot(),
   ],

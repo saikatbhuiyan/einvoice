@@ -1,6 +1,6 @@
 import { Body, Controller, Delete, Get, HttpStatus, Param, Patch, Post, Query, Res } from '@nestjs/common';
 import type { Response } from 'express';
-import { ApiBody, ApiExtraModels, ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiBody, ApiExtraModels, ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
 import {
   CreateUserDto,
   DeactivateUserResponseDto,
@@ -12,6 +12,7 @@ import {
 } from '@libs/interfaces/gateway';
 import { ResponseMessage } from '@libs/interceptors';
 import { RateLimit } from '@libs/rate-limit';
+import { RequirePermission } from '@libs/auth';
 import {
   RATE_LIMIT_DEFAULT_BURST,
   RATE_LIMIT_DEFAULT_RATE,
@@ -36,12 +37,14 @@ import { UserService } from './user.service';
 
 @ApiTags('Users')
 @ApiCorrelationIdHeader()
+@ApiBearerAuth('jwt')
 @RateLimit({ burst: RATE_LIMIT_DEFAULT_BURST, rate: RATE_LIMIT_DEFAULT_RATE })
 @Controller()
 export class UserController {
   constructor(private readonly userService: UserService) {}
 
   @Get('roles')
+  @RequirePermission('role:read')
   @ResponseMessage('Roles retrieved successfully')
   @ApiOperation({
     summary: 'List roles',
@@ -59,6 +62,7 @@ export class UserController {
   }
 
   @Post('users')
+  @RequirePermission('user:write')
   @RateLimit({ burst: RATE_LIMIT_MUTATE_BURST, rate: RATE_LIMIT_MUTATE_RATE })
   @ResponseMessage('User created successfully')
   @ApiOperation({
@@ -87,6 +91,7 @@ export class UserController {
   }
 
   @Get('users')
+  @RequirePermission('user:read')
   @ResponseMessage('Users retrieved successfully')
   @ApiOperation({
     summary: 'List users',
@@ -108,6 +113,7 @@ export class UserController {
   }
 
   @Get('users/:id')
+  @RequirePermission('user:read')
   @ResponseMessage('User retrieved successfully')
   @ApiOperation({ summary: 'Get user', description: 'Returns a single user by id.' })
   @ApiParam({ name: 'id', example: USER_ID_EXAMPLE })
@@ -124,6 +130,7 @@ export class UserController {
   }
 
   @Patch('users/:id')
+  @RequirePermission('user:write')
   @RateLimit({ burst: RATE_LIMIT_MUTATE_BURST, rate: RATE_LIMIT_MUTATE_RATE })
   @ResponseMessage('User updated successfully')
   @ApiOperation({
@@ -150,6 +157,7 @@ export class UserController {
   }
 
   @Delete('users/:id')
+  @RequirePermission('user:write')
   @RateLimit({ burst: RATE_LIMIT_DELETE_BURST, rate: RATE_LIMIT_DELETE_RATE })
   @ResponseMessage('User deactivated successfully')
   @ApiOperation({

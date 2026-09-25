@@ -43,7 +43,9 @@
       "@libs/circuit-breaker": ["libs/circuit-breaker/src/index.ts"],
       "@libs/circuit-breaker/*": ["libs/circuit-breaker/src/lib/*"],
       "@libs/audit-log": ["libs/audit-log/src/index.ts"],
-      "@libs/audit-log/*": ["libs/audit-log/src/lib/*"]
+      "@libs/audit-log/*": ["libs/audit-log/src/lib/*"],
+      "@libs/auth": ["libs/auth/src/index.ts"],
+      "@libs/auth/*": ["libs/auth/src/lib/*"]
     }
   },
   "exclude": ["node_modules", "tmp"]

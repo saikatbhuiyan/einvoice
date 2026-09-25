@@ -8,6 +8,8 @@ const ID_PATTERN = /^[\w:.-]{1,128}$/;
 export interface CorrelationContext {
   correlationId: string;
   traceId: string;
+  userId?: string;
+  roles?: string[];
 }
 
 const correlationStorage = new AsyncLocalStorage<CorrelationContext>();
@@ -46,4 +48,18 @@ export function runWithCorrelationContext<T>(context: CorrelationContext, callba
 
 export function getCurrentCorrelationContext(): CorrelationContext | undefined {
   return correlationStorage.getStore();
+}
+
+/**
+ * Attaches verified identity to the request's already-running correlation context. Must run
+ * inside an active `runWithCorrelationContext` call (i.e. after CorrelationIdMiddleware, from a
+ * guard or interceptor later in the same request) — mutates the existing store object in place
+ * so it's visible to every subsequent `getCurrentCorrelationContext()` read in this request,
+ * including the one `createRpcEnvelope` makes when calling a downstream service.
+ */
+export function setIdentityOnCurrentContext(identity: { userId: string; roles: string[] }): void {
+  const context = correlationStorage.getStore();
+  if (!context) return;
+  context.userId = identity.userId;
+  context.roles = identity.roles;
 }

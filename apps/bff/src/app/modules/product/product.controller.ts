@@ -1,6 +1,7 @@
 import { Body, Controller, Get, HttpStatus, Post, Query, Res } from '@nestjs/common';
 import type { Response } from 'express';
-import { ApiBody, ApiExtraModels, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiBody, ApiExtraModels, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { RequirePermission } from '@libs/auth';
 import {
   CreateProductDto,
   FindAllProductsDto,
@@ -29,12 +30,14 @@ import { ProductService } from './product.service';
 
 @ApiTags('Products')
 @ApiCorrelationIdHeader()
+@ApiBearerAuth('jwt')
 @RateLimit({ burst: RATE_LIMIT_DEFAULT_BURST, rate: RATE_LIMIT_DEFAULT_RATE })
 @Controller('products')
 export class ProductController {
   constructor(private readonly productService: ProductService) {}
 
   @Post()
+  @RequirePermission('product:write')
   @RateLimit({ burst: RATE_LIMIT_MUTATE_BURST, rate: RATE_LIMIT_MUTATE_RATE })
   @ResponseMessage('Product created successfully')
   @ApiOperation({
@@ -63,6 +66,7 @@ export class ProductController {
   }
 
   @Get()
+  @RequirePermission('product:read')
   @ResponseMessage('Products retrieved successfully')
   @ApiOperation({
     summary: 'List products',
