@@ -19,7 +19,7 @@ export const TCP_SERVICES = {
   },
   [ServiceName.USER]: {
     host: process.env['USER_SERVICE_HOST'] ?? 'localhost',
-    port: Number(process.env['USER_SERVICE_PORT'] ?? 3002),
+    port: Number(process.env['USER_SERVICE_PORT'] ?? 3306),
   },
   [ServiceName.NOTIFICATION]: {
     host: process.env['NOTIFICATION_SERVICE_HOST'] ?? 'localhost',

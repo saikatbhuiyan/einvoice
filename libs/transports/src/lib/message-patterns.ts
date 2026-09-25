@@ -14,10 +14,15 @@ export const PRODUCT_PATTERNS = {
 
 export const USER_PATTERNS = {
   CREATE: 'user.create',
+  FIND_ALL: 'user.findAll',
   FIND_ONE: 'user.findOne',
   FIND_BY_EMAIL: 'user.findByEmail',
   UPDATE: 'user.update',
   DELETE: 'user.delete',
+} as const;
+
+export const ROLE_PATTERNS = {
+  FIND_ALL: 'role.findAll',
 } as const;
 
 export const NOTIFICATION_PATTERNS = {
@@ -36,6 +41,7 @@ export const TCP_PATTERNS = {
   INVOICE: INVOICE_PATTERNS,
   PRODUCT: PRODUCT_PATTERNS,
   USER: USER_PATTERNS,
+  ROLE: ROLE_PATTERNS,
   NOTIFICATION: NOTIFICATION_PATTERNS,
   PAYMENT: PAYMENT_PATTERNS,
 } as const;
