@@ -7,6 +7,11 @@ export const INVOICE_PATTERNS = {
   BULK_CREATE: 'invoice.bulkCreate',
 } as const;
 
+export const PRODUCT_PATTERNS = {
+  CREATE: 'product.create',
+  FIND_ALL: 'product.findAll',
+} as const;
+
 export const USER_PATTERNS = {
   CREATE: 'user.create',
   FIND_ONE: 'user.findOne',
@@ -29,6 +34,7 @@ export const PAYMENT_PATTERNS = {
 
 export const TCP_PATTERNS = {
   INVOICE: INVOICE_PATTERNS,
+  PRODUCT: PRODUCT_PATTERNS,
   USER: USER_PATTERNS,
   NOTIFICATION: NOTIFICATION_PATTERNS,
   PAYMENT: PAYMENT_PATTERNS,
