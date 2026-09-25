@@ -21,10 +21,10 @@ import { ProductEntity } from './entities/product.entity';
           password: config.POSTGRES_PASSWORD,
           database: config.POSTGRES_DB,
           entities: [ProductEntity],
-          // Auto-sync the schema outside production, matching the Mongo autoIndex convention
-          // used elsewhere in this workspace. Production needs a real migration strategy
-          // (TypeORM migrations) before this table is managed by a live deployment.
-          synchronize: !CONFIGURATION.IS_PRODUCTION,
+          // Schema is managed by migrations (see data-source.ts + product:migration:* scripts),
+          // never by auto-sync -- run `pnpm product:migration:run` before starting the app
+          // against a fresh database.
+          synchronize: false,
           ssl: config.POSTGRES_SSL,
           connectTimeoutMS: config.POSTGRES_CONNECT_TIMEOUT_MS,
           poolSize: config.POSTGRES_POOL_MAX,
