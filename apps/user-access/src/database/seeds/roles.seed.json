@@ -1,0 +1,30 @@
+[
+  {
+    "name": "admin",
+    "description": "Full access to all resources, including user and role management.",
+    "permissions": [
+      "invoice:read",
+      "invoice:write",
+      "product:read",
+      "product:write",
+      "user:read",
+      "user:write",
+      "role:read"
+    ]
+  },
+  {
+    "name": "manager",
+    "description": "Day-to-day operational access to invoices, products, and users. Cannot manage roles.",
+    "permissions": ["invoice:read", "invoice:write", "product:read", "product:write", "user:read", "user:write"]
+  },
+  {
+    "name": "accountant",
+    "description": "Reads and writes invoices, reads the product catalog. No user management.",
+    "permissions": ["invoice:read", "invoice:write", "product:read"]
+  },
+  {
+    "name": "viewer",
+    "description": "Read-only access across invoices, products, and users.",
+    "permissions": ["invoice:read", "product:read", "user:read"]
+  }
+]
