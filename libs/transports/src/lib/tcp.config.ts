@@ -2,6 +2,7 @@ import { TcpOptions, Transport } from '@nestjs/microservices';
 
 export enum ServiceName {
   INVOICE = 'INVOICE',
+  PRODUCT = 'PRODUCT',
   USER = 'USER',
   NOTIFICATION = 'NOTIFICATION',
   PAYMENT = 'PAYMENT',
@@ -11,6 +12,10 @@ export const TCP_SERVICES = {
   [ServiceName.INVOICE]: {
     host: process.env['INVOICE_SERVICE_HOST'] ?? 'localhost',
     port: Number(process.env['INVOICE_SERVICE_PORT'] ?? 3301),
+  },
+  [ServiceName.PRODUCT]: {
+    host: process.env['PRODUCT_SERVICE_HOST'] ?? 'localhost',
+    port: Number(process.env['PRODUCT_SERVICE_PORT'] ?? 3304),
   },
   [ServiceName.USER]: {
     host: process.env['USER_SERVICE_HOST'] ?? 'localhost',
@@ -30,6 +35,7 @@ export type TcpServiceName = keyof typeof ServiceName;
 
 export const TCP_CLIENT_TOKENS = {
   [ServiceName.INVOICE]: 'TCP_CLIENT_INVOICE',
+  [ServiceName.PRODUCT]: 'TCP_CLIENT_PRODUCT',
   [ServiceName.USER]: 'TCP_CLIENT_USER',
   [ServiceName.NOTIFICATION]: 'TCP_CLIENT_NOTIFICATION',
   [ServiceName.PAYMENT]: 'TCP_CLIENT_PAYMENT',
