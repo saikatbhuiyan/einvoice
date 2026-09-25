@@ -126,7 +126,7 @@ services:
       - .env
       - .env.dev
     working_dir: /app
-    command: ["pnpm", "nx", "serve", "product"]
+    command: ["sh", "-c", "pnpm product:migration:run && pnpm nx serve product"]
     environment:
       NODE_ENV: ${NODE_ENV:-development}
       GLOBAL_PREFIX: ${GLOBAL_PREFIX:-api}

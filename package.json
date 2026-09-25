@@ -28,7 +28,12 @@
     "product:test": "nx test product",
     "product:lint": "nx lint product",
     "product:format": "nx format product",
-    "product:type-check": "nx type-check product"
+    "product:type-check": "nx type-check product",
+    "product:migration:generate": "TS_NODE_PROJECT=apps/product/tsconfig.app.json TS_NODE_TRANSPILE_ONLY=true typeorm-ts-node-commonjs migration:generate -d apps/product/src/database/data-source.ts",
+    "product:migration:create": "typeorm-ts-node-commonjs migration:create",
+    "product:migration:run": "TS_NODE_PROJECT=apps/product/tsconfig.app.json TS_NODE_TRANSPILE_ONLY=true typeorm-ts-node-commonjs migration:run -d apps/product/src/database/data-source.ts",
+    "product:migration:revert": "TS_NODE_PROJECT=apps/product/tsconfig.app.json TS_NODE_TRANSPILE_ONLY=true typeorm-ts-node-commonjs migration:revert -d apps/product/src/database/data-source.ts",
+    "product:migration:show": "TS_NODE_PROJECT=apps/product/tsconfig.app.json TS_NODE_TRANSPILE_ONLY=true typeorm-ts-node-commonjs migration:show -d apps/product/src/database/data-source.ts"
   },
   "private": true,
   "dependencies": {
