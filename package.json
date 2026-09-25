@@ -33,7 +33,19 @@
     "product:migration:create": "typeorm-ts-node-commonjs migration:create",
     "product:migration:run": "TS_NODE_PROJECT=apps/product/tsconfig.app.json TS_NODE_TRANSPILE_ONLY=true typeorm-ts-node-commonjs migration:run -d apps/product/src/database/data-source.ts",
     "product:migration:revert": "TS_NODE_PROJECT=apps/product/tsconfig.app.json TS_NODE_TRANSPILE_ONLY=true typeorm-ts-node-commonjs migration:revert -d apps/product/src/database/data-source.ts",
-    "product:migration:show": "TS_NODE_PROJECT=apps/product/tsconfig.app.json TS_NODE_TRANSPILE_ONLY=true typeorm-ts-node-commonjs migration:show -d apps/product/src/database/data-source.ts"
+    "product:migration:show": "TS_NODE_PROJECT=apps/product/tsconfig.app.json TS_NODE_TRANSPILE_ONLY=true typeorm-ts-node-commonjs migration:show -d apps/product/src/database/data-source.ts",
+    "user-access:dev": "nx serve user-access",
+    "user-access:build": "nx build user-access",
+    "user-access:test": "nx test user-access",
+    "user-access:lint": "nx lint user-access",
+    "user-access:format": "nx format user-access",
+    "user-access:type-check": "nx type-check user-access",
+    "user-access:migration:generate": "TS_NODE_PROJECT=apps/user-access/tsconfig.app.json TS_NODE_TRANSPILE_ONLY=true typeorm-ts-node-commonjs migration:generate -d apps/user-access/src/database/data-source.ts",
+    "user-access:migration:create": "typeorm-ts-node-commonjs migration:create",
+    "user-access:migration:run": "TS_NODE_PROJECT=apps/user-access/tsconfig.app.json TS_NODE_TRANSPILE_ONLY=true typeorm-ts-node-commonjs migration:run -d apps/user-access/src/database/data-source.ts",
+    "user-access:migration:revert": "TS_NODE_PROJECT=apps/user-access/tsconfig.app.json TS_NODE_TRANSPILE_ONLY=true typeorm-ts-node-commonjs migration:revert -d apps/user-access/src/database/data-source.ts",
+    "user-access:migration:show": "TS_NODE_PROJECT=apps/user-access/tsconfig.app.json TS_NODE_TRANSPILE_ONLY=true typeorm-ts-node-commonjs migration:show -d apps/user-access/src/database/data-source.ts",
+    "user-access:seed:roles": "nx run user-access:seed-roles"
   },
   "private": true,
   "dependencies": {
