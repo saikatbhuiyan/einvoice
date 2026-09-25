@@ -19,10 +19,10 @@ export const RATE_LIMIT_DELETE_BURST = 5;
 export const RATE_LIMIT_DELETE_RATE = 0.2;
 
 /** Request body size limit (bytes) */
-export const BODY_SIZE_LIMIT = 100 * 1024;
+export const BODY_SIZE_LIMIT = 100 * 1024; // 100 KB
 
 /** Graceful shutdown drain timeout (ms) */
-export const SHUTDOWN_DRAIN_TIMEOUT_MS = 30_000;
+export const SHUTDOWN_DRAIN_TIMEOUT_MS = 30_000; // 30 seconds
 
 /** Named Mongoose connection for read replicas. Used by MongoDbModule, SchemasModule, and InvoiceModule. */
 export const READ_DB = 'readDb';
