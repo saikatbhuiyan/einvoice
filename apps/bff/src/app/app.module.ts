@@ -6,6 +6,7 @@ import { ConfigModule } from '@nestjs/config';
 import { CorrelationIdMiddleware } from '@libs/middlewares';
 import { LoggingModule } from '@libs/logging';
 import { InvoiceModule } from './modules/invoice/invoice.module';
+import { ProductModule } from './modules/product/product.module';
 import { RateLimitModule } from '@libs/rate-limit';
 import { CircuitBreakerModule } from '@libs/circuit-breaker';
 
@@ -20,6 +21,7 @@ import { CircuitBreakerModule } from '@libs/circuit-breaker';
     }),
     LoggingModule.forRoot({ serviceName: 'bff' }),
     InvoiceModule,
+    ProductModule,
     RateLimitModule.forRoot(),
     CircuitBreakerModule.forRoot(),
   ],
