@@ -17,6 +17,7 @@ import {
   TimeoutInterceptor,
 } from '@libs/interceptors';
 import { RateLimitGuard } from '@libs/rate-limit';
+import { JwtAuthGuard, PermissionGuard } from '@libs/auth';
 import { setupSwagger } from './app/common/swagger/swagger.setup';
 import type { TConfiguration } from './configuration';
 
@@ -66,7 +67,9 @@ async function bootstrap(): Promise<void> {
   const httpAdapterHost = app.get(HttpAdapterHost);
   const reflector = app.get(Reflector);
 
-  app.useGlobalGuards(app.get(RateLimitGuard));
+  // Order matters: rate-limit first (cheapest check, protects against brute force before any
+  // auth work happens), then authentication (populates req.user), then authorization (reads it).
+  app.useGlobalGuards(app.get(RateLimitGuard), app.get(JwtAuthGuard), app.get(PermissionGuard));
   app.useGlobalFilters(new GlobalExceptionFilter(httpAdapterHost));
   app.useGlobalInterceptors(
     new LoggerErrorInterceptor(),

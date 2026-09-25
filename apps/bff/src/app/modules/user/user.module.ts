@@ -10,5 +10,6 @@ import { UserService } from './user.service';
   imports: [ClientsModule.register([createTcpClientConfig(ServiceName.USER)]), CacheModule.forRoot('bff')],
   controllers: [UserController],
   providers: [UserClientService, UserService],
+  exports: [UserService],
 })
 export class UserModule {}

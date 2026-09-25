@@ -20,6 +20,8 @@ export function createRpcEnvelope<T>(data: T, sourceService: string): RpcEnvelop
     meta: {
       correlationId,
       traceId,
+      userId: context?.userId,
+      roles: context?.roles,
       sourceService,
       timestamp: new Date().toISOString(),
     },

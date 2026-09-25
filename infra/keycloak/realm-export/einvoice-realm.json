@@ -1,0 +1,66 @@
+{
+  "realm": "einvoice",
+  "enabled": true,
+  "sslRequired": "none",
+  "roles": {
+    "realm": [
+      { "name": "admin", "description": "Full platform access." },
+      { "name": "manager", "description": "Manages invoices, products, and users." },
+      { "name": "accountant", "description": "Reads and writes invoices, reads the product catalog." },
+      { "name": "viewer", "description": "Read-only access." }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "einvoice-bff",
+      "name": "einvoice bff",
+      "enabled": true,
+      "publicClient": false,
+      "protocol": "openid-connect",
+      "clientAuthenticatorType": "client-secret",
+      "secret": "dev-keycloak-bff-secret",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "redirectUris": ["http://localhost:3300/*"],
+      "webOrigins": ["http://localhost:3300"],
+      "protocolMappers": [
+        {
+          "name": "einvoice-bff-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "einvoice-bff",
+            "id.token.claim": "false",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "dev.admin",
+      "email": "dev.admin@einvoice.local",
+      "firstName": "Dev",
+      "lastName": "Admin",
+      "enabled": true,
+      "emailVerified": true,
+      "requiredActions": [],
+      "credentials": [{ "type": "password", "value": "DevPassw0rd!", "temporary": false }],
+      "realmRoles": ["admin"]
+    },
+    {
+      "username": "dev.accountant",
+      "email": "dev.accountant@einvoice.local",
+      "firstName": "Dev",
+      "lastName": "Accountant",
+      "enabled": true,
+      "emailVerified": true,
+      "requiredActions": [],
+      "credentials": [{ "type": "password", "value": "DevPassw0rd!", "temporary": false }],
+      "realmRoles": ["accountant"]
+    }
+  ]
+}

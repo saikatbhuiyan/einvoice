@@ -2,6 +2,7 @@ import { Controller, Get } from '@nestjs/common';
 import { ApiOperation, ApiProperty, ApiTags } from '@nestjs/swagger';
 import { ResponseMessage } from '@libs/interceptors';
 import { SkipRateLimit } from '@libs/rate-limit';
+import { Public } from '@libs/auth';
 import { ApiCorrelationIdHeader, ApiEnvelopeResponse } from './common/swagger/api-response.decorator';
 import { AppService } from './app.service';
 
@@ -18,6 +19,7 @@ export class AppController {
   constructor(private readonly appService: AppService) {}
 
   @Get()
+  @Public()
   @ResponseMessage('BFF is running')
   @ApiOperation({
     summary: 'Service status',

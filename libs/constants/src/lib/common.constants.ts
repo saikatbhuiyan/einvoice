@@ -17,6 +17,9 @@ export const RATE_LIMIT_MUTATE_BURST = 10;
 export const RATE_LIMIT_MUTATE_RATE = 0.5;
 export const RATE_LIMIT_DELETE_BURST = 5;
 export const RATE_LIMIT_DELETE_RATE = 0.2;
+/** Stricter than DELETE — login is the one endpoint attackers can script credential-stuffing against */
+export const RATE_LIMIT_LOGIN_BURST = 5;
+export const RATE_LIMIT_LOGIN_RATE = 0.1;
 
 /** Request body size limit (bytes) */
 export const BODY_SIZE_LIMIT = 100 * 1024; // 100 KB

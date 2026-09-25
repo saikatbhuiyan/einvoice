@@ -28,6 +28,10 @@ services:
       CACHE_DEFAULT_TTL: ${CACHE_DEFAULT_TTL:-20}
       DATABASE_URL: postgresql://${POSTGRES_USER:-einvoice_dev_user}:${POSTGRES_PASSWORD:-dev-postgres-password}@postgres:5432/${POSTGRES_DB:-einvoice_dev}
       MONGODB_URI: mongodb://${MONGO_ROOT_USERNAME:-einvoice_dev_root}:${MONGO_ROOT_PASSWORD:-dev-mongo-password}@mongodb:27017/${MONGO_DB:-einvoice_dev}?authSource=admin
+      KEYCLOAK_BASE_URL: http://keycloak:8080
+      KEYCLOAK_REALM: ${KEYCLOAK_REALM:-einvoice}
+      KEYCLOAK_CLIENT_ID: ${KEYCLOAK_CLIENT_ID:-einvoice-bff}
+      KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:-dev-keycloak-bff-secret}
       CHOKIDAR_USEPOLLING: "true"
       WATCHPACK_POLLING: "true"
     depends_on:
@@ -36,6 +40,8 @@ services:
       postgres:
         condition: service_healthy
       mongodb:
+        condition: service_healthy
+      keycloak:
         condition: service_healthy
       invoice:
         condition: service_started
@@ -282,6 +288,35 @@ services:
     networks:
       - backend
 
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0.5
+    restart: unless-stopped
+    env_file:
+      - .env
+      - .env.dev
+    environment:
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN_USER:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-dev-keycloak-admin-password}
+      KC_HEALTH_ENABLED: "true"
+    command: ["start-dev", "--import-realm"]
+    ports:
+      - "${KEYCLOAK_PORT:-8080}:8080"
+    volumes:
+      - ./infra/keycloak/realm-export:/opt/keycloak/data/import
+      - keycloak_dev_data:/opt/keycloak/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "exec 3<>/dev/tcp/127.0.0.1/8080; printf 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3; grep -q '200' <&3",
+        ]
+      interval: 15s
+      timeout: 10s
+      retries: 15
+      start_period: 45s
+    networks:
+      - backend
+
   mongodb:
     image: mongo:7
     restart: unless-stopped
@@ -314,6 +349,7 @@ volumes:
   pgadmin_dev_data:
   mongodb_dev_data:
   redis_dev_data:
+  keycloak_dev_data:
   pnpm_store:
   node_modules:
 

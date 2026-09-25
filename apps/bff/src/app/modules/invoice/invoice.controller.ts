@@ -13,7 +13,8 @@ import {
   Res,
 } from '@nestjs/common';
 import type { Response } from 'express';
-import { ApiBody, ApiExtraModels, ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiBody, ApiExtraModels, ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
+import { RequirePermission } from '@libs/auth';
 import {
   CreateInvoiceDto,
   DeleteInvoiceResponseDto,
@@ -51,12 +52,14 @@ import { InvoiceService } from './invoice.service';
 
 @ApiTags('Invoices')
 @ApiCorrelationIdHeader()
+@ApiBearerAuth('jwt')
 @RateLimit({ burst: RATE_LIMIT_DEFAULT_BURST, rate: RATE_LIMIT_DEFAULT_RATE })
 @Controller('invoices')
 export class InvoiceController {
   constructor(private readonly invoiceService: InvoiceService) {}
 
   @Post()
+  @RequirePermission('invoice:write')
   @RateLimit({ burst: RATE_LIMIT_MUTATE_BURST, rate: RATE_LIMIT_MUTATE_RATE })
   @ResponseMessage('Invoice created successfully')
   @ApiOperation({
@@ -85,6 +88,7 @@ export class InvoiceController {
   }
 
   @Get()
+  @RequirePermission('invoice:read')
   @ResponseMessage('Invoices retrieved successfully')
   @ApiOperation({
     summary: 'List invoices',
@@ -106,6 +110,7 @@ export class InvoiceController {
   }
 
   @Get(':id')
+  @RequirePermission('invoice:read')
   @ResponseMessage('Invoice retrieved successfully')
   @ApiOperation({
     summary: 'Get invoice',
@@ -134,6 +139,7 @@ export class InvoiceController {
   }
 
   @Patch(':id')
+  @RequirePermission('invoice:write')
   @RateLimit({ burst: RATE_LIMIT_MUTATE_BURST, rate: RATE_LIMIT_MUTATE_RATE })
   @ResponseMessage('Invoice updated successfully')
   @ApiOperation({
@@ -182,6 +188,7 @@ export class InvoiceController {
   }
 
   @Delete(':id')
+  @RequirePermission('invoice:write')
   @RateLimit({ burst: RATE_LIMIT_DELETE_BURST, rate: RATE_LIMIT_DELETE_RATE })
   @HttpCode(HttpStatus.OK)
   @ResponseMessage('Invoice deleted successfully')
