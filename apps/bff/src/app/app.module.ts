@@ -7,6 +7,7 @@ import { CorrelationIdMiddleware } from '@libs/middlewares';
 import { LoggingModule } from '@libs/logging';
 import { InvoiceModule } from './modules/invoice/invoice.module';
 import { ProductModule } from './modules/product/product.module';
+import { UserModule } from './modules/user/user.module';
 import { RateLimitModule } from '@libs/rate-limit';
 import { CircuitBreakerModule } from '@libs/circuit-breaker';
 
@@ -22,6 +23,7 @@ import { CircuitBreakerModule } from '@libs/circuit-breaker';
     LoggingModule.forRoot({ serviceName: 'bff' }),
     InvoiceModule,
     ProductModule,
+    UserModule,
     RateLimitModule.forRoot(),
     CircuitBreakerModule.forRoot(),
   ],
