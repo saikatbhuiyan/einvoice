@@ -3,6 +3,7 @@ export * from './lib/authenticated-user.interface';
 export * from './lib/keycloak-auth.module';
 export * from './lib/jwt-auth.guard';
 export * from './lib/jwt.strategy';
+export * from './lib/jwks-cache.service';
 export * from './lib/public.decorator';
 export * from './lib/permission.guard';
 export * from './lib/permission-resolver.interface';
