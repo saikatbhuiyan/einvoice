@@ -1,9 +1,15 @@
--- ratelimit.lua
--- Keys: KEYS[1] = rate limit key
--- Args: ARGV[1] = burst (max tokens), ARGV[2] = rate (tokens per millisecond),
---        ARGV[3] = current time (milliseconds), ARGV[4] = cost (usually 1)
--- Returns: { allowed (0/1), remaining_tokens, limit_burst, retry_after_ms }
-
+/**
+ * Token-bucket rate limiter, embedded as a string constant rather than read from a
+ * sibling .lua file at runtime: webpack's per-app asset copying only covers each app's
+ * own src/assets, not files living in a lib, so a runtime fs.readFileSync(__dirname, ...)
+ * silently breaks the moment this lib is bundled into an app's dist output.
+ *
+ * Keys: KEYS[1] = rate limit key
+ * Args: ARGV[1] = burst (max tokens), ARGV[2] = rate (tokens per millisecond),
+ *       ARGV[3] = current time (milliseconds), ARGV[4] = cost (usually 1)
+ * Returns: { allowed (0/1), remaining_tokens, limit_burst, retry_after_ms }
+ */
+export const RATE_LIMIT_LUA_SCRIPT = `
 local key          = KEYS[1]
 local burst        = tonumber(ARGV[1])
 local rate         = tonumber(ARGV[2])
@@ -40,3 +46,4 @@ redis.call('HMSET', key, 'tokens', tokens, 'last_refill', last_refill)
 redis.call('EXPIRE', key, math.ceil(burst / rate / 1000) + 1)
 
 return { 1, math.floor(tokens), burst, 0 }
+`;

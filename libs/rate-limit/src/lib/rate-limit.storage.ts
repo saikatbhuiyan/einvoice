@@ -1,8 +1,7 @@
 import { Injectable, Inject } from '@nestjs/common';
 import Redis from 'ioredis';
-import * as fs from 'fs';
-import * as path from 'path';
 import { RATE_LIMIT_STORAGE } from './rate-limit.constants';
+import { RATE_LIMIT_LUA_SCRIPT } from './ratelimit.lua-script';
 
 export interface ConsumeResult {
   allowed: boolean;
@@ -13,11 +12,9 @@ export interface ConsumeResult {
 
 @Injectable()
 export class RedisTokenBucketStorage {
-  private readonly luaScript: string;
+  private readonly luaScript = RATE_LIMIT_LUA_SCRIPT;
 
-  constructor(@Inject(RATE_LIMIT_STORAGE) private readonly redis: Redis) {
-    this.luaScript = fs.readFileSync(path.join(__dirname, 'ratelimit.lua'), 'utf-8');
-  }
+  constructor(@Inject(RATE_LIMIT_STORAGE) private readonly redis: Redis) {}
 
   async consume(key: string, burst: number, rate: number, cost: number, now?: number): Promise<ConsumeResult> {
     const timestamp = now ?? Date.now();
