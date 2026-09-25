@@ -19,6 +19,7 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS:-https://app.example.com}
       PORT: ${BFF_PORT:-3300}
       INVOICE_SERVICE_HOST: invoice
+      PRODUCT_SERVICE_HOST: product
       REDIS_HOST: redis
       REDIS_PORT: 6379
       REDIS_PASSWORD: ${REDIS_PASSWORD:-change-me-redis-password}
@@ -33,6 +34,8 @@ services:
       mongodb:
         condition: service_healthy
       invoice:
+        condition: service_started
+      product:
         condition: service_started
     ports:
       - "${BFF_PORT:-3300}:${BFF_PORT:-3300}"
@@ -112,8 +115,18 @@ services:
       NODE_ENV: ${NODE_ENV:-production}
       GLOBAL_PREFIX: ${GLOBAL_PREFIX:-api}
       PRODUCT_HTTP_PORT: ${PRODUCT_HTTP_PORT:-3303}
+      PRODUCT_SERVICE_HOST: 0.0.0.0
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-einvoice}
+      POSTGRES_USER: ${POSTGRES_USER:-einvoice_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me-postgres-password}
+    depends_on:
+      postgres:
+        condition: service_healthy
     expose:
       - "${PRODUCT_HTTP_PORT:-3303}"
+      - "${PRODUCT_SERVICE_PORT:-3304}"
     healthcheck:
       test:
         [

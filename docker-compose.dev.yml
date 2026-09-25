@@ -20,6 +20,7 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS:-*}
       PORT: ${BFF_PORT:-3300}
       INVOICE_SERVICE_HOST: invoice
+      PRODUCT_SERVICE_HOST: product
       REDIS_HOST: redis
       REDIS_PORT: 6379
       REDIS_PASSWORD: ${REDIS_PASSWORD:-dev-redis-password}
@@ -36,6 +37,8 @@ services:
       mongodb:
         condition: service_healthy
       invoice:
+        condition: service_started
+      product:
         condition: service_started
     ports:
       - "${BFF_PORT:-3300}:${BFF_PORT:-3300}"
@@ -128,10 +131,21 @@ services:
       NODE_ENV: ${NODE_ENV:-development}
       GLOBAL_PREFIX: ${GLOBAL_PREFIX:-api}
       PRODUCT_HTTP_PORT: ${PRODUCT_HTTP_PORT:-3303}
+      PRODUCT_SERVICE_HOST: 0.0.0.0
+      PRODUCT_SERVICE_PORT: ${PRODUCT_SERVICE_PORT:-3304}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-einvoice_dev}
+      POSTGRES_USER: ${POSTGRES_USER:-einvoice_dev_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dev-postgres-password}
       CHOKIDAR_USEPOLLING: "true"
       WATCHPACK_POLLING: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
     ports:
       - "${PRODUCT_HTTP_PORT:-3303}:${PRODUCT_HTTP_PORT:-3303}"
+      - "${PRODUCT_SERVICE_PORT:-3304}:${PRODUCT_SERVICE_PORT:-3304}"
     volumes:
       - .:/app
       - pnpm_store:/root/.local/share/pnpm/store
