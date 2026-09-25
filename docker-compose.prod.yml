@@ -20,6 +20,7 @@ services:
       PORT: ${BFF_PORT:-3300}
       INVOICE_SERVICE_HOST: invoice
       PRODUCT_SERVICE_HOST: product
+      USER_SERVICE_HOST: user-access
       REDIS_HOST: redis
       REDIS_PORT: 6379
       REDIS_PASSWORD: ${REDIS_PASSWORD:-change-me-redis-password}
@@ -36,6 +37,8 @@ services:
       invoice:
         condition: service_started
       product:
+        condition: service_started
+      user-access:
         condition: service_started
     ports:
       - "${BFF_PORT:-3300}:${BFF_PORT:-3300}"
@@ -132,6 +135,46 @@ services:
         [
           "CMD-SHELL",
           "node -e \"const net = require('net'); const socket = net.connect({ host: '127.0.0.1', port: Number(process.env.PRODUCT_HTTP_PORT || 3303) }, () => { socket.end(); process.exit(0); }); socket.on('error', () => process.exit(1));\"",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+    networks:
+      - backend
+
+  user-access:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        APP_NAME: user-access
+    image: einvoice/user-access:prod
+    restart: unless-stopped
+    env_file:
+      - .env
+      - .env.prod
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      GLOBAL_PREFIX: ${GLOBAL_PREFIX:-api}
+      USER_ACCESS_HTTP_PORT: ${USER_ACCESS_HTTP_PORT:-3305}
+      USER_SERVICE_HOST: 0.0.0.0
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-einvoice}
+      POSTGRES_USER: ${POSTGRES_USER:-einvoice_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me-postgres-password}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    expose:
+      - "${USER_ACCESS_HTTP_PORT:-3305}"
+      - "${USER_SERVICE_PORT:-3306}"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"const net = require('net'); const socket = net.connect({ host: '127.0.0.1', port: Number(process.env.USER_ACCESS_HTTP_PORT || 3305) }, () => { socket.end(); process.exit(0); }); socket.on('error', () => process.exit(1));\"",
         ]
       interval: 30s
       timeout: 10s
