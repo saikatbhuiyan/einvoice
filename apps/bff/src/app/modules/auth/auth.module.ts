@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { HttpModule } from '@nestjs/axios';
+import { CacheModule } from '@libs/cache';
 import { PERMISSION_RESOLVER, PermissionGuard } from '@libs/auth';
 import { UserModule } from '../user/user.module';
 import { AuthController } from './auth.controller';
@@ -14,7 +15,7 @@ import { UserPermissionResolver } from './user-permission.resolver';
  * the same rule applies here).
  */
 @Module({
-  imports: [UserModule, HttpModule],
+  imports: [UserModule, HttpModule, CacheModule.forRoot('bff')],
   controllers: [AuthController],
   providers: [
     AuthService,

@@ -29,9 +29,11 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-einvoice_dev_user}:${POSTGRES_PASSWORD:-dev-postgres-password}@postgres:5432/${POSTGRES_DB:-einvoice_dev}
       MONGODB_URI: mongodb://${MONGO_ROOT_USERNAME:-einvoice_dev_root}:${MONGO_ROOT_PASSWORD:-dev-mongo-password}@mongodb:27017/${MONGO_DB:-einvoice_dev}?authSource=admin
       KEYCLOAK_BASE_URL: http://keycloak:8080
+      KEYCLOAK_PUBLIC_BASE_URL: http://localhost:${KEYCLOAK_PORT:-8080}
       KEYCLOAK_REALM: ${KEYCLOAK_REALM:-einvoice}
       KEYCLOAK_CLIENT_ID: ${KEYCLOAK_CLIENT_ID:-einvoice-bff}
       KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:-dev-keycloak-bff-secret}
+      KEYCLOAK_REDIRECT_URI: http://localhost:${BFF_PORT:-3300}/${GLOBAL_PREFIX:-api}/v1/auth/callback
       CHOKIDAR_USEPOLLING: "true"
       WATCHPACK_POLLING: "true"
     depends_on:
