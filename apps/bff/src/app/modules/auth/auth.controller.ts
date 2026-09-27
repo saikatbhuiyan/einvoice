@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpStatus, Post, Query, Redirect } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Post, Query, Redirect } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Public } from '@libs/auth';
 import { ResponseMessage, SkipResponseWrap } from '@libs/interceptors';
@@ -9,7 +9,7 @@ import {
   ApiEnvelopeResponse,
   ApiProblemResponses,
 } from '../../common/swagger/api-response.decorator';
-import { LoginDto, LoginResponseDto } from './dto/login.dto';
+import { LoginDto, LoginResponseDto, LogoutDto, LogoutResponseDto, RefreshTokenDto } from './dto/login.dto';
 import { AuthService } from './auth.service';
 
 @ApiTags('Auth')
@@ -80,5 +80,52 @@ export class AuthController {
     @Query('state') state: string | undefined,
   ): Promise<LoginResponseDto> {
     return this.authService.handleCallback(code, state);
+  }
+
+  @Public()
+  @Post('refresh')
+  @RateLimit({ burst: RATE_LIMIT_LOGIN_BURST, rate: RATE_LIMIT_LOGIN_RATE })
+  @ResponseMessage('Token refreshed successfully')
+  @ApiOperation({
+    summary: 'Refresh an access token',
+    description:
+      'Trades a refresh token for a new access token, without re-authenticating. Keycloak rotates refresh ' +
+      'tokens by default, so the response includes a new refreshToken too — the one sent in stops working once ' +
+      'this succeeds.',
+  })
+  @ApiEnvelopeResponse({
+    status: HttpStatus.OK,
+    description: 'Refresh succeeded.',
+    model: LoginResponseDto,
+    message: 'Token refreshed successfully',
+    dataExample: { accessToken: '<jwt>', refreshToken: '<refresh-jwt>', expiresIn: 300, tokenType: 'Bearer' },
+  })
+  @ApiProblemResponses(HttpStatus.UNAUTHORIZED)
+  refresh(@Body() payload: RefreshTokenDto): Promise<LoginResponseDto> {
+    return this.authService.refresh(payload.refreshToken);
+  }
+
+  @Public()
+  @Post('logout')
+  @HttpCode(HttpStatus.OK)
+  @RateLimit({ burst: RATE_LIMIT_LOGIN_BURST, rate: RATE_LIMIT_LOGIN_RATE })
+  @ResponseMessage('Logged out successfully')
+  @ApiOperation({
+    summary: 'Log out',
+    description:
+      'Ends the Keycloak session the given refreshToken belongs to. An access token already issued from that ' +
+      'session stays valid for its own remaining lifetime — verification never re-checks Keycloak per request.',
+  })
+  @ApiEnvelopeResponse({
+    status: HttpStatus.OK,
+    description: 'Logout succeeded.',
+    model: LogoutResponseDto,
+    message: 'Logged out successfully',
+    dataExample: {},
+  })
+  @ApiProblemResponses(HttpStatus.UNAUTHORIZED)
+  async logout(@Body() payload: LogoutDto): Promise<Record<string, never>> {
+    await this.authService.logout(payload.refreshToken);
+    return {};
   }
 }
