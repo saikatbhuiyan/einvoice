@@ -125,6 +125,55 @@ export class AuthService {
     );
   }
 
+  /**
+   * Trades a refresh token for a new access token and a new refresh token — rotation, not a
+   * Keycloak default (a fresh realm leaves refresh tokens reusable until their own expiry, which
+   * we confirmed live and don't want: it means a leaked refresh token stays useful to an attacker
+   * for its entire lifetime). The realm config explicitly sets `revokeRefreshToken: true` +
+   * `refreshTokenMaxReuse: 0` so the one just used actually stops working once this succeeds —
+   * callers need to hold onto the new refreshToken, not the one they sent in.
+   */
+  async refresh(refreshToken: string): Promise<LoginResponseDto> {
+    return this.exchangeForToken(
+      new URLSearchParams({
+        grant_type: 'refresh_token',
+        client_id: this.keycloakConfig.CLIENT_ID,
+        client_secret: this.keycloakConfig.CLIENT_SECRET,
+        refresh_token: refreshToken,
+      }),
+      'Invalid, expired, or already-used refresh token.',
+    );
+  }
+
+  /**
+   * Ends the Keycloak session the refresh token belongs to, so it (and any future refresh built
+   * on it) stops working. Does not revoke an already-issued access token from that same
+   * session — see LogoutDto's own doc comment for why that's a separate, harder problem this
+   * doesn't attempt to solve.
+   */
+  async logout(refreshToken: string): Promise<void> {
+    const body = new URLSearchParams({
+      client_id: this.keycloakConfig.CLIENT_ID,
+      client_secret: this.keycloakConfig.CLIENT_SECRET,
+      refresh_token: refreshToken,
+    });
+
+    try {
+      await firstValueFrom(
+        this.httpService.post<void>(this.keycloakConfig.logoutUrl, body.toString(), {
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        }),
+      );
+    } catch (error) {
+      // Keycloak's logout endpoint returns 204 even for an already-invalid/expired refresh token
+      // (logging out twice, or a session that already expired, isn't an error from the caller's
+      // point of view) — an actual thrown error here means something genuinely went wrong talking
+      // to Keycloak, not "you weren't logged in."
+      this.logger.error('Keycloak logout request failed', error instanceof Error ? error.stack : String(error));
+      throw new UnauthorizedException('Unable to log out at this time.');
+    }
+  }
+
   private async exchangeForToken(body: URLSearchParams, invalidGrantMessage: string): Promise<LoginResponseDto> {
     try {
       const { data } = await firstValueFrom(

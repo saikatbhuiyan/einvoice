@@ -52,6 +52,10 @@ export class KeycloakConfiguration {
     return `${this.issuerUrl}/protocol/openid-connect/token`;
   }
 
+  get logoutUrl(): string {
+    return `${this.issuerUrl}/protocol/openid-connect/logout`;
+  }
+
   get publicAuthorizationUrl(): string {
     return `${this.PUBLIC_BASE_URL}/realms/${this.REALM}/protocol/openid-connect/auth`;
   }

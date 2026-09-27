@@ -2,6 +2,8 @@
   "realm": "einvoice",
   "enabled": true,
   "sslRequired": "none",
+  "revokeRefreshToken": true,
+  "refreshTokenMaxReuse": 0,
   "roles": {
     "realm": [
       { "name": "admin", "description": "Full platform access." },

@@ -28,3 +28,26 @@ export class LoginResponseDto {
   @ApiProperty({ example: 'Bearer' })
   tokenType!: string;
 }
+
+export class RefreshTokenDto {
+  @ApiProperty({ description: 'The refreshToken returned by a previous login or refresh call.' })
+  @IsString()
+  @MinLength(1)
+  refreshToken!: string;
+}
+
+export class LogoutDto {
+  @ApiProperty({
+    description:
+      'The refreshToken to invalidate. Ends the Keycloak session that token belongs to — an access token ' +
+      'already issued from that session stays valid for its own remaining lifetime (a few minutes at most), ' +
+      'since verification never re-checks Keycloak per request; this stops the session being refreshed further.',
+  })
+  @IsString()
+  @MinLength(1)
+  refreshToken!: string;
+}
+
+// Exists purely so Swagger has a real model for logout's empty response body, instead of
+// misleadingly reusing LoginResponseDto's shape.
+export class LogoutResponseDto {}
