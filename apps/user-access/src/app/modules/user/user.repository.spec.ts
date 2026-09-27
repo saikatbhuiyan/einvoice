@@ -29,7 +29,12 @@ describe('UserRepository', () => {
       const refetched = { id: 'user-1', role: { id: 'role-1' } };
       typeormRepo.findOne.mockResolvedValue(refetched);
 
-      const result = await repository.create({ email: 'jane@acme.test', name: 'Jane', roleId: 'role-1' });
+      const result = await repository.create({
+        email: 'jane@acme.test',
+        name: 'Jane',
+        roleId: 'role-1',
+        keycloakUserId: 'kc-user-1',
+      });
 
       expect(typeormRepo.save).toHaveBeenCalled();
       expect(typeormRepo.findOne).toHaveBeenCalledWith({ where: { id: 'user-1' } });
