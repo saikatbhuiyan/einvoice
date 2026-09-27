@@ -25,6 +25,11 @@ export class UserEntity {
   @Column({ type: 'uuid' })
   roleId!: string;
 
+  // Nullable: users created before KeycloakAdminService existed (or created some other way) have
+  // no matching Keycloak identity yet — this column links the two records, not requires it.
+  @Column({ type: 'varchar', length: 64, nullable: true })
+  keycloakUserId!: string | null;
+
   @ManyToOne(() => RoleEntity, (role) => role.users, { eager: true, onDelete: 'RESTRICT' })
   @JoinColumn({ name: 'roleId' })
   role!: RoleEntity;

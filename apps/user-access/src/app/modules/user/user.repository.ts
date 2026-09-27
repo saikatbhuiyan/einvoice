@@ -13,7 +13,7 @@ export class UserRepository implements IUserRepository {
     private readonly repository: Repository<UserEntity>,
   ) {}
 
-  async create(data: CreateUserRequest): Promise<UserEntity> {
+  async create(data: CreateUserRequest & { keycloakUserId: string }): Promise<UserEntity> {
     const user = this.repository.create(data);
     const saved = await this.repository.save(user);
     // save() doesn't populate the eager `role` relation on the entity it returns (eager

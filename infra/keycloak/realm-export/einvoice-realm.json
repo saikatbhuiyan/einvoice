@@ -37,9 +37,30 @@
           }
         }
       ]
+    },
+    {
+      "clientId": "einvoice-admin-cli",
+      "name": "einvoice admin CLI",
+      "description": "Client-credentials-only client for server-to-server Keycloak Admin REST API calls (KeycloakAdminService in user-access). Never used for end-user login.",
+      "enabled": true,
+      "publicClient": false,
+      "protocol": "openid-connect",
+      "clientAuthenticatorType": "client-secret",
+      "secret": "dev-keycloak-admin-cli-secret",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true
     }
   ],
   "users": [
+    {
+      "username": "service-account-einvoice-admin-cli",
+      "serviceAccountClientId": "einvoice-admin-cli",
+      "enabled": true,
+      "clientRoles": {
+        "realm-management": ["manage-users", "view-users", "view-realm"]
+      }
+    },
     {
       "username": "dev.admin",
       "email": "dev.admin@einvoice.local",

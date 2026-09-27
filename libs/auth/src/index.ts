@@ -1,4 +1,6 @@
 export * from './lib/auth.config';
+export * from './lib/keycloak-admin.config';
+export * from './lib/keycloak-admin.service';
 export * from './lib/authenticated-user.interface';
 export * from './lib/keycloak-auth.module';
 export * from './lib/jwt-auth.guard';

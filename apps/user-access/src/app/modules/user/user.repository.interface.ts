@@ -9,7 +9,7 @@ export interface PaginatedResult<T = UserEntity> {
 }
 
 export interface IUserRepository {
-  create(data: CreateUserRequest): Promise<UserEntity>;
+  create(data: CreateUserRequest & { keycloakUserId: string }): Promise<UserEntity>;
 
   findAll(query: FindAllUsersRequest): Promise<PaginatedResult>;
 

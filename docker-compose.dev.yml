@@ -197,10 +197,16 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-einvoice_dev}
       POSTGRES_USER: ${POSTGRES_USER:-einvoice_dev_user}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dev-postgres-password}
+      KEYCLOAK_BASE_URL: http://keycloak:8080
+      KEYCLOAK_REALM: ${KEYCLOAK_REALM:-einvoice}
+      KEYCLOAK_ADMIN_CLIENT_ID: ${KEYCLOAK_ADMIN_CLIENT_ID:-einvoice-admin-cli}
+      KEYCLOAK_ADMIN_CLIENT_SECRET: ${KEYCLOAK_ADMIN_CLIENT_SECRET:-dev-keycloak-admin-cli-secret}
       CHOKIDAR_USEPOLLING: "true"
       WATCHPACK_POLLING: "true"
     depends_on:
       postgres:
+        condition: service_healthy
+      keycloak:
         condition: service_healthy
     ports:
       - "${USER_ACCESS_HTTP_PORT:-3305}:${USER_ACCESS_HTTP_PORT:-3305}"
