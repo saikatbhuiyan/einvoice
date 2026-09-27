@@ -9,6 +9,7 @@ import { MongoDbModule } from '../database/mongodb.module';
 import { SchemasModule } from '@libs/schemas';
 import { InvoiceModule } from './modules/invoice/invoice.module';
 import { AuditLogModule } from '@libs/audit-log';
+import { RpcPermissionGuard } from '@libs/auth/rpc-permission.guard';
 
 export const APP_CONFIGURATION = Symbol('APP_CONFIGURATION');
 
@@ -32,6 +33,7 @@ const hasReadReplicas = !!CONFIGURATION.MONGODB_CONFIG.MONGODB_READ_URI;
   controllers: [AppController],
   providers: [
     AppService,
+    RpcPermissionGuard,
     {
       provide: APP_CONFIGURATION,
       useValue: CONFIGURATION,

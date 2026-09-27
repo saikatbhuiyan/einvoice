@@ -7,6 +7,7 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { RoleModule } from './modules/role/role.module';
 import { UserModule } from './modules/user/user.module';
+import { RpcPermissionGuard } from '@libs/auth/rpc-permission.guard';
 
 @Module({
   imports: [
@@ -21,6 +22,6 @@ import { UserModule } from './modules/user/user.module';
     UserModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [AppService, RpcPermissionGuard],
 })
 export class AppModule {}

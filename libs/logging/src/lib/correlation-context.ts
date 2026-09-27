@@ -10,6 +10,7 @@ export interface CorrelationContext {
   traceId: string;
   userId?: string;
   roles?: string[];
+  permissions?: string[];
 }
 
 const correlationStorage = new AsyncLocalStorage<CorrelationContext>();
@@ -56,10 +57,19 @@ export function getCurrentCorrelationContext(): CorrelationContext | undefined {
  * guard or interceptor later in the same request) — mutates the existing store object in place
  * so it's visible to every subsequent `getCurrentCorrelationContext()` read in this request,
  * including the one `createRpcEnvelope` makes when calling a downstream service.
+ *
+ * Safe to call more than once per request with different fields (e.g. `JwtAuthGuard` sets
+ * `userId`/`roles` first, `PermissionGuard` adds `permissions` once it resolves them) — each call
+ * only overwrites the fields it's given, leaving the rest of the context untouched.
  */
-export function setIdentityOnCurrentContext(identity: { userId: string; roles: string[] }): void {
+export function setIdentityOnCurrentContext(identity: {
+  userId?: string;
+  roles?: string[];
+  permissions?: string[];
+}): void {
   const context = correlationStorage.getStore();
   if (!context) return;
-  context.userId = identity.userId;
-  context.roles = identity.roles;
+  if (identity.userId !== undefined) context.userId = identity.userId;
+  if (identity.roles !== undefined) context.roles = identity.roles;
+  if (identity.permissions !== undefined) context.permissions = identity.permissions;
 }
