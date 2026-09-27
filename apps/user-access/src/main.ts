@@ -7,6 +7,7 @@ import { BODY_SIZE_LIMIT, SHUTDOWN_DRAIN_TIMEOUT_MS } from '@libs/constants';
 import { createValidationPipe } from '@libs/shared/utils';
 import { createTcpServerConfig, ServiceName } from '@libs/transports';
 import { RpcExceptionInterceptor, RpcLoggingInterceptor } from '@libs/interceptors';
+import { RpcPermissionGuard } from '@libs/auth/rpc-permission.guard';
 import { AppModule } from './app/app.module';
 
 async function bootstrap() {
@@ -22,6 +23,7 @@ async function bootstrap() {
   app.use(json({ limit: BODY_SIZE_LIMIT }));
   app.use(urlencoded({ extended: true, limit: BODY_SIZE_LIMIT }));
   app.useGlobalInterceptors(new LoggerErrorInterceptor(), new RpcLoggingInterceptor(), new RpcExceptionInterceptor());
+  app.useGlobalGuards(app.get(RpcPermissionGuard));
   app.useGlobalPipes(createValidationPipe());
   app.enableShutdownHooks();
 

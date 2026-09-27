@@ -6,6 +6,7 @@ import { PostgresModule } from '../database/postgres.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { ProductModule } from './modules/product/product.module';
+import { RpcPermissionGuard } from '@libs/auth/rpc-permission.guard';
 
 @Module({
   imports: [
@@ -19,6 +20,6 @@ import { ProductModule } from './modules/product/product.module';
     ProductModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [AppService, RpcPermissionGuard],
 })
 export class AppModule {}

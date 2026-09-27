@@ -6,6 +6,7 @@ export * from './lib/jwt.strategy';
 export * from './lib/jwks-cache.service';
 export * from './lib/public.decorator';
 export * from './lib/permission.guard';
+export * from './lib/rpc-permission.guard';
 export * from './lib/permission-resolver.interface';
 export * from './lib/require-permission.decorator';
 export * from './lib/current-user.decorator';
