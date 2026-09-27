@@ -4,6 +4,9 @@ import { ProductService } from './product.service';
 import { IProductRepository } from './product.repository.interface';
 import { ProductEntity } from '../../../database/entities/product.entity';
 
+type MockCache = { get: jest.Mock; set: jest.Mock; del: jest.Mock };
+type MockRedis = { get: jest.Mock; incr: jest.Mock };
+
 const buildProduct = (overrides: Partial<ProductEntity> = {}): ProductEntity =>
   ({
     id: 'product-1',
@@ -21,6 +24,8 @@ const buildProduct = (overrides: Partial<ProductEntity> = {}): ProductEntity =>
 
 describe('ProductService', () => {
   let repository: jest.Mocked<IProductRepository>;
+  let cacheManager: MockCache;
+  let redis: MockRedis;
   let service: ProductService;
 
   beforeEach(() => {
@@ -28,11 +33,14 @@ describe('ProductService', () => {
       create: jest.fn(),
       findAll: jest.fn(),
     };
-    service = new ProductService(repository);
+    cacheManager = { get: jest.fn(), set: jest.fn(), del: jest.fn() };
+    redis = { get: jest.fn().mockResolvedValue(null), incr: jest.fn().mockResolvedValue(1) };
+
+    service = new ProductService(repository, cacheManager as never, redis as never);
   });
 
   describe('create', () => {
-    it('persists and returns the created product', async () => {
+    it('persists, bumps the list version, and returns the created product', async () => {
       const created = buildProduct();
       repository.create.mockResolvedValue(created);
 
@@ -44,6 +52,7 @@ describe('ProductService', () => {
         vatRate: 10,
       });
 
+      expect(redis.incr).toHaveBeenCalled();
       expect(result).toEqual({
         id: 'product-1',
         sku: 'SKU-1',
@@ -66,6 +75,8 @@ describe('ProductService', () => {
       await expect(
         service.create({ sku: 'SKU-1', name: 'Widget', unitPrice: 100, currency: 'USD', vatRate: 10 }),
       ).rejects.toBeInstanceOf(ConflictException);
+
+      expect(redis.incr).not.toHaveBeenCalled();
     });
 
     it('rethrows unrecognized errors as-is', async () => {
@@ -96,6 +107,24 @@ describe('ProductService', () => {
 
       expect(result.meta.page).toBeDefined();
       expect(result.meta.limit).toBeDefined();
+    });
+
+    it('returns a cached response without hitting the repository on a cache hit', async () => {
+      const cached = { items: [], meta: { page: 1, limit: 20, total: 0, totalPages: 0 } };
+      cacheManager.get.mockResolvedValue(cached);
+
+      const result = await service.findAll({ page: 1, limit: 20 });
+
+      expect(result).toBe(cached);
+      expect(repository.findAll).not.toHaveBeenCalled();
+    });
+
+    it('writes the result to cache on a miss', async () => {
+      repository.findAll.mockResolvedValue({ items: [buildProduct()], total: 1 });
+
+      await service.findAll({ page: 1, limit: 20 });
+
+      expect(cacheManager.set).toHaveBeenCalled();
     });
   });
 });

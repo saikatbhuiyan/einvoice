@@ -124,8 +124,14 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-einvoice}
       POSTGRES_USER: ${POSTGRES_USER:-einvoice_user}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me-postgres-password}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-change-me-redis-password}
+      CACHE_DEFAULT_TTL: ${CACHE_DEFAULT_TTL:-20}
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     expose:
       - "${PRODUCT_HTTP_PORT:-3303}"

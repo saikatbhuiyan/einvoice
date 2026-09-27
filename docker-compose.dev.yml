@@ -149,10 +149,16 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-einvoice_dev}
       POSTGRES_USER: ${POSTGRES_USER:-einvoice_dev_user}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dev-postgres-password}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-dev-redis-password}
+      CACHE_DEFAULT_TTL: ${CACHE_DEFAULT_TTL:-20}
       CHOKIDAR_USEPOLLING: "true"
       WATCHPACK_POLLING: "true"
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     ports:
       - "${PRODUCT_HTTP_PORT:-3303}:${PRODUCT_HTTP_PORT:-3303}"

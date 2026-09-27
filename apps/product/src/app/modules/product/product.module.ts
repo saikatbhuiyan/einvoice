@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { CacheModule } from '@libs/cache';
 import { ProductEntity } from '../../../database/entities/product.entity';
 import { ProductHttpController } from './product-http.controller';
 import { ProductRpcController } from './product-rpc.controller';
@@ -8,7 +9,7 @@ import { ProductRepository } from './product.repository';
 import { PRODUCT_REPOSITORY } from './product.repository.interface';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([ProductEntity])],
+  imports: [TypeOrmModule.forFeature([ProductEntity]), CacheModule.forRoot('svc')],
   controllers: [ProductHttpController, ProductRpcController],
   providers: [
     ProductService,
