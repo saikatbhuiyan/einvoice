@@ -27,12 +27,20 @@ services:
       CACHE_DEFAULT_TTL: ${CACHE_DEFAULT_TTL:-20}
       DATABASE_URL: postgresql://${POSTGRES_USER:-einvoice_user}:${POSTGRES_PASSWORD:-change-me-postgres-password}@postgres:5432/${POSTGRES_DB:-einvoice}
       MONGODB_URI: mongodb://${MONGO_ROOT_USERNAME:-einvoice_root}:${MONGO_ROOT_PASSWORD:-change-me-mongo-password}@mongodb:27017/${MONGO_DB:-einvoice}?authSource=admin
+      KEYCLOAK_BASE_URL: http://keycloak:8080
+      KEYCLOAK_PUBLIC_BASE_URL: ${KEYCLOAK_PUBLIC_BASE_URL:-https://auth.example.com}
+      KEYCLOAK_REALM: ${KEYCLOAK_REALM:-einvoice}
+      KEYCLOAK_CLIENT_ID: ${KEYCLOAK_CLIENT_ID:-einvoice-bff}
+      KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:-change-me-keycloak-bff-secret}
+      KEYCLOAK_REDIRECT_URI: ${KEYCLOAK_REDIRECT_URI:-https://app.example.com/api/v1/auth/callback}
     depends_on:
       redis:
         condition: service_healthy
       postgres:
         condition: service_healthy
       mongodb:
+        condition: service_healthy
+      keycloak:
         condition: service_healthy
       invoice:
         condition: service_started
@@ -170,8 +178,14 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-einvoice}
       POSTGRES_USER: ${POSTGRES_USER:-einvoice_user}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me-postgres-password}
+      KEYCLOAK_BASE_URL: http://keycloak:8080
+      KEYCLOAK_REALM: ${KEYCLOAK_REALM:-einvoice}
+      KEYCLOAK_ADMIN_CLIENT_ID: ${KEYCLOAK_ADMIN_CLIENT_ID:-einvoice-admin-cli}
+      KEYCLOAK_ADMIN_CLIENT_SECRET: ${KEYCLOAK_ADMIN_CLIENT_SECRET:-change-me-keycloak-admin-cli-secret}
     depends_on:
       postgres:
+        condition: service_healthy
+      keycloak:
         condition: service_healthy
     expose:
       - "${USER_ACCESS_HTTP_PORT:-3305}"
@@ -257,9 +271,56 @@ services:
     networks:
       - backend
 
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0.5
+    restart: unless-stopped
+    env_file:
+      - .env
+      - .env.prod
+    environment:
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN_USER:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-change-me-keycloak-admin-password}
+      KC_HEALTH_ENABLED: "true"
+      KC_HTTP_ENABLED: "true"
+      # No TLS termination happens inside this compose file for any service (bff has none either)
+      # — same single-host assumption as the rest of it: whatever sits in front of these published
+      # ports (a cloud load balancer, a separately managed reverse proxy) terminates TLS and
+      # forwards plain HTTP. hostname-strict=false lets Keycloak build correct URLs from whatever
+      # Host header it actually receives instead of demanding an exact match up front.
+      KC_HOSTNAME_STRICT: "false"
+    # Deliberately no --import-realm and no mount of infra/keycloak/realm-export here — that file
+    # is a dev-only convenience fixture: it hardcodes a client secret and two test users with a
+    # publicly-known password (both live in this repo's git history). Auto-importing it into
+    # "production" would mean Keycloak actually stores those exact dev credentials, silently
+    # ignoring whatever real KEYCLOAK_CLIENT_SECRET an operator sets via env — bff would then fail
+    # to authenticate against the real secret it's configured with, and the dev test accounts
+    # would exist with known passwords. The einvoice-bff and einvoice-admin-cli clients, and every
+    # real user, need to be created here deliberately (console or Admin REST API) with real
+    # secrets once, the same one-time step any production Keycloak realm needs regardless of what
+    # app is fronting it.
+    command: ["start"]
+    volumes:
+      - keycloak_data:/opt/keycloak/data
+    ports:
+      - "${KEYCLOAK_PORT:-8080}:8080"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "exec 3<>/dev/tcp/127.0.0.1/8080; printf 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3; grep -q '200' <&3",
+        ]
+      interval: 15s
+      timeout: 10s
+      retries: 15
+      start_period: 45s
+    networks:
+      - edge
+      - backend
+
 volumes:
   postgres_data:
   mongodb_data:
+  keycloak_data:
   redis_data:
 
 networks:
