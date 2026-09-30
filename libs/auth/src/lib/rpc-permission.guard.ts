@@ -3,17 +3,26 @@ import { Reflector } from '@nestjs/core';
 import { RpcException } from '@nestjs/microservices';
 import { GrpcStatus } from '@libs/interceptors';
 import { getRpcMeta } from '@libs/transports';
+import { IS_PUBLIC_KEY } from './public.decorator';
 import { REQUIRED_PERMISSIONS_KEY } from './require-permission.decorator';
 
 /**
- * Enforces authorization on the RPC surface (invoice/product/user-access's TCP message handlers)
- * using the permissions `bff`'s PermissionGuard already resolved and attached to the RpcEnvelope —
- * this guard never talks to Keycloak or a permission resolver itself, it just reads what's already
- * on the envelope. These RPC ports should only ever be called by `bff`, which always envelopes
- * with identity once a user is authenticated, so a call with no envelope at all is treated as
- * unauthenticated outright, independent of whether the specific handler declares a required
- * permission — the alternative (only checking identity on permission-gated handlers) would leave
- * every handler without `@RequirePermission` reachable by a raw, un-enveloped TCP message.
+ * Enforces authorization on the TCP RPC surface (invoice/product/user-access's TCP message
+ * handlers) using the permissions `bff`'s PermissionGuard already resolved and attached to the
+ * RpcEnvelope — this guard never talks to Keycloak or a permission resolver itself, it just reads
+ * what's already on the envelope. These TCP ports should only ever be called by `bff`, which
+ * always envelopes with identity once a user is authenticated, so a call with no envelope at all
+ * is treated as unauthenticated outright, independent of whether the specific handler declares a
+ * required permission — the alternative (only checking identity on permission-gated handlers)
+ * would leave every handler without `@RequirePermission` reachable by a raw, un-enveloped TCP
+ * message.
+ *
+ * This guard is registered globally (`app.useGlobalGuards`), and `context.getType()` reports
+ * `'rpc'` for every microservice transport, not just TCP — so a gRPC handler (e.g. `RoleGrpcController`,
+ * called by Authorizer, not by bff) hits this same guard despite never carrying an RpcEnvelope at
+ * all. gRPC handlers that are meant to be reachable without one must opt out with `@Public()`
+ * (the same decorator `JwtAuthGuard` already honors for HTTP) rather than being silently exempted
+ * by transport — an explicit opt-out per handler is safer than trusting every gRPC call by default.
  *
  * Throws `RpcException` directly, pre-shaped the same way `RpcExceptionInterceptor` shapes a
  * thrown `HttpException` — guards run before interceptors in Nest's pipeline, so an exception
@@ -27,6 +36,13 @@ export class RpcPermissionGuard implements CanActivate {
 
   canActivate(context: ExecutionContext): boolean {
     if (context.getType() !== 'rpc') return true;
+
+    const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+
+    if (isPublic) return true;
 
     const meta = getRpcMeta(context.switchToRpc().getData());
 

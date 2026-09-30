@@ -15,7 +15,9 @@ module.exports = {
       compiler: 'tsc',
       main: './src/main.ts',
       tsConfig: './tsconfig.app.json',
-      assets: ['./src/assets'],
+      // The second entry is @grpc/proto-loader's runtime requirement — see
+      // apps/authorizer/webpack.config.js for the full explanation.
+      assets: ['./src/assets', { input: '../../libs/transports/src/proto', output: 'proto', glob: '*.proto' }],
       optimization: false,
       outputHashing: 'none',
       generatePackageJson: true,

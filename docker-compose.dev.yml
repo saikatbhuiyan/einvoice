@@ -34,6 +34,8 @@ services:
       KEYCLOAK_CLIENT_ID: ${KEYCLOAK_CLIENT_ID:-einvoice-bff}
       KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:-dev-keycloak-bff-secret}
       KEYCLOAK_REDIRECT_URI: http://localhost:${BFF_PORT:-3300}/${GLOBAL_PREFIX:-api}/v1/auth/callback
+      AUTHORIZER_GRPC_HOST: authorizer
+      AUTHORIZER_GRPC_PORT: ${AUTHORIZER_GRPC_PORT:-3307}
       CHOKIDAR_USEPOLLING: "true"
       WATCHPACK_POLLING: "true"
     depends_on:
@@ -50,6 +52,8 @@ services:
       product:
         condition: service_started
       user-access:
+        condition: service_started
+      authorizer:
         condition: service_started
     ports:
       - "${BFF_PORT:-3300}:${BFF_PORT:-3300}"
@@ -198,6 +202,7 @@ services:
       USER_ACCESS_HTTP_PORT: ${USER_ACCESS_HTTP_PORT:-3305}
       USER_SERVICE_HOST: 0.0.0.0
       USER_SERVICE_PORT: ${USER_SERVICE_PORT:-3306}
+      USER_ACCESS_GRPC_PORT: ${USER_ACCESS_GRPC_PORT:-3308}
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
       POSTGRES_DB: ${POSTGRES_DB:-einvoice_dev}
@@ -217,6 +222,7 @@ services:
     ports:
       - "${USER_ACCESS_HTTP_PORT:-3305}:${USER_ACCESS_HTTP_PORT:-3305}"
       - "${USER_SERVICE_PORT:-3306}:${USER_SERVICE_PORT:-3306}"
+      - "${USER_ACCESS_GRPC_PORT:-3308}:${USER_ACCESS_GRPC_PORT:-3308}"
     volumes:
       - .:/app
       - pnpm_store:/root/.local/share/pnpm/store
@@ -226,6 +232,56 @@ services:
         [
           "CMD-SHELL",
           "node -e \"const net = require('net'); const socket = net.connect({ host: '127.0.0.1', port: Number(process.env.USER_ACCESS_HTTP_PORT || 3305) }, () => { socket.end(); process.exit(0); }); socket.on('error', () => process.exit(1));\"",
+        ]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+      start_period: 40s
+    networks:
+      - backend
+
+  authorizer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    image: einvoice/authorizer:dev
+    restart: unless-stopped
+    env_file:
+      - .env
+      - .env.dev
+    working_dir: /app
+    command: ["pnpm", "nx", "serve", "authorizer"]
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      GLOBAL_PREFIX: ${GLOBAL_PREFIX:-api}
+      AUTHORIZER_HTTP_PORT: ${AUTHORIZER_HTTP_PORT:-3309}
+      AUTHORIZER_GRPC_PORT: ${AUTHORIZER_GRPC_PORT:-3307}
+      USER_ACCESS_GRPC_HOST: user-access
+      USER_ACCESS_GRPC_PORT: ${USER_ACCESS_GRPC_PORT:-3308}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-dev-redis-password}
+      CACHE_DEFAULT_TTL: ${CACHE_DEFAULT_TTL:-20}
+      CHOKIDAR_USEPOLLING: "true"
+      WATCHPACK_POLLING: "true"
+    depends_on:
+      redis:
+        condition: service_healthy
+      user-access:
+        condition: service_healthy
+    ports:
+      - "${AUTHORIZER_HTTP_PORT:-3309}:${AUTHORIZER_HTTP_PORT:-3309}"
+      - "${AUTHORIZER_GRPC_PORT:-3307}:${AUTHORIZER_GRPC_PORT:-3307}"
+    volumes:
+      - .:/app
+      - pnpm_store:/root/.local/share/pnpm/store
+      - node_modules:/app/node_modules
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"const net = require('net'); const socket = net.connect({ host: '127.0.0.1', port: Number(process.env.AUTHORIZER_HTTP_PORT || 3309) }, () => { socket.end(); process.exit(0); }); socket.on('error', () => process.exit(1));\"",
         ]
       interval: 20s
       timeout: 10s
