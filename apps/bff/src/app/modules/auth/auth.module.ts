@@ -1,27 +1,34 @@
 import { Module } from '@nestjs/common';
 import { HttpModule } from '@nestjs/axios';
+import { ClientsModule } from '@nestjs/microservices';
 import { CacheModule } from '@libs/cache';
 import { PERMISSION_RESOLVER, PermissionGuard } from '@libs/auth';
-import { UserModule } from '../user/user.module';
+import { createGrpcClientConfig, GrpcServiceName } from '@libs/transports';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
-import { UserPermissionResolver } from './user-permission.resolver';
+import { AuthorizerPermissionResolver } from './authorizer-permission.resolver';
 
 /**
  * Declares PermissionGuard + PERMISSION_RESOLVER together, rather than relying on
- * KeycloakAuthModule (a @Global() lib module with no knowledge of user-access) to provide them —
- * PERMISSION_RESOLVER's implementation needs UserService, which only this module's own imports
- * make resolvable (see the PostgresModule/MongoDbModule provider-resolution gotcha in CLAUDE.md;
- * the same rule applies here).
+ * KeycloakAuthModule (a @Global() lib module with no knowledge of Authorizer) to provide them —
+ * same dynamic-module provider-resolution rule documented in CLAUDE.md for PostgresModule/
+ * MongoDbModule: a provider is only resolvable from its own module's providers or the modules it
+ * imports. PERMISSION_RESOLVER used to need UserModule (user-access over TCP); now it needs a
+ * gRPC client to Authorizer instead — UserModule is gone from these imports because nothing here
+ * uses UserService anymore.
  */
 @Module({
-  imports: [UserModule, HttpModule, CacheModule.forRoot('bff')],
+  imports: [
+    HttpModule,
+    CacheModule.forRoot('bff'),
+    ClientsModule.register([createGrpcClientConfig(GrpcServiceName.AUTHORIZER)]),
+  ],
   controllers: [AuthController],
   providers: [
     AuthService,
     PermissionGuard,
-    UserPermissionResolver,
-    { provide: PERMISSION_RESOLVER, useExisting: UserPermissionResolver },
+    AuthorizerPermissionResolver,
+    { provide: PERMISSION_RESOLVER, useExisting: AuthorizerPermissionResolver },
   ],
   exports: [PermissionGuard],
 })

@@ -1,13 +1,10 @@
 import { Logger as NestLogger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
-import { json, urlencoded } from 'express';
 import { Logger, LoggerErrorInterceptor } from 'nestjs-pino';
-import { BODY_SIZE_LIMIT, SHUTDOWN_DRAIN_TIMEOUT_MS } from '@libs/constants';
-import { createValidationPipe } from '@libs/shared/utils';
-import { createGrpcServerConfig, createTcpServerConfig, GrpcServiceName, ServiceName } from '@libs/transports';
-import { RpcExceptionInterceptor, RpcLoggingInterceptor } from '@libs/interceptors';
-import { RpcPermissionGuard } from '@libs/auth/rpc-permission.guard';
+import { SHUTDOWN_DRAIN_TIMEOUT_MS } from '@libs/constants';
+import { createGrpcServerConfig, GrpcServiceName } from '@libs/transports';
+import { RpcLoggingInterceptor } from '@libs/interceptors';
 import { AppModule } from './app/app.module';
 
 async function bootstrap() {
@@ -18,24 +15,12 @@ async function bootstrap() {
 
   const configService = app.get(ConfigService);
   const globalPrefix = configService.get<string>('GLOBAL_PREFIX') ?? 'api';
-  const httpPort = Number(process.env['USER_ACCESS_HTTP_PORT'] ?? 3305);
+  const httpPort = Number(process.env['AUTHORIZER_HTTP_PORT'] ?? 3309);
 
-  app.use(json({ limit: BODY_SIZE_LIMIT }));
-  app.use(urlencoded({ extended: true, limit: BODY_SIZE_LIMIT }));
-  app.useGlobalInterceptors(new LoggerErrorInterceptor(), new RpcLoggingInterceptor(), new RpcExceptionInterceptor());
-  app.useGlobalGuards(app.get(RpcPermissionGuard));
-  app.useGlobalPipes(createValidationPipe());
+  app.useGlobalInterceptors(new LoggerErrorInterceptor(), new RpcLoggingInterceptor());
   app.enableShutdownHooks();
 
-  app.connectMicroservice(createTcpServerConfig(ServiceName.USER), {
-    inheritAppConfig: true,
-  });
-
-  // A third transport alongside HTTP and TCP — Authorizer's gRPC client to this service, kept
-  // deliberately separate from the TCP surface bff's own UserClientService/RoleClientService use
-  // for user/role CRUD. Nest supports multiple connectMicroservice() calls on one app; each just
-  // adds another transport the same Nest application listens on.
-  app.connectMicroservice(createGrpcServerConfig(GrpcServiceName.USER_ACCESS_ROLE_QUERY), {
+  app.connectMicroservice(createGrpcServerConfig(GrpcServiceName.AUTHORIZER), {
     inheritAppConfig: true,
   });
 

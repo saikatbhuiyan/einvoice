@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package authorizer;
+
+// bff's gRPC client to this service replaces UserPermissionResolver — same contract shape as the
+// PermissionResolver interface it implements (roles in, permissions out), just over gRPC instead
+// of an in-process TypeScript call.
+service AuthorizerService {
+  rpc GetPermissionsForRoles(GetPermissionsForRolesRequest) returns (GetPermissionsForRolesResponse);
+}
+
+message GetPermissionsForRolesRequest {
+  repeated string roles = 1;
+}
+
+message GetPermissionsForRolesResponse {
+  repeated string permissions = 1;
+}

@@ -19,6 +19,9 @@ module.exports = {
       outputHashing: 'none',
       generatePackageJson: true,
       sourceMap: true,
+      // @grpc/proto-loader needs a real .proto file on disk at runtime — see
+      // apps/authorizer/webpack.config.js for the full explanation of why.
+      assets: [{ input: '../../libs/transports/src/proto', output: 'proto', glob: '*.proto' }],
     }),
   ],
 };

@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+package userAccess;
+
+// Authorizer's gRPC client to this service — general-purpose role data, same information the
+// existing TCP ROLE.FIND_ALL pattern already exposes to bff, just reachable over gRPC too.
+// user-access owns the data; Authorizer owns the "which of these roles grant which permissions"
+// logic, same split of responsibility PermissionResolver already had.
+service RoleQueryService {
+  rpc FindAllRoles(FindAllRolesRequest) returns (FindAllRolesResponse);
+}
+
+message FindAllRolesRequest {}
+
+message Role {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+  repeated string permissions = 4;
+  bool isActive = 5;
+}
+
+message FindAllRolesResponse {
+  repeated Role roles = 1;
+}
