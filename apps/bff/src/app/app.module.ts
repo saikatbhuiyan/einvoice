@@ -9,6 +9,7 @@ import { InvoiceModule } from './modules/invoice/invoice.module';
 import { ProductModule } from './modules/product/product.module';
 import { UserModule } from './modules/user/user.module';
 import { AuthModule } from './modules/auth/auth.module';
+import { PaymentModule } from './modules/payment/payment.module';
 import { RateLimitModule } from '@libs/rate-limit';
 import { CircuitBreakerModule } from '@libs/circuit-breaker';
 import { KeycloakAuthModule } from '@libs/auth';
@@ -28,6 +29,7 @@ import { KeycloakAuthModule } from '@libs/auth';
     ProductModule,
     UserModule,
     AuthModule,
+    PaymentModule,
     RateLimitModule.forRoot(),
     CircuitBreakerModule.forRoot(),
   ],

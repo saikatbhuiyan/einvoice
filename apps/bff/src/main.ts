@@ -3,7 +3,7 @@ import { NestFactory } from '@nestjs/core';
 import helmet from 'helmet';
 import { HttpAdapterHost, Reflector } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
-import { json, urlencoded } from 'express';
+import { json, urlencoded, type Request } from 'express';
 import { ConfigService } from '@nestjs/config';
 import { Logger, LoggerErrorInterceptor } from 'nestjs-pino';
 import { ALLOWED_HTTP_METHODS, BODY_SIZE_LIMIT, SHUTDOWN_DRAIN_TIMEOUT_MS } from '@libs/constants';
@@ -39,7 +39,18 @@ async function bootstrap(): Promise<void> {
   const nodeEnv = configService.get('NODE_ENV', { infer: true });
 
   app.use(helmet());
-  app.use(json({ limit: BODY_SIZE_LIMIT }));
+  app.use(
+    json({
+      limit: BODY_SIZE_LIMIT,
+      // Stashes the raw bytes alongside the parsed body for every route -- cheap to always do,
+      // and the only way the Stripe webhook route (PaymentController.handleWebhook) can verify
+      // Stripe's signature: that check is over the exact bytes Stripe signed, and re-serializing
+      // the already-parsed JSON body would not byte-for-byte match what Stripe sent.
+      verify: (req: Request & { rawBody?: Buffer }, _res, buf: Buffer) => {
+        req.rawBody = buf;
+      },
+    }),
+  );
   app.use(urlencoded({ extended: true, limit: BODY_SIZE_LIMIT }));
 
   const allowedOrigins = corsOrigins
