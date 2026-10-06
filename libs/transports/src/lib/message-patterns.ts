@@ -5,6 +5,8 @@ export const INVOICE_PATTERNS = {
   UPDATE: 'invoice.update',
   DELETE: 'invoice.delete',
   BULK_CREATE: 'invoice.bulkCreate',
+  GENERATE_PDF: 'invoice.generatePdf',
+  MARK_PAID: 'invoice.markPaid',
 } as const;
 
 export const PRODUCT_PATTERNS = {
@@ -35,6 +37,15 @@ export const PAYMENT_PATTERNS = {
   INITIATE: 'payment.initiate',
   VERIFY: 'payment.verify',
   REFUND: 'payment.refund',
+  WEBHOOK: 'payment.handleWebhookEvent',
+} as const;
+
+export const PDF_GENERATOR_PATTERNS = {
+  GENERATE_INVOICE_PDF: 'pdfGenerator.generateInvoicePdf',
+} as const;
+
+export const MEDIA_PATTERNS = {
+  UPLOAD: 'media.upload',
 } as const;
 
 export const TCP_PATTERNS = {
@@ -44,4 +55,6 @@ export const TCP_PATTERNS = {
   ROLE: ROLE_PATTERNS,
   NOTIFICATION: NOTIFICATION_PATTERNS,
   PAYMENT: PAYMENT_PATTERNS,
+  PDF_GENERATOR: PDF_GENERATOR_PATTERNS,
+  MEDIA: MEDIA_PATTERNS,
 } as const;
