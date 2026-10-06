@@ -15,6 +15,11 @@ import {
 } from '@libs/interfaces/gateway';
 import { BaseTcpClient, ServiceName, TCP_CLIENT_TOKENS, TCP_PATTERNS } from '@libs/transports';
 
+export interface GenerateInvoicePdfGatewayResponse {
+  url: string;
+  fileName: string;
+}
+
 @Injectable()
 export class InvoiceClientService extends BaseTcpClient {
   protected readonly logger = new Logger(InvoiceClientService.name);
@@ -47,5 +52,9 @@ export class InvoiceClientService extends BaseTcpClient {
 
   async removeInvoice(id: string, version?: number): Promise<DeleteInvoiceResponse> {
     return this.send<DeleteInvoiceResponse, DeleteInvoiceGatewayRequest>(TCP_PATTERNS.INVOICE.DELETE, { id, version });
+  }
+
+  async generatePdf(id: string): Promise<GenerateInvoicePdfGatewayResponse> {
+    return this.send<GenerateInvoicePdfGatewayResponse, { id: string }>(TCP_PATTERNS.INVOICE.GENERATE_PDF, { id });
   }
 }

@@ -40,4 +40,14 @@ export interface IInvoiceRepository {
   update(id: string, data: UpdateInvoiceRequest, version?: number): Promise<InvoiceDocument | null>;
 
   remove(id: string, version?: number): Promise<InvoiceDocument | null>;
+
+  /**
+   * Deliberately bypasses the If-Match optimistic-concurrency path update() uses: pdfUrl/
+   * pdfGeneratedAt are an informational cache, not user-editable business content, so a PDF
+   * regeneration shouldn't need (or bump) the same version a concurrent content edit would race on.
+   */
+  setPdfMetadata(id: string, pdfUrl: string, pdfGeneratedAt: Date): Promise<InvoiceDocument | null>;
+
+  /** Same rationale as setPdfMetadata: a webhook-driven status flip isn't a user edit racing on version. */
+  markPaid(id: string): Promise<InvoiceDocument | null>;
 }
