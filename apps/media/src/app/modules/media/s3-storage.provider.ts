@@ -14,10 +14,18 @@ export class S3StorageProvider implements StorageProvider {
       region: config.S3_REGION,
       endpoint: config.S3_ENDPOINT,
       forcePathStyle: config.S3_FORCE_PATH_STYLE,
-      credentials: {
-        accessKeyId: config.S3_ACCESS_KEY_ID,
-        secretAccessKey: config.S3_SECRET_ACCESS_KEY,
-      },
+      // Omitting `credentials` entirely (not passing it as `undefined` keys on an object -- the
+      // SDK checks for the property's presence, not just a truthy value) lets the client fall
+      // back to its own default provider chain -- an ECS task role or EC2 instance profile in
+      // production, where neither S3_ACCESS_KEY_ID nor S3_SECRET_ACCESS_KEY should be set at all.
+      ...(config.S3_ACCESS_KEY_ID && config.S3_SECRET_ACCESS_KEY
+        ? {
+            credentials: {
+              accessKeyId: config.S3_ACCESS_KEY_ID,
+              secretAccessKey: config.S3_SECRET_ACCESS_KEY,
+            },
+          }
+        : {}),
     });
   }
 
