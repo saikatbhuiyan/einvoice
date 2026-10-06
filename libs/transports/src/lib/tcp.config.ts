@@ -6,6 +6,8 @@ export enum ServiceName {
   USER = 'USER',
   NOTIFICATION = 'NOTIFICATION',
   PAYMENT = 'PAYMENT',
+  PDF_GENERATOR = 'PDF_GENERATOR',
+  MEDIA = 'MEDIA',
 }
 
 export const TCP_SERVICES = {
@@ -29,6 +31,14 @@ export const TCP_SERVICES = {
     host: process.env['PAYMENT_SERVICE_HOST'] ?? 'localhost',
     port: Number(process.env['PAYMENT_SERVICE_PORT'] ?? 3004),
   },
+  [ServiceName.PDF_GENERATOR]: {
+    host: process.env['PDF_GENERATOR_SERVICE_HOST'] ?? 'localhost',
+    port: Number(process.env['PDF_GENERATOR_SERVICE_PORT'] ?? 3310),
+  },
+  [ServiceName.MEDIA]: {
+    host: process.env['MEDIA_SERVICE_HOST'] ?? 'localhost',
+    port: Number(process.env['MEDIA_SERVICE_PORT'] ?? 3312),
+  },
 } as const;
 
 export type TcpServiceName = keyof typeof ServiceName;
@@ -39,6 +49,8 @@ export const TCP_CLIENT_TOKENS = {
   [ServiceName.USER]: 'TCP_CLIENT_USER',
   [ServiceName.NOTIFICATION]: 'TCP_CLIENT_NOTIFICATION',
   [ServiceName.PAYMENT]: 'TCP_CLIENT_PAYMENT',
+  [ServiceName.PDF_GENERATOR]: 'TCP_CLIENT_PDF_GENERATOR',
+  [ServiceName.MEDIA]: 'TCP_CLIENT_MEDIA',
 } as const satisfies Record<TcpServiceName, string>;
 
 export type TcpClientToken = (typeof TCP_CLIENT_TOKENS)[TcpServiceName];

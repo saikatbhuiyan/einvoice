@@ -7,3 +7,5 @@ export * from './lib/connection-error-detector';
 export * from './lib/grpc-to-http-mapper';
 export * from './lib/rpc-timeout-handler';
 export * from './lib/rpc-envelope';
+export * from './lib/pdf-generator.types';
+export * from './lib/media.types';
