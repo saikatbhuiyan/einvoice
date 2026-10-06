@@ -26,6 +26,13 @@ import {
 } from '@libs/interfaces/gateway';
 import { AuditLogService } from '@libs/audit-log';
 import { INVOICE_REPOSITORY, IInvoiceRepository, type PaginatedResultMeta } from './invoice.repository.interface';
+import { PdfGeneratorClientService } from './clients/pdf-generator-client.service';
+import { MediaClientService } from './clients/media-client.service';
+
+export interface GenerateInvoicePdfResult {
+  url: string;
+  fileName: string;
+}
 
 const SVC_PREFIX = 'svc';
 const CACHE_KEY_ONE = (id: string) => `${SVC_PREFIX}:invoice:one:${id}`;
@@ -46,6 +53,8 @@ export class InvoiceService {
     @Inject(CACHE_MANAGER) private readonly cacheManager: Cache,
     @Inject(REDIS_CLIENT) redis: Redis,
     private readonly auditLog: AuditLogService,
+    private readonly pdfGeneratorClient: PdfGeneratorClientService,
+    private readonly mediaClient: MediaClientService,
   ) {
     this.redis = redis;
   }
@@ -183,6 +192,66 @@ export class InvoiceService {
       id,
       deleted: true,
     };
+  }
+
+  async generatePdf(id: string): Promise<GenerateInvoicePdfResult> {
+    const invoice = await this.invoiceRepository.findOne(this.ensureObjectId(id));
+
+    if (!invoice) {
+      throw new NotFoundException(`Invoice not found for id "${id}".`);
+    }
+
+    const { base64, contentType, fileName } = await this.pdfGeneratorClient.generateInvoicePdf({
+      invoiceNumber: invoice.invoiceNumber,
+      client: {
+        name: invoice.client.name,
+        email: invoice.client.email,
+        address: invoice.client.address,
+      },
+      items: invoice.items.map((item) => ({
+        catalogId: item.catalogId,
+        name: item.name,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        vatRate: item.vatRate,
+        total: item.total,
+      })),
+      currency: invoice.currency,
+      status: invoice.status,
+      issueDate: invoice.issueDate.toISOString(),
+      dueDate: invoice.dueDate?.toISOString(),
+      notes: invoice.notes,
+      subtotal: invoice.subtotal,
+      vatTotal: invoice.vatTotal,
+      total: invoice.total,
+    });
+
+    const { url } = await this.mediaClient.uploadFile({ fileName, contentType, base64 });
+
+    const pdfGeneratedAt = new Date();
+    await this.invoiceRepository.setPdfMetadata(id, url, pdfGeneratedAt);
+    await this.delCacheKey(CACHE_KEY_ONE(id));
+
+    await this.auditLog.record({
+      action: 'GENERATE_PDF',
+      entityType: 'invoice',
+      entityId: id,
+    });
+
+    return { url, fileName };
+  }
+
+  async markPaid(id: string): Promise<InvoiceResponse> {
+    const invoice = await this.invoiceRepository.markPaid(this.ensureObjectId(id));
+
+    if (!invoice) {
+      throw new NotFoundException(`Invoice not found for id "${id}".`);
+    }
+
+    await Promise.all([this.delCacheKey(CACHE_KEY_ONE(id)), this.bumpListVersion()]);
+    await this.auditLog.record({ action: 'UPDATE', entityType: 'invoice', entityId: id });
+
+    return this.toInvoiceResponse(invoice);
   }
 
   private async getListVersion(): Promise<number> {

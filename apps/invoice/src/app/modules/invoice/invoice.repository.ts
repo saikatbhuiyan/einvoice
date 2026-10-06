@@ -91,6 +91,20 @@ export class InvoiceRepository implements IInvoiceRepository {
     return result;
   }
 
+  async setPdfMetadata(id: string, pdfUrl: string, pdfGeneratedAt: Date): Promise<InvoiceDocument | null> {
+    if (!isValidObjectId(id)) return null;
+
+    return this.writeModel
+      .findOneAndUpdate({ _id: id, deletedAt: null }, { pdfUrl, pdfGeneratedAt }, { new: true })
+      .exec();
+  }
+
+  async markPaid(id: string): Promise<InvoiceDocument | null> {
+    if (!isValidObjectId(id)) return null;
+
+    return this.writeModel.findOneAndUpdate({ _id: id, deletedAt: null }, { status: 'paid' }, { new: true }).exec();
+  }
+
   private async findAllWithCursor(
     cursor: string,
     limit: number,

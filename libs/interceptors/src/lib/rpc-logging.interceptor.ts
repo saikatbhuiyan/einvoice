@@ -4,6 +4,7 @@ import { Observable, throwError } from 'rxjs';
 import { catchError, tap } from 'rxjs/operators';
 import { randomUUID } from 'crypto';
 import { getRpcMeta, type RpcMeta } from '@libs/transports';
+import { runWithCorrelationContext } from '@libs/logging';
 
 type TopicContext = { getTopic(): string };
 type MessageContext = { getMessage(): { headers?: Record<string, unknown> } };
@@ -48,40 +49,54 @@ export class RpcLoggingInterceptor implements NestInterceptor {
       payloadKeys: data && typeof data === 'object' ? Object.keys(data) : [],
     });
 
-    return next.handle().pipe(
-      tap(() => {
-        this.logger.log({
-          event: 'rpc_response',
-          pattern,
-          correlationId: meta.correlationId,
-          traceId: meta.traceId,
-          sourceService: meta.sourceService,
-          durationMs: this.elapsedMs(startAt),
-          status: 'success',
-        });
-      }),
-      catchError((err: unknown) => {
-        const isRpcException = err instanceof RpcException;
-        const message = isRpcException
-          ? JSON.stringify(err.getError())
-          : err instanceof Error
-            ? err.message
-            : String(err);
+    // Every service that only ever *receives* RPC calls (invoice/product/user-access's TCP
+    // controllers) never touched this correlation context before — until now, only bff (over
+    // HTTP, via CorrelationIdMiddleware) ever established it, because only bff ever made an
+    // outgoing RPC call in the first place. That stopped being true the moment invoice became an
+    // RPC *client* itself (calling pdf-generator/media): createRpcEnvelope() reads whatever's on
+    // this same AsyncLocalStorage context, so without re-establishing it here, invoice's outgoing
+    // calls would silently carry no correlationId/traceId/identity, and pdf-generator/media's own
+    // global RpcPermissionGuard would reject them as unauthenticated — the exact same class of bug
+    // the gRPC series' RpcPermissionGuard fix caught, just on the TCP side. Running the handler
+    // (and anything it awaits or calls out to) inside runWithCorrelationContext is what makes
+    // identity propagation "automatic, no per-call-site wiring" actually hold for every hop, not
+    // just the first one from bff.
+    return runWithCorrelationContext(meta, () =>
+      next.handle().pipe(
+        tap(() => {
+          this.logger.log({
+            event: 'rpc_response',
+            pattern,
+            correlationId: meta.correlationId,
+            traceId: meta.traceId,
+            sourceService: meta.sourceService,
+            durationMs: this.elapsedMs(startAt),
+            status: 'success',
+          });
+        }),
+        catchError((err: unknown) => {
+          const isRpcException = err instanceof RpcException;
+          const message = isRpcException
+            ? JSON.stringify(err.getError())
+            : err instanceof Error
+              ? err.message
+              : String(err);
 
-        this.logger.error({
-          event: 'rpc_error',
-          pattern,
-          correlationId: meta.correlationId,
-          traceId: meta.traceId,
-          sourceService: meta.sourceService,
-          durationMs: this.elapsedMs(startAt),
-          status: 'error',
-          error: message,
-          stack: err instanceof Error ? err.stack : undefined,
-        });
+          this.logger.error({
+            event: 'rpc_error',
+            pattern,
+            correlationId: meta.correlationId,
+            traceId: meta.traceId,
+            sourceService: meta.sourceService,
+            durationMs: this.elapsedMs(startAt),
+            status: 'error',
+            error: message,
+            stack: err instanceof Error ? err.stack : undefined,
+          });
 
-        return throwError(() => err);
-      }),
+          return throwError(() => err);
+        }),
+      ),
     );
   }
 

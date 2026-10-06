@@ -90,6 +90,17 @@ export class Invoice extends BaseSchema {
   deletedAt?: Date | null;
 
   /**
+   * Informational cache of the last PDF generated for this invoice (see InvoiceService.generatePdf).
+   * Always overwritten on the next explicit generate call, never read for correctness — no
+   * invalidation logic needed beyond that overwrite.
+   */
+  @Prop()
+  pdfUrl?: string;
+
+  @Prop()
+  pdfGeneratedAt?: Date;
+
+  /**
    * Client-supplied idempotency key for safe retry semantics.
    * Sparse unique index ensures collisions only for actual keys,
    * not for the default null/absent value.

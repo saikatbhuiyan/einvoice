@@ -218,4 +218,23 @@ export class InvoiceController {
     const version = ifMatch ? Number(ifMatch) : undefined;
     return this.invoiceService.remove(params.id, isNaN(version as number) ? undefined : version);
   }
+
+  @Post(':id/pdf')
+  @RequirePermission('invoice:write')
+  @RateLimit({ burst: RATE_LIMIT_MUTATE_BURST, rate: RATE_LIMIT_MUTATE_RATE })
+  @ResponseMessage('Invoice PDF generated successfully')
+  @ApiOperation({
+    summary: 'Generate invoice PDF',
+    description:
+      'Renders the invoice to PDF (via the pdf-generator service), uploads it to object storage (via the media service), and returns its URL.',
+  })
+  @ApiParam({
+    name: 'id',
+    example: INVOICE_ID_EXAMPLE,
+    description: 'MongoDB ObjectId of the invoice.',
+  })
+  @ApiProblemResponses(HttpStatus.NOT_FOUND, HttpStatus.BAD_GATEWAY, HttpStatus.SERVICE_UNAVAILABLE)
+  generatePdf(@Param() params: InvoiceIdGatewayDto) {
+    return this.invoiceService.generatePdf(params.id);
+  }
 }

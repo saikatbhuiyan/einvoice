@@ -18,7 +18,7 @@ import {
   InvoiceResponse,
   UpdateInvoiceRequest,
 } from '@libs/interfaces/gateway';
-import { InvoiceClientService } from './invoice-client.service';
+import { GenerateInvoicePdfGatewayResponse, InvoiceClientService } from './invoice-client.service';
 
 const BFF_PREFIX = 'bff';
 const CACHE_KEY_ONE = (id: string) => `${BFF_PREFIX}:invoice:one:${id}`;
@@ -154,6 +154,12 @@ export class InvoiceService {
   async remove(id: string, version?: number): Promise<DeleteInvoiceResponse> {
     const result = await this.invoiceClient.removeInvoice(id, version);
     await Promise.all([this.delCacheKey(CACHE_KEY_ONE(id)), this.bumpListVersion()]);
+    return result;
+  }
+
+  async generatePdf(id: string): Promise<GenerateInvoicePdfGatewayResponse> {
+    const result = await this.invoiceClient.generatePdf(id);
+    await this.delCacheKey(CACHE_KEY_ONE(id));
     return result;
   }
 

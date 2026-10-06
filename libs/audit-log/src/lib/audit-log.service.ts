@@ -13,7 +13,7 @@ export class AuditLogService {
   ) {}
 
   async record(params: {
-    action: 'CREATE' | 'UPDATE' | 'DELETE';
+    action: 'CREATE' | 'UPDATE' | 'DELETE' | 'GENERATE_PDF';
     entityType: string;
     entityId: string;
     actor?: string;

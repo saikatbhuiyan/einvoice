@@ -6,6 +6,8 @@ import { IInvoiceRepository } from './invoice.repository.interface';
 type MockCache = { get: jest.Mock; set: jest.Mock; del: jest.Mock };
 type MockRedis = { get: jest.Mock; incr: jest.Mock };
 type MockAuditLog = { record: jest.Mock };
+type MockPdfGeneratorClient = { generateInvoicePdf: jest.Mock };
+type MockMediaClient = { uploadFile: jest.Mock };
 
 const buildInvoiceDoc = (overrides: Record<string, unknown> = {}) => {
   const base = {
@@ -20,6 +22,8 @@ describe('InvoiceService', () => {
   let cacheManager: MockCache;
   let redis: MockRedis;
   let auditLog: MockAuditLog;
+  let pdfGeneratorClient: MockPdfGeneratorClient;
+  let mediaClient: MockMediaClient;
   let service: InvoiceService;
 
   beforeEach(() => {
@@ -29,12 +33,23 @@ describe('InvoiceService', () => {
       findOne: jest.fn(),
       update: jest.fn(),
       remove: jest.fn(),
+      setPdfMetadata: jest.fn(),
+      markPaid: jest.fn(),
     };
     cacheManager = { get: jest.fn(), set: jest.fn(), del: jest.fn() };
     redis = { get: jest.fn().mockResolvedValue(null), incr: jest.fn().mockResolvedValue(1) };
     auditLog = { record: jest.fn().mockResolvedValue(undefined) };
+    pdfGeneratorClient = { generateInvoicePdf: jest.fn() };
+    mediaClient = { uploadFile: jest.fn() };
 
-    service = new InvoiceService(repository, cacheManager as never, redis as never, auditLog as never);
+    service = new InvoiceService(
+      repository,
+      cacheManager as never,
+      redis as never,
+      auditLog as never,
+      pdfGeneratorClient as never,
+      mediaClient as never,
+    );
   });
 
   describe('create', () => {

@@ -32,4 +32,9 @@ export class InvoiceHttpController {
     const version = ifMatch ? Number(ifMatch) : undefined;
     return this.invoiceService.remove(id, isNaN(version as number) ? undefined : version);
   }
+
+  @Post(':id/pdf')
+  generatePdf(@Param('id') id: string) {
+    return this.invoiceService.generatePdf(id);
+  }
 }
