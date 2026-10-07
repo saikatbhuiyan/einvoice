@@ -18,12 +18,17 @@ ENV NODE_ENV=development
 
 # pdf-generator uses puppeteer-core against a system Chromium rather than puppeteer's own bundled
 # download — Puppeteer's bundled Chromium is built against glibc and is known to be unreliable on
-# musl-libc Alpine images. Installed here (the one shared dev image every service's container
-# runs, differentiated only by `command`) rather than conditionally, since docker-compose.dev.yml
-# has no per-app dev image to scope this to — every dev container pays this image-size cost, not
-# just pdf-generator's, which is the same "one shared dev image" tradeoff this Dockerfile already
-# makes everywhere else. PUPPETEER_EXECUTABLE_PATH tells puppeteer-core exactly where to find it.
-RUN apk add --no-cache chromium nss freetype harfbuzz ca-certificates ttf-freefont
+# musl-libc Alpine images. Conditional on APP_NAME (docker-compose.dev.yml now passes it as a
+# build arg for every service, not just pdf-generator's) so the ~1.1GB Chromium + its codec/font
+# dependency tree only lands in pdf-generator's own dev image — every other service's `pnpm
+# install` layer above is still fully cache-shared across these builds (this ARG is only
+# referenced below), so this didn't reintroduce a separate full rebuild per app. Confirmed live:
+# before this, invoice/media/payment's dev images were 2.2GB each (same unconditional install as
+# pdf-generator's, despite never touching Puppeteer) vs. ~1.04GB for bff/product/user-access.
+ARG APP_NAME
+RUN if [ "$APP_NAME" = "pdf-generator" ]; then \
+      apk add --no-cache chromium nss freetype harfbuzz ca-certificates ttf-freefont; \
+    fi
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
 
 EXPOSE 3000
