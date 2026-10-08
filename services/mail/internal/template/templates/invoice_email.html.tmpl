@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Invoice {{.InvoiceNumber}}</title>
+</head>
+<!--
+  Table-based layout with inline styles throughout, deliberately -- most email clients (Outlook
+  especially) strip <style> blocks and don't support flexbox/grid the way a browser does. This is
+  the one place in the whole PDF/email pipeline that has to target "every mail client", not just
+  "every modern browser" the way apps/pdf-generator's invoice.ejs can.
+-->
+<body style="margin:0; padding:0; background-color:#f4f4f7; font-family:Helvetica Neue, Arial, sans-serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f4f7; padding:32px 0;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="background-color:#ffffff; border-radius:8px; overflow:hidden;">
+          <tr>
+            <td style="background-color:#1a1a2e; padding:24px 32px;">
+              <span style="color:#ffffff; font-size:20px; font-weight:bold; letter-spacing:1px;">INVOICE {{.InvoiceNumber}}</span>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:32px;">
+              <p style="margin:0 0 16px; font-size:15px; color:#1a1a2e;">Hi {{.ClientName}},</p>
+              <p style="margin:0 0 24px; font-size:15px; color:#1a1a2e; line-height:1.5;">
+                Your invoice <strong>{{.InvoiceNumber}}</strong> is ready. A copy is attached to
+                this email as a PDF.
+              </p>
+
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f9f9fb; border-radius:6px; margin-bottom:24px;">
+                <tr>
+                  <td style="padding:16px 20px; font-size:13px; color:#666666;">Issued</td>
+                  <td style="padding:16px 20px; font-size:13px; color:#1a1a2e; text-align:right;">{{.IssueDate}}</td>
+                </tr>
+                {{if .DueDate}}
+                <tr>
+                  <td style="padding:0 20px 16px; font-size:13px; color:#666666;">Due</td>
+                  <td style="padding:0 20px 16px; font-size:13px; color:#1a1a2e; text-align:right;">{{.DueDate}}</td>
+                </tr>
+                {{end}}
+                <tr>
+                  <td style="padding:0 20px 16px; font-size:15px; font-weight:bold; color:#1a1a2e; border-top:1px solid #e5e5ea; padding-top:16px;">Total due</td>
+                  <td style="padding:0 20px 16px; font-size:15px; font-weight:bold; color:#1a1a2e; text-align:right; border-top:1px solid #e5e5ea; padding-top:16px;">{{.Total}} {{.Currency}}</td>
+                </tr>
+              </table>
+
+              <p style="margin:0; font-size:13px; color:#888888; line-height:1.5;">
+                If you have any questions about this invoice, just reply to this email.
+              </p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:20px 32px; background-color:#f9f9fb; font-size:11px; color:#aaaaaa; text-align:center;">
+              This is an automated notification. Please don't reply if this message was sent in error.
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
