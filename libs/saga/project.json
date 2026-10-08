@@ -1,0 +1,8 @@
+{
+  "name": "saga",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "libs/saga/src",
+  "projectType": "library",
+  "tags": [],
+  "targets": {}
+}
