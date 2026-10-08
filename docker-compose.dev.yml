@@ -107,6 +107,7 @@ services:
       PDF_GENERATOR_SERVICE_PORT: ${PDF_GENERATOR_SERVICE_PORT:-3310}
       MEDIA_SERVICE_HOST: media
       MEDIA_SERVICE_PORT: ${MEDIA_SERVICE_PORT:-3312}
+      KAFKA_BROKERS: kafka:9092
       REDIS_HOST: redis
       REDIS_PORT: 6379
       REDIS_PASSWORD: ${REDIS_PASSWORD:-dev-redis-password}
@@ -121,6 +122,8 @@ services:
       postgres:
         condition: service_healthy
       mongodb:
+        condition: service_healthy
+      kafka:
         condition: service_healthy
       pdf-generator:
         condition: service_started
@@ -507,6 +510,75 @@ services:
     networks:
       - backend
 
+  # Official Apache Software Foundation image, KRaft mode (no Zookeeper) -- confirmed anonymously
+  # pullable live, unlike this same week's MinIO/LocalStack surprises. Touching ANY KAFKA_* env
+  # var switches this image's entrypoint from "zero-config single-node defaults" to "fully manual
+  # KRaft config required" -- confirmed live the hard way (a single KAFKA_ADVERTISED_LISTENERS
+  # override alone fails at boot with "Missing required configuration process.roles"), so this is
+  # the complete minimum set, not a partial override. KAFKA_ADVERTISED_LISTENERS has to be the
+  # compose service name (not the image's own "localhost" default), or every *other* container
+  # that successfully bootstraps against this broker gets redirected back to its own localhost on
+  # every subsequent request and never actually reaches Kafka -- confirmed live, this exact
+  # failure mode, before adding this override. OFFSETS_TOPIC/TRANSACTION_STATE_LOG replication
+  # factors are 1 because this is a single broker; Kafka's own default of 3 makes the internal
+  # __consumer_offsets topic fail to initialize on a 1-broker cluster, which surfaces to every
+  # consumer as an opaque "Group Coordinator Not Available" error until fixed.
+  kafka:
+    image: apache/kafka:latest
+    restart: unless-stopped
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+    ports:
+      - "${KAFKA_PORT:-9092}:9092"
+    volumes:
+      - kafka_dev_data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    networks:
+      - backend
+
+  mail-service:
+    build:
+      context: ./services/mail
+      dockerfile: Dockerfile
+    image: einvoice/mail:dev
+    restart: unless-stopped
+    env_file:
+      - .env
+      - .env.dev
+    environment:
+      APP_ENV: ${NODE_ENV:-development}
+      KAFKA_BROKERS: kafka:9092
+      KAFKA_TOPIC_INVOICE_EVENTS: invoice.events
+      KAFKA_CONSUMER_GROUP: mail-service
+      MAIL_PROVIDER: ${MAIL_PROVIDER:-smtp}
+      SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      SES_FROM_EMAIL: ${SES_FROM_EMAIL:-}
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      - backend
+
   redis:
     image: redis:7-alpine
     restart: unless-stopped
@@ -637,6 +709,7 @@ volumes:
   mongodb_dev_data:
   redis_dev_data:
   keycloak_dev_data:
+  kafka_dev_data:
   pnpm_store:
   node_modules:
 
