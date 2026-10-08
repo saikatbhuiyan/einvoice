@@ -74,7 +74,12 @@
     "payment:migration:create": "typeorm-ts-node-commonjs migration:create",
     "payment:migration:run": "TS_NODE_PROJECT=apps/payment/tsconfig.app.json TS_NODE_TRANSPILE_ONLY=true typeorm-ts-node-commonjs migration:run -d apps/payment/src/database/data-source.ts",
     "payment:migration:revert": "TS_NODE_PROJECT=apps/payment/tsconfig.app.json TS_NODE_TRANSPILE_ONLY=true typeorm-ts-node-commonjs migration:revert -d apps/payment/src/database/data-source.ts",
-    "payment:migration:show": "TS_NODE_PROJECT=apps/payment/tsconfig.app.json TS_NODE_TRANSPILE_ONLY=true typeorm-ts-node-commonjs migration:show -d apps/payment/src/database/data-source.ts"
+    "payment:migration:show": "TS_NODE_PROJECT=apps/payment/tsconfig.app.json TS_NODE_TRANSPILE_ONLY=true typeorm-ts-node-commonjs migration:show -d apps/payment/src/database/data-source.ts",
+    "mail:dev": "cd services/mail && go run ./cmd/mail",
+    "mail:build": "cd services/mail && go build -ldflags=\"-s -w\" -o /tmp/einvoice-mail ./cmd/mail",
+    "mail:test": "cd services/mail && go test ./...",
+    "mail:vet": "cd services/mail && go vet ./...",
+    "mail:tidy": "cd services/mail && go mod tidy"
   },
   "private": true,
   "dependencies": {
@@ -104,6 +109,7 @@
     "helmet": "^8.1.0",
     "ioredis": "^5.10.1",
     "jwks-rsa": "^4.1.0",
+    "kafkajs": "^2.2.4",
     "mongoose": "^9.4.1",
     "nestjs-pino": "^4.6.1",
     "passport": "^0.7.0",
