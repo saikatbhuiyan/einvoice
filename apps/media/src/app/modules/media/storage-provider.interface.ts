@@ -14,4 +14,7 @@ export interface UploadedObject {
  */
 export interface StorageProvider {
   upload(params: { key: string; body: Buffer; contentType: string }): Promise<UploadedObject>;
+
+  /** Throws if the backing store isn't reachable/usable. Drives media's readiness endpoint. */
+  checkHealth(): Promise<void>;
 }

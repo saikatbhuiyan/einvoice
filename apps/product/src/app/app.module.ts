@@ -6,6 +6,7 @@ import { PostgresModule } from '../database/postgres.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { ProductModule } from './modules/product/product.module';
+import { HealthModule } from './health/health.module';
 import { RpcPermissionGuard } from '@libs/auth/rpc-permission.guard';
 
 @Module({
@@ -18,6 +19,7 @@ import { RpcPermissionGuard } from '@libs/auth/rpc-permission.guard';
     LoggingModule.forRoot({ serviceName: 'product' }),
     PostgresModule,
     ProductModule,
+    HealthModule,
   ],
   controllers: [AppController],
   providers: [AppService, RpcPermissionGuard],

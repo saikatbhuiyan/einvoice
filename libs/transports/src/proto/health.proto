@@ -1,0 +1,25 @@
+// The standard gRPC health-checking protocol, verbatim:
+// https://github.com/grpc/grpc/blob/master/doc/health-checking.md
+// Loaded by every gRPC server via createGrpcServerConfig() and served by
+// @libs/health's GrpcHealthController. Matches the proto @nestjs/terminus's GRPCHealthIndicator
+// uses on the calling side, so the two agree without either side owning the contract.
+syntax = "proto3";
+
+package grpc.health.v1;
+
+message HealthCheckRequest {
+  string service = 1;
+}
+
+message HealthCheckResponse {
+  enum ServingStatus {
+    UNKNOWN = 0;
+    SERVING = 1;
+    NOT_SERVING = 2;
+  }
+  ServingStatus status = 1;
+}
+
+service Health {
+  rpc Check(HealthCheckRequest) returns (HealthCheckResponse);
+}

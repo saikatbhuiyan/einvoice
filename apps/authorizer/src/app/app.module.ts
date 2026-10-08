@@ -5,6 +5,7 @@ import { CONFIGURATION } from '../configuration';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AuthorizationModule } from './modules/authorization/authorization.module';
+import { HealthModule } from './health/health.module';
 
 @Module({
   imports: [
@@ -15,6 +16,7 @@ import { AuthorizationModule } from './modules/authorization/authorization.modul
     }),
     LoggingModule.forRoot({ serviceName: 'authorizer' }),
     AuthorizationModule,
+    HealthModule,
   ],
   controllers: [AppController],
   providers: [AppService],

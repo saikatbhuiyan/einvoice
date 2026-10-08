@@ -25,6 +25,15 @@ export class PdfRendererService implements OnModuleInit, OnModuleDestroy {
     await this.browser?.close();
   }
 
+  /**
+   * The browser is launched once, at startup -- nothing relaunches it if Chromium crashes, so a
+   * disconnected browser means every later render fails until the process restarts. That makes it
+   * a liveness signal (see the pdf-generator HealthController), not just a readiness one.
+   */
+  isBrowserConnected(): boolean {
+    return this.browser?.connected ?? false;
+  }
+
   async renderPdf(html: string): Promise<Buffer> {
     if (!this.browser) {
       throw new Error('Puppeteer browser is not initialized');

@@ -6,6 +6,7 @@ import { CONFIGURATION } from '../configuration';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { PdfModule } from './modules/pdf/pdf.module';
+import { HealthModule } from './health/health.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { PdfModule } from './modules/pdf/pdf.module';
     }),
     LoggingModule.forRoot({ serviceName: 'pdf-generator' }),
     PdfModule,
+    HealthModule,
   ],
   controllers: [AppController],
   providers: [AppService, RpcPermissionGuard],

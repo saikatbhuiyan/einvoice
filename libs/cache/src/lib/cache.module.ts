@@ -1,6 +1,6 @@
 import { DynamicModule, Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { CacheModule as NestCacheModule, CACHE_MANAGER } from '@nestjs/cache-manager';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { createKeyv } from '@keyv/redis';
 import { createCache } from 'cache-manager';
 import { RedisCacheConfiguration } from './cache.config';
@@ -9,8 +9,21 @@ import Redis from 'ioredis';
 
 @Module({})
 export class CacheModule {
+  private static readonly modulesByPrefix = new Map<string, DynamicModule>();
+
+  /**
+   * Returns the same DynamicModule object for the same prefix on every call. Nest 11 identifies
+   * dynamic modules by object reference by default, so a fresh object per call meant every
+   * feature module that imported `CacheModule.forRoot('bff')` got its own module instance -- and
+   * its own Redis connection (bff measured 7 connections from one process). Reusing the object
+   * gives one instance, one REDIS_CLIENT, and lets the health check ping the same connection the
+   * app actually uses.
+   */
   static forRoot(prefix = 'bff'): DynamicModule {
-    return {
+    const existing = CacheModule.modulesByPrefix.get(prefix);
+    if (existing) return existing;
+
+    const dynamicModule: DynamicModule = {
       module: CacheModule,
       imports: [
         ConfigModule.forRoot({
@@ -53,5 +66,8 @@ export class CacheModule {
       ],
       exports: [CACHE_MANAGER, REDIS_CLIENT],
     };
+
+    CacheModule.modulesByPrefix.set(prefix, dynamicModule);
+    return dynamicModule;
   }
 }

@@ -10,6 +10,7 @@ import { SchemasModule } from '@libs/schemas';
 import { InvoiceModule } from './modules/invoice/invoice.module';
 import { AuditLogModule } from '@libs/audit-log';
 import { RpcPermissionGuard } from '@libs/auth/rpc-permission.guard';
+import { HealthModule } from './health/health.module';
 
 export const APP_CONFIGURATION = Symbol('APP_CONFIGURATION');
 
@@ -29,6 +30,7 @@ const hasReadReplicas = !!CONFIGURATION.MONGODB_CONFIG.MONGODB_READ_URI;
     AuditLogModule,
     ...SchemasModule.forReadConnection(hasReadReplicas),
     InvoiceModule.register(hasReadReplicas),
+    HealthModule,
   ],
   controllers: [AppController],
   providers: [

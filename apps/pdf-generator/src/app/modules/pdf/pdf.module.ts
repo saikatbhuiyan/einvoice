@@ -6,5 +6,6 @@ import { PdfRendererService } from './pdf-renderer.service';
 @Module({
   controllers: [PdfController],
   providers: [TemplateRendererService, PdfRendererService],
+  exports: [PdfRendererService],
 })
 export class PdfModule {}

@@ -1,0 +1,8 @@
+{
+  "name": "circuit-breaker",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "libs/circuit-breaker/src",
+  "projectType": "library",
+  "tags": [],
+  "targets": {}
+}
