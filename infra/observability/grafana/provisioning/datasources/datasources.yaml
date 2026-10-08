@@ -1,0 +1,14 @@
+# Provisioned at Grafana startup, so a fresh `docker compose up` has working datasources with
+# fixed UIDs -- the dashboards under ../../dashboards reference these UIDs directly.
+apiVersion: 1
+
+datasources:
+  - name: Loki
+    uid: loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    isDefault: true
+    editable: false
+    jsonData:
+      maxLines: 1000
