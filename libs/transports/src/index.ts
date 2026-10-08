@@ -9,3 +9,6 @@ export * from './lib/rpc-timeout-handler';
 export * from './lib/rpc-envelope';
 export * from './lib/pdf-generator.types';
 export * from './lib/media.types';
+export * from './lib/kafka.config';
+export * from './lib/invoice-events.types';
+export * from './lib/base-kafka-producer';
