@@ -28,6 +28,7 @@ import { AuditLogService } from '@libs/audit-log';
 import { INVOICE_REPOSITORY, IInvoiceRepository, type PaginatedResultMeta } from './invoice.repository.interface';
 import { PdfGeneratorClientService } from './clients/pdf-generator-client.service';
 import { MediaClientService } from './clients/media-client.service';
+import { InvoiceEventsProducerService } from './clients/invoice-events-producer.service';
 
 export interface GenerateInvoicePdfResult {
   url: string;
@@ -55,6 +56,7 @@ export class InvoiceService {
     private readonly auditLog: AuditLogService,
     private readonly pdfGeneratorClient: PdfGeneratorClientService,
     private readonly mediaClient: MediaClientService,
+    private readonly eventsProducer: InvoiceEventsProducerService,
   ) {
     this.redis = redis;
   }
@@ -68,6 +70,9 @@ export class InvoiceService {
         entityType: 'invoice',
         entityId: createdInvoice._id.toString(),
       });
+      // Demo event: proves the producer -> Kafka -> services/mail pipe end to end, independent
+      // of the real pdf.generated event this same topic carries (see generatePdf below).
+      this.eventsProducer.emitDemo(createdInvoice._id.toString());
       return this.toInvoiceResponse(createdInvoice);
     } catch (error) {
       this.handlePersistenceError(error);
@@ -236,6 +241,22 @@ export class InvoiceService {
       action: 'GENERATE_PDF',
       entityType: 'invoice',
       entityId: id,
+    });
+
+    // Fire-and-forget: services/mail picks this up over Kafka and emails the invoice with the
+    // PDF attached. Decoupled on purpose -- a slow/unavailable mail service should never make
+    // PDF generation itself fail or block.
+    this.eventsProducer.emitPdfGenerated({
+      invoiceId: id,
+      invoiceNumber: invoice.invoiceNumber,
+      clientName: invoice.client.name,
+      clientEmail: invoice.client.email,
+      pdfUrl: url,
+      fileName,
+      currency: invoice.currency,
+      total: invoice.total,
+      issueDate: invoice.issueDate.toISOString(),
+      dueDate: invoice.dueDate?.toISOString(),
     });
 
     return { url, fileName };

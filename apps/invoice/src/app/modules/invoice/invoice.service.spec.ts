@@ -8,6 +8,7 @@ type MockRedis = { get: jest.Mock; incr: jest.Mock };
 type MockAuditLog = { record: jest.Mock };
 type MockPdfGeneratorClient = { generateInvoicePdf: jest.Mock };
 type MockMediaClient = { uploadFile: jest.Mock };
+type MockEventsProducer = { emitDemo: jest.Mock; emitPdfGenerated: jest.Mock };
 
 const buildInvoiceDoc = (overrides: Record<string, unknown> = {}) => {
   const base = {
@@ -24,6 +25,7 @@ describe('InvoiceService', () => {
   let auditLog: MockAuditLog;
   let pdfGeneratorClient: MockPdfGeneratorClient;
   let mediaClient: MockMediaClient;
+  let eventsProducer: MockEventsProducer;
   let service: InvoiceService;
 
   beforeEach(() => {
@@ -41,6 +43,7 @@ describe('InvoiceService', () => {
     auditLog = { record: jest.fn().mockResolvedValue(undefined) };
     pdfGeneratorClient = { generateInvoicePdf: jest.fn() };
     mediaClient = { uploadFile: jest.fn() };
+    eventsProducer = { emitDemo: jest.fn(), emitPdfGenerated: jest.fn() };
 
     service = new InvoiceService(
       repository,
@@ -49,6 +52,7 @@ describe('InvoiceService', () => {
       auditLog as never,
       pdfGeneratorClient as never,
       mediaClient as never,
+      eventsProducer as never,
     );
   });
 
