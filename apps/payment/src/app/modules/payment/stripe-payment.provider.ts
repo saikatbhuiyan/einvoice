@@ -44,6 +44,21 @@ export class StripePaymentProvider implements PaymentProvider {
     return { providerSessionId: session.id, checkoutUrl: session.url };
   }
 
+  async expireCheckoutSession(providerSessionId: string): Promise<void> {
+    // Expiring an already-completed/already-expired session is a 400 from Stripe, not a no-op --
+    // this is only ever called as compensation right after creating the session (before anyone
+    // could plausibly have paid through it yet), but swallow that specific case defensively
+    // rather than let a compensation step itself throw over a session that's already gone.
+    try {
+      await this.stripe.checkout.sessions.expire(providerSessionId);
+    } catch (error) {
+      if (error instanceof Stripe.errors.StripeInvalidRequestError) {
+        return;
+      }
+      throw error;
+    }
+  }
+
   parseWebhookEvent(rawBody: Buffer, signature: string): NormalizedWebhookEvent {
     // constructEvent verifies the signature itself -- the webhook secret never leaves this
     // service; bff, which actually receives the HTTP request, never sees or needs it.
