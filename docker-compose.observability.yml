@@ -1,0 +1,96 @@
+# Observability overlay: logs (Alloy -> Loki), dashboards (Grafana). Layer it on top of either
+# base file -- the base files stay unchanged and work exactly as before without it:
+#
+#   docker compose -f docker-compose.dev.yml  -f docker-compose.observability.yml up -d
+#   docker compose -f docker-compose.prod.yml -f docker-compose.observability.yml up -d
+#
+# Grafana: http://localhost:${GRAFANA_PORT:-3000} (admin / $GRAFANA_ADMIN_PASSWORD). Its port is
+# bound to 127.0.0.1 only -- on a remote host reach it through an SSH tunnel rather than exposing
+# it publicly. Loki and Alloy publish no ports at all; Grafana is the way in.
+
+x-observed-node-service: &observed-node-service
+  environment:
+    # One JSON object per line on stdout for Alloy to parse; pino-pretty's colored text can't be.
+    LOG_PRETTY: "false"
+
+services:
+  bff: *observed-node-service
+  invoice: *observed-node-service
+  product: *observed-node-service
+  user-access: *observed-node-service
+  authorizer: *observed-node-service
+  pdf-generator: *observed-node-service
+  media: *observed-node-service
+  payment: *observed-node-service
+
+  loki:
+    image: grafana/loki:3.7.8
+    restart: unless-stopped
+    command: ["-config.file=/etc/loki/loki.yaml"]
+    volumes:
+      - ./infra/observability/loki/loki.yaml:/etc/loki/loki.yaml:ro
+      - loki_data:/loki
+    # No healthcheck: the image is distroless (no shell, wget, or curl) and the loki binary has no
+    # probe subcommand. Nothing needs one -- Alloy buffers and retries pushes with backoff until
+    # Loki's /ready passes, and Grafana just shows "no data" until then.
+    networks:
+      - backend
+
+  alloy:
+    image: grafana/alloy:v1.20.1
+    restart: unless-stopped
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    volumes:
+      - ./infra/observability/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      # Read-only socket access is how Alloy discovers containers and reads their logs. It's still
+      # a privileged mount (the Docker API can do more than read) -- the same trade-off the dev
+      # autoheal sidecar makes; on Kubernetes this is replaced by reading /var/log/pods instead.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - alloy_data:/var/lib/alloy/data
+    depends_on:
+      loki:
+        condition: service_started
+    networks:
+      - backend
+
+  grafana:
+    image: grafana/grafana:13.2.3
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/logs.json
+    volumes:
+      - ./infra/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:3000/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    depends_on:
+      loki:
+        condition: service_started
+    networks:
+      # backend to query Loki; edge so the published port is reachable (prod's backend network is
+      # internal-only, which blocks published ports).
+      - backend
+      - edge
+
+volumes:
+  loki_data:
+  alloy_data:
+  grafana_data:

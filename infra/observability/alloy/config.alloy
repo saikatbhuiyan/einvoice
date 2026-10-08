@@ -1,0 +1,115 @@
+// Grafana Alloy: tails every einvoice container's stdout/stderr through the Docker API, parses
+// the JSON lines our services write, and pushes them to Loki. Alloy replaces Promtail (end of
+// life since its last release) and does the same job; the apps never talk to Loki themselves, so
+// a Loki outage can't slow down or break a request -- Alloy just catches up once Loki is back.
+
+// Alloy's own stdout is shipped too (it's a container in this project). At info it logs every
+// tailer refresh, which would feed a few lines every 5s back into Loki for no benefit.
+logging {
+  level  = "warn"
+  format = "logfmt"
+}
+
+discovery.docker "containers" {
+  host             = "unix:///var/run/docker.sock"
+  refresh_interval = "5s"
+
+  filter {
+    name   = "label"
+    values = ["com.docker.compose.project"]
+  }
+}
+
+discovery.relabel "containers" {
+  targets = discovery.docker.containers.targets
+
+  // Only this project's containers (dev is `einvoice-dev`, prod `einvoice-prod`), not whatever
+  // else happens to run on the same Docker host.
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    regex         = "einvoice-.*"
+    action        = "keep"
+  }
+
+  // `service` is the one label every dashboard filters on. It's the compose service name, which
+  // also covers containers that don't log JSON (postgres, kafka, the Go mail service).
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    target_label  = "compose_project"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+}
+
+// stdout vs stderr is only known per line, once loki.source.docker is reading the log, so this
+// rule can't live in discovery.relabel above -- it's handed to the source as `relabel_rules`.
+discovery.relabel "log_stream" {
+  targets = []
+
+  rule {
+    source_labels = ["__meta_docker_container_log_stream"]
+    target_label  = "stream"
+  }
+}
+
+loki.source.docker "containers" {
+  host             = "unix:///var/run/docker.sock"
+  targets          = discovery.relabel.containers.output
+  relabel_rules    = discovery.relabel.log_stream.rules
+  refresh_interval = "5s"
+  forward_to       = [loki.process.json_logs.receiver]
+}
+
+loki.process "json_logs" {
+  // Lines that aren't JSON (third-party containers) pass through unchanged with only the
+  // container labels above; nothing below fails or drops them.
+  stage.json {
+    expressions = {
+      level    = "level",
+      time     = "time",
+      trace_id = "trace_id",
+      span_id  = "span_id",
+    }
+  }
+
+  // Low-cardinality, so a real index label: `{service="invoice", level="error"}`.
+  stage.labels {
+    values = {
+      level = "",
+    }
+  }
+
+  // One value per request -- as index labels these would explode Loki's index. Structured
+  // metadata is stored per line and still filterable: `{service="bff"} | trace_id="..."`.
+  stage.structured_metadata {
+    values = {
+      trace_id = "",
+      span_id  = "",
+    }
+  }
+
+  // pino's `time` is epoch milliseconds. Using it instead of the time Alloy read the line keeps
+  // ordering exact even when Alloy is catching up after a restart.
+  stage.timestamp {
+    source            = "time"
+    format            = "UnixMs"
+    action_on_failure = "skip"
+  }
+
+  forward_to = [loki.write.default.receiver]
+}
+
+loki.write "default" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}
