@@ -1,5 +1,6 @@
 import { ConflictException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { QueryFailedError } from 'typeorm';
+import { Saga, SagaExecutionError } from '@libs/saga';
 import { DEFAULT_LIMIT, DEFAULT_PAGE } from '@libs/constants';
 import { buildPaginationMeta } from '@libs/shared/types';
 import { KeycloakAdminService } from '@libs/auth/keycloak-admin.service';
@@ -15,6 +16,15 @@ import { UserEntity } from '../../../database/entities/user.entity';
 import { RoleService } from '../role/role.service';
 import { IUserRepository, USER_REPOSITORY } from './user.repository.interface';
 
+interface CreateUserSagaContext {
+  dto: CreateUserRequest;
+  roleName: string;
+  firstName: string;
+  lastName?: string;
+  keycloakUserId?: string;
+  createdUser?: UserEntity;
+}
+
 const POSTGRES_UNIQUE_VIOLATION = '23505';
 
 @Injectable()
@@ -29,36 +39,71 @@ export class UserService {
   ) {}
 
   /**
-   * Provisions the Keycloak identity first, then the local Postgres row — if Keycloak creation
-   * fails, there's nothing local to clean up; if the local write fails afterward, the Keycloak
-   * user this created is rolled back rather than left orphaned with no user-access record.
+   * Provisions the Keycloak identity first, then the local Postgres row, as a Saga
+   * (@libs/saga) rather than hand-rolled try/catch: if role assignment fails, the Keycloak user
+   * step's own compensate deletes it; if the local write fails afterward, the same compensate
+   * runs again -- one compensation path instead of the two duplicated `deleteUser()` call sites
+   * this method used to have. Nothing to compensate for creating the Keycloak user itself (it's
+   * the first step -- a failure there never committed anything to undo).
    */
   async create(createUserDto: CreateUserRequest): Promise<UserResponse> {
     const role = await this.roleService.getByIdOrThrow(createUserDto.roleId);
     const [firstName, ...rest] = createUserDto.name.trim().split(/\s+/);
     const lastName = rest.length > 0 ? rest.join(' ') : undefined;
 
-    const keycloakUserId = await this.keycloakAdminService.createUser({
-      username: createUserDto.email,
-      email: createUserDto.email,
-      firstName,
-      lastName,
-    });
+    const context: CreateUserSagaContext = { dto: createUserDto, roleName: role.name, firstName, lastName };
+
+    const saga = new Saga<CreateUserSagaContext>('CreateUser');
+    saga
+      .addStep({
+        name: 'createKeycloakUser',
+        execute: async (ctx) => {
+          ctx.keycloakUserId = await this.keycloakAdminService.createUser({
+            username: ctx.dto.email,
+            email: ctx.dto.email,
+            firstName: ctx.firstName,
+            lastName: ctx.lastName,
+          });
+        },
+        // Compensation belongs on the step that created the thing needing undoing, not on
+        // whichever later step happens to fail -- a Saga only compensates steps that actually
+        // completed, in reverse order, so this runs whether assignRealmRole or persistUser is
+        // the one that fails. Deleting the user outright makes a separate "remove the role"
+        // compensation for assignRealmRole unnecessary -- there'd be nothing left to remove it
+        // from.
+        compensate: async (ctx) => {
+          await this.keycloakAdminService.deleteUser(ctx.keycloakUserId as string);
+        },
+      })
+      .addStep({
+        name: 'assignRealmRole',
+        execute: async (ctx) => {
+          await this.keycloakAdminService.assignRealmRole(ctx.keycloakUserId as string, ctx.roleName);
+        },
+      })
+      .addStep({
+        name: 'persistUser',
+        execute: async (ctx) => {
+          ctx.createdUser = await this.userRepository.create({
+            ...ctx.dto,
+            keycloakUserId: ctx.keycloakUserId as string,
+          });
+        },
+      });
 
     try {
-      await this.keycloakAdminService.assignRealmRole(keycloakUserId, role.name);
+      await saga.execute(context);
     } catch (error) {
-      await this.keycloakAdminService.deleteUser(keycloakUserId);
+      if (error instanceof SagaExecutionError) {
+        // The Saga's own bookkeeping is an implementation detail -- callers (and the HTTP
+        // exception filter) need to see the original failure type, e.g. a unique-violation
+        // QueryFailedError translated to ConflictException below, not a wrapping SagaExecutionError.
+        this.handlePersistenceError(error.cause, createUserDto.email);
+      }
       throw error;
     }
 
-    try {
-      const created = await this.userRepository.create({ ...createUserDto, keycloakUserId });
-      return this.toUserResponse(created);
-    } catch (error) {
-      await this.keycloakAdminService.deleteUser(keycloakUserId);
-      this.handlePersistenceError(error, createUserDto.email);
-    }
+    return this.toUserResponse(context.createdUser as UserEntity);
   }
 
   async findAll(query: FindAllUsersRequest): Promise<FindAllUsersResponse> {
