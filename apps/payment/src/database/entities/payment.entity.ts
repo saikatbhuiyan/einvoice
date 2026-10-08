@@ -7,7 +7,14 @@ const decimalTransformer: ValueTransformer = {
   from: (value?: string) => (value === null || value === undefined ? value : Number(value)),
 };
 
-export type PaymentStatus = 'pending' | 'paid' | 'failed';
+/**
+ * 'reconciliation_required' names a real, distinct state: Stripe confirmed the payment, but the
+ * local write that should have told invoice to mark itself paid failed -- deliberately not
+ * reverted to 'pending' (which would erase the fact that Stripe already has the money) and not
+ * left silently as 'paid' (which would claim invoice agrees when it might not). See
+ * PaymentService's saga in handleWebhookEvent.
+ */
+export type PaymentStatus = 'pending' | 'paid' | 'failed' | 'reconciliation_required';
 
 @Entity({ name: 'payments' })
 export class PaymentEntity {
@@ -25,7 +32,7 @@ export class PaymentEntity {
   @Column({ type: 'varchar', length: 255 })
   providerSessionId!: string;
 
-  @Column({ type: 'varchar', length: 16, default: 'pending' })
+  @Column({ type: 'varchar', length: 32, default: 'pending' })
   status!: PaymentStatus;
 
   @Column({ type: 'numeric', precision: 14, scale: 2, transformer: decimalTransformer })

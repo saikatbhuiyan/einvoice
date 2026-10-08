@@ -29,6 +29,13 @@ export interface NormalizedWebhookEvent {
 export interface PaymentProvider {
   createCheckoutSession(params: CheckoutSessionParams): Promise<CheckoutSession>;
 
+  /**
+   * Compensating action for createCheckoutSession, used by PaymentService's saga when the
+   * follow-up local persist fails -- a Checkout Session Stripe thinks is still open but this
+   * system has no record of is exactly the orphaned-session gap this exists to close.
+   */
+  expireCheckoutSession(providerSessionId: string): Promise<void>;
+
   /** Verifies the provider's signature over the raw body -- throws if it doesn't match. */
   parseWebhookEvent(rawBody: Buffer, signature: string): NormalizedWebhookEvent;
 }
