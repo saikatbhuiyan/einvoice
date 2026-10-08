@@ -94,6 +94,7 @@ services:
       PDF_GENERATOR_SERVICE_PORT: ${PDF_GENERATOR_SERVICE_PORT:-3310}
       MEDIA_SERVICE_HOST: media
       MEDIA_SERVICE_PORT: ${MEDIA_SERVICE_PORT:-3312}
+      KAFKA_BROKERS: kafka:9092
       REDIS_HOST: redis
       REDIS_PORT: 6379
       REDIS_PASSWORD: ${REDIS_PASSWORD:-change-me-redis-password}
@@ -106,6 +107,8 @@ services:
       postgres:
         condition: service_healthy
       mongodb:
+        condition: service_healthy
+      kafka:
         condition: service_healthy
       pdf-generator:
         condition: service_started
@@ -375,6 +378,67 @@ services:
     networks:
       - backend
 
+  # Self-hosted, single-broker Kafka -- fine at this project's scale. At real production
+  # scale/HA requirements this is the kind of infra piece that's more commonly a managed service
+  # (MSK, Confluent Cloud) rather than a self-run container, the same "provisioned by hand outside
+  # this compose file" category docker-compose.prod.yml's own keycloak service note already
+  # documents for the realm/clients. See docker-compose.dev.yml's kafka service comment for why
+  # every one of these KAFKA_* vars is required together, not optional tuning.
+  kafka:
+    image: apache/kafka:latest
+    restart: unless-stopped
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+    volumes:
+      - kafka_prod_data:/var/lib/kafka/data
+    expose:
+      - "9092"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    networks:
+      - backend
+
+  # No `expose`/healthcheck here, unlike every other service in this file -- this container makes
+  # only outbound connections (to kafka, and to SES/SMTP/the PDF URL), never receives inbound
+  # traffic from anyone, and its scratch-based image (see services/mail/Dockerfile) has no shell
+  # at all for a CMD-SHELL healthcheck to run even if it needed one.
+  mail-service:
+    build:
+      context: ./services/mail
+      dockerfile: Dockerfile
+    image: einvoice/mail:prod
+    restart: unless-stopped
+    env_file:
+      - .env
+      - .env.prod
+    environment:
+      APP_ENV: ${NODE_ENV:-production}
+      KAFKA_BROKERS: kafka:9092
+      KAFKA_TOPIC_INVOICE_EVENTS: invoice.events
+      KAFKA_CONSUMER_GROUP: mail-service
+      MAIL_PROVIDER: ${MAIL_PROVIDER:-ses}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      SES_FROM_EMAIL: ${SES_FROM_EMAIL:-}
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      - backend
+
   redis:
     image: redis:7-alpine
     restart: unless-stopped
@@ -494,6 +558,7 @@ volumes:
   mongodb_data:
   keycloak_data:
   redis_data:
+  kafka_prod_data:
 
 networks:
   edge:
