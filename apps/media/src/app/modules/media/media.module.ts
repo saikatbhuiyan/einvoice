@@ -7,5 +7,6 @@ import { STORAGE_PROVIDER } from './storage-provider.interface';
 @Module({
   controllers: [MediaRpcController],
   providers: [MediaService, { provide: STORAGE_PROVIDER, useClass: S3StorageProvider }],
+  exports: [STORAGE_PROVIDER],
 })
 export class MediaModule {}

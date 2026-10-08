@@ -40,6 +40,8 @@
       "@libs/schemas": ["libs/schemas/src/index.ts"],
       "@libs/rate-limit": ["libs/rate-limit/src/index.ts"],
       "@libs/rate-limit/*": ["libs/rate-limit/src/lib/*"],
+      "@libs/health": ["libs/health/src/index.ts"],
+      "@libs/health/*": ["libs/health/src/lib/*"],
       "@libs/saga": ["libs/saga/src/index.ts"],
       "@libs/saga/*": ["libs/saga/src/lib/*"],
       "@libs/circuit-breaker": ["libs/circuit-breaker/src/index.ts"],

@@ -9,6 +9,8 @@ services:
       args:
         APP_NAME: bff
     image: einvoice/bff:dev
+    labels:
+      autoheal: "true"
     restart: unless-stopped
     env_file:
       - .env
@@ -71,7 +73,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "node -e \"const net = require('net'); const socket = net.connect({ host: '127.0.0.1', port: Number(process.env.PORT || 3300) }, () => { socket.end(); process.exit(0); }); socket.on('error', () => process.exit(1));\"",
+          "node -e \"fetch('http://127.0.0.1:' + (process.env.PORT || 3300) + '/' + (process.env.GLOBAL_PREFIX || 'api') + '/health/live').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1));\"",
         ]
       interval: 20s
       timeout: 10s
@@ -89,6 +91,8 @@ services:
       args:
         APP_NAME: invoice
     image: einvoice/invoice:dev
+    labels:
+      autoheal: "true"
     restart: unless-stopped
     env_file:
       - .env
@@ -140,7 +144,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "node -e \"const net = require('net'); const socket = net.connect({ host: '127.0.0.1', port: Number(process.env.PORT || 3302) }, () => { socket.end(); process.exit(0); }); socket.on('error', () => process.exit(1));\"",
+          "node -e \"fetch('http://127.0.0.1:' + (process.env.PORT || 3302) + '/' + (process.env.GLOBAL_PREFIX || 'api') + '/health/live').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1));\"",
         ]
       interval: 20s
       timeout: 10s
@@ -157,6 +161,8 @@ services:
       args:
         APP_NAME: product
     image: einvoice/product:dev
+    labels:
+      autoheal: "true"
     restart: unless-stopped
     env_file:
       - .env
@@ -196,7 +202,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "node -e \"const net = require('net'); const socket = net.connect({ host: '127.0.0.1', port: Number(process.env.PRODUCT_HTTP_PORT || 3303) }, () => { socket.end(); process.exit(0); }); socket.on('error', () => process.exit(1));\"",
+          "node -e \"fetch('http://127.0.0.1:' + (process.env.PRODUCT_HTTP_PORT || 3303) + '/' + (process.env.GLOBAL_PREFIX || 'api') + '/health/live').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1));\"",
         ]
       interval: 20s
       timeout: 10s
@@ -213,6 +219,8 @@ services:
       args:
         APP_NAME: user-access
     image: einvoice/user-access:dev
+    labels:
+      autoheal: "true"
     restart: unless-stopped
     env_file:
       - .env
@@ -254,7 +262,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "node -e \"const net = require('net'); const socket = net.connect({ host: '127.0.0.1', port: Number(process.env.USER_ACCESS_HTTP_PORT || 3305) }, () => { socket.end(); process.exit(0); }); socket.on('error', () => process.exit(1));\"",
+          "node -e \"fetch('http://127.0.0.1:' + (process.env.USER_ACCESS_HTTP_PORT || 3305) + '/' + (process.env.GLOBAL_PREFIX || 'api') + '/health/live').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1));\"",
         ]
       interval: 20s
       timeout: 10s
@@ -271,6 +279,8 @@ services:
       args:
         APP_NAME: authorizer
     image: einvoice/authorizer:dev
+    labels:
+      autoheal: "true"
     restart: unless-stopped
     env_file:
       - .env
@@ -306,7 +316,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "node -e \"const net = require('net'); const socket = net.connect({ host: '127.0.0.1', port: Number(process.env.AUTHORIZER_HTTP_PORT || 3309) }, () => { socket.end(); process.exit(0); }); socket.on('error', () => process.exit(1));\"",
+          "node -e \"fetch('http://127.0.0.1:' + (process.env.AUTHORIZER_HTTP_PORT || 3309) + '/' + (process.env.GLOBAL_PREFIX || 'api') + '/health/live').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1));\"",
         ]
       interval: 20s
       timeout: 10s
@@ -323,6 +333,8 @@ services:
       args:
         APP_NAME: pdf-generator
     image: einvoice/pdf-generator:dev
+    labels:
+      autoheal: "true"
     restart: unless-stopped
     env_file:
       - .env
@@ -348,7 +360,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "node -e \"const net = require('net'); const socket = net.connect({ host: '127.0.0.1', port: Number(process.env.PDF_GENERATOR_HTTP_PORT || 3311) }, () => { socket.end(); process.exit(0); }); socket.on('error', () => process.exit(1));\"",
+          "node -e \"fetch('http://127.0.0.1:' + (process.env.PDF_GENERATOR_HTTP_PORT || 3311) + '/' + (process.env.GLOBAL_PREFIX || 'api') + '/health/live').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1));\"",
         ]
       interval: 20s
       timeout: 10s
@@ -365,6 +377,8 @@ services:
       args:
         APP_NAME: media
     image: einvoice/media:dev
+    labels:
+      autoheal: "true"
     restart: unless-stopped
     env_file:
       - .env
@@ -400,7 +414,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "node -e \"const net = require('net'); const socket = net.connect({ host: '127.0.0.1', port: Number(process.env.MEDIA_HTTP_PORT || 3313) }, () => { socket.end(); process.exit(0); }); socket.on('error', () => process.exit(1));\"",
+          "node -e \"fetch('http://127.0.0.1:' + (process.env.MEDIA_HTTP_PORT || 3313) + '/' + (process.env.GLOBAL_PREFIX || 'api') + '/health/live').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1));\"",
         ]
       interval: 20s
       timeout: 10s
@@ -417,6 +431,8 @@ services:
       args:
         APP_NAME: payment
     image: einvoice/payment:dev
+    labels:
+      autoheal: "true"
     restart: unless-stopped
     env_file:
       - .env
@@ -458,7 +474,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "node -e \"const net = require('net'); const socket = net.connect({ host: '127.0.0.1', port: Number(process.env.PAYMENT_HTTP_PORT || 3314) }, () => { socket.end(); process.exit(0); }); socket.on('error', () => process.exit(1));\"",
+          "node -e \"fetch('http://127.0.0.1:' + (process.env.PAYMENT_HTTP_PORT || 3314) + '/' + (process.env.GLOBAL_PREFIX || 'api') + '/health/live').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1));\"",
         ]
       interval: 20s
       timeout: 10s
@@ -578,6 +594,20 @@ services:
         condition: service_healthy
     networks:
       - backend
+
+  # Docker Engine does NOT restart a container for being unhealthy -- `restart: unless-stopped`
+  # only reacts to the process exiting. autoheal closes that gap: it watches containers labeled
+  # autoheal=true and restarts any whose healthcheck (each app's /api/health/live) is failing.
+  # It needs the Docker socket, which is root-equivalent on the host -- fine for local dev, not
+  # for prod, where the orchestrator's liveness probe pointed at /api/health/live does this job.
+  autoheal:
+    image: willfarrell/autoheal:latest
+    restart: unless-stopped
+    environment:
+      AUTOHEAL_CONTAINER_LABEL: autoheal
+      AUTOHEAL_INTERVAL: 10
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
 
   redis:
     image: redis:7-alpine

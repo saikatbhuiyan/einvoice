@@ -6,6 +6,7 @@ import { CONFIGURATION } from '../configuration';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { MediaModule } from './modules/media/media.module';
+import { HealthModule } from './health/health.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { MediaModule } from './modules/media/media.module';
     }),
     LoggingModule.forRoot({ serviceName: 'media' }),
     MediaModule,
+    HealthModule,
   ],
   controllers: [AppController],
   providers: [AppService, RpcPermissionGuard],

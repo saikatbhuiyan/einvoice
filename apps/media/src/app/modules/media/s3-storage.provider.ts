@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { HeadBucketCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { CONFIGURATION } from '../../../configuration';
 import { StorageProvider, UploadedObject } from './storage-provider.interface';
 
@@ -50,6 +50,12 @@ export class S3StorageProvider implements StorageProvider {
     );
 
     return { key, url: this.resolveUrl(key) };
+  }
+
+  // HeadBucket checks both that the endpoint is reachable and that this service's credentials can
+  // actually see the bucket -- a fresh connection that can't access the bucket is not "healthy".
+  async checkHealth(): Promise<void> {
+    await this.client.send(new HeadBucketCommand({ Bucket: CONFIGURATION.S3_CONFIG.S3_BUCKET }));
   }
 
   // S3_PUBLIC_BASE_URL is required in dev (MinIO has no public virtual-hosted DNS to fall back

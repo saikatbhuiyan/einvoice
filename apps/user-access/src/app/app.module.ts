@@ -7,6 +7,7 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { RoleModule } from './modules/role/role.module';
 import { UserModule } from './modules/user/user.module';
+import { HealthModule } from './health/health.module';
 import { RpcPermissionGuard } from '@libs/auth/rpc-permission.guard';
 
 @Module({
@@ -20,6 +21,7 @@ import { RpcPermissionGuard } from '@libs/auth/rpc-permission.guard';
     PostgresModule,
     RoleModule,
     UserModule,
+    HealthModule,
   ],
   controllers: [AppController],
   providers: [AppService, RpcPermissionGuard],

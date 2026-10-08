@@ -45,13 +45,18 @@ export const GRPC_CLIENT_TOKENS = {
 
 export type GrpcClientToken = (typeof GRPC_CLIENT_TOKENS)[GrpcServiceKey];
 
+/**
+ * Every gRPC server also serves the standard grpc.health.v1 Health service (health.proto), so
+ * peers and probes can check it with the protocol gRPC tooling already speaks. The handler itself
+ * is @libs/health's GrpcHealthController, which each gRPC app registers as a controller.
+ */
 export function createGrpcServerConfig(service: GrpcServiceKey): GrpcOptions {
   const def = GRPC_SERVICES[service];
   return {
     transport: Transport.GRPC,
     options: {
-      package: def.package,
-      protoPath: join(PROTO_DIR, def.protoFileName),
+      package: [def.package, 'grpc.health.v1'],
+      protoPath: [join(PROTO_DIR, def.protoFileName), join(PROTO_DIR, 'health.proto')],
       url: `0.0.0.0:${def.port}`,
     },
   };

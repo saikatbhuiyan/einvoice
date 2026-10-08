@@ -10,6 +10,7 @@ import { ProductModule } from './modules/product/product.module';
 import { UserModule } from './modules/user/user.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { PaymentModule } from './modules/payment/payment.module';
+import { HealthModule } from './health/health.module';
 import { RateLimitModule } from '@libs/rate-limit';
 import { CircuitBreakerModule } from '@libs/circuit-breaker';
 import { KeycloakAuthModule } from '@libs/auth';
@@ -30,6 +31,7 @@ import { KeycloakAuthModule } from '@libs/auth';
     UserModule,
     AuthModule,
     PaymentModule,
+    HealthModule,
     RateLimitModule.forRoot(),
     CircuitBreakerModule.forRoot(),
   ],
