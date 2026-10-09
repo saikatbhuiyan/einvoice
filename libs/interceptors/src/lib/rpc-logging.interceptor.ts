@@ -127,7 +127,7 @@ export class RpcLoggingInterceptor implements NestInterceptor {
 
   private extractCorrelationId(data: Record<string, unknown> | unknown, rpcCtx: Record<string, unknown>): string {
     if (data && typeof data === 'object' && 'correlationId' in data) {
-      return String((data as Record<string, unknown>).correlationId);
+      return String((data as Record<string, unknown>)['correlationId']);
     }
 
     if (isMessageContext(rpcCtx)) {
@@ -148,7 +148,7 @@ export class RpcLoggingInterceptor implements NestInterceptor {
 
   private extractTraceId(data: Record<string, unknown> | unknown, rpcCtx: Record<string, unknown>): string | undefined {
     if (data && typeof data === 'object' && 'traceId' in data) {
-      return String((data as Record<string, unknown>).traceId);
+      return String((data as Record<string, unknown>)['traceId']);
     }
 
     if (isMessageContext(rpcCtx)) {

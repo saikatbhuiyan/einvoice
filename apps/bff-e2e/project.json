@@ -12,6 +12,12 @@
         "passWithNoTests": true
       },
       "dependsOn": ["bff:build", "bff:serve"]
+    },
+    "type-check": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "tsc -p {projectRoot}/tsconfig.spec.json --noEmit"
+      }
     }
   }
 }

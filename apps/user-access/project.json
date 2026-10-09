@@ -72,6 +72,12 @@
         "command": "TS_NODE_PROJECT=apps/user-access/tsconfig.app.json TS_NODE_TRANSPILE_ONLY=true node -r ts-node/register apps/user-access/src/database/seeds/seed-roles.ts",
         "cwd": "{workspaceRoot}"
       }
+    },
+    "type-check": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "tsc -p {projectRoot}/tsconfig.app.json --noEmit"
+      }
     }
   }
 }

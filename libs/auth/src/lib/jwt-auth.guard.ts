@@ -29,7 +29,9 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
       throw err instanceof Error ? err : new UnauthorizedException(info?.message ?? 'Invalid or missing access token');
     }
 
-    const authenticatedUser = user as AuthenticatedUser;
+    // `TUser` is Passport's generic, which this override has to keep; the value is whatever
+    // JwtStrategy.validate() returned, and that is always an AuthenticatedUser.
+    const authenticatedUser = user as unknown as AuthenticatedUser;
     // Mutates the request's existing AsyncLocalStorage store (set up by CorrelationIdMiddleware
     // earlier in the same request) so identity rides along on every outgoing RpcEnvelope, the
     // same way correlationId/traceId already do.

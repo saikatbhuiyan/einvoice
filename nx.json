@@ -40,5 +40,11 @@
       },
       "exclude": ["apps/invoice-e2e/**/*", "apps/bff-e2e/**/*"]
     }
-  ]
+  ],
+  "targetDefaults": {
+    "type-check": {
+      "cache": true,
+      "inputs": ["default", "^default", "{workspaceRoot}/tsconfig.base.json"]
+    }
+  }
 }

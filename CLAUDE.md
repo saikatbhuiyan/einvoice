@@ -11,7 +11,7 @@ Package manager is **pnpm** (`packageManager: pnpm@10.9.0`). All tasks run throu
 pnpm build          # nx run-many --target=build --all
 pnpm test           # nx run-many --target=test --all
 pnpm lint           # nx run-many --target=lint --all
-pnpm type-check      # nx run-many --target=type-check --all -- currently runs nothing: no project defines a type-check target; use `npx tsc -p <project>/tsconfig.app.json|tsconfig.lib.json --noEmit`
+pnpm type-check     # nx run-many --target=type-check --all (tsc --noEmit per project, cached)
 
 # Per-app (bff, invoice, product, user-access) — same pattern for each
 pnpm invoice:dev     # nx serve invoice
@@ -28,7 +28,7 @@ docker compose -f docker-compose.dev.yml up -d redis mongodb postgres
 nx e2e invoice-e2e
 ```
 
-Test/build/lint targets on every app and most libs are **inferred by Nx** from the presence of `jest.config.cts` / eslint config / `webpack.config.js` (see the `plugins` block in `nx.json`), not hand-written per project. A lib with no `jest.config.cts` has no `test` target at all — copy an existing lib's (e.g. `libs/transports`) `jest.config.cts` + `tsconfig.spec.json` + the `tsconfig.spec.json` reference in `tsconfig.json` when adding tests to a lib that doesn't have them yet. A lib whose spec files exist but has no `jest.config.cts` silently never runs them — `libs/circuit-breaker`'s spec sat in that state, didn't compile, and was hiding a real bug once it finally ran. Likewise **every lib needs a `project.json`**: without one Nx leaves it out of the project graph entirely, so an app's build cache doesn't invalidate when that lib changes and `nx build` replays a stale bundle (hit with `libs/cache`; `auth`/`cache`/`rate-limit`/`circuit-breaker`/`audit-log` were all missing one).
+Test/build/lint targets on every app and most libs are **inferred by Nx** from the presence of `jest.config.cts` / eslint config / `webpack.config.js` (see the `plugins` block in `nx.json`), not hand-written per project. A lib with no `jest.config.cts` has no `test` target at all — copy an existing lib's (e.g. `libs/transports`) `jest.config.cts` + `tsconfig.spec.json` + the `tsconfig.spec.json` reference in `tsconfig.json` when adding tests to a lib that doesn't have them yet. `type-check` is the one target that is **not** inferred: each `project.json` declares it explicitly (`tsc -p {projectRoot}/tsconfig.app.json|tsconfig.lib.json --noEmit`; e2e projects use `tsconfig.spec.json`, since their `tsconfig.json` is `files: []` and would check nothing), with caching/inputs from `targetDefaults` in `nx.json` — add one when creating a project. A lib whose spec files exist but has no `jest.config.cts` silently never runs them — `libs/circuit-breaker`'s spec sat in that state, didn't compile, and was hiding a real bug once it finally ran. Likewise **every lib needs a `project.json`**: without one Nx leaves it out of the project graph entirely, so an app's build cache doesn't invalidate when that lib changes and `nx build` replays a stale bundle (hit with `libs/cache`; `auth`/`cache`/`rate-limit`/`circuit-breaker`/`audit-log` were all missing one).
 
 ### Docker Compose
 
