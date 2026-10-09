@@ -4,5 +4,12 @@
   "sourceRoot": "libs/interfaces/src",
   "projectType": "library",
   "tags": ["scope:shared", "type:types"],
-  "targets": {}
+  "targets": {
+    "type-check": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "tsc -p {projectRoot}/tsconfig.lib.json --noEmit"
+      }
+    }
+  }
 }

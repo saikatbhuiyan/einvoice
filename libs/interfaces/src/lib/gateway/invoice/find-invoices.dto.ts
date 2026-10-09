@@ -5,6 +5,7 @@ import {
   IsOptional,
   IsString,
   Validate,
+  ValidationArguments,
   ValidatorConstraint,
   ValidatorConstraintInterface,
 } from 'class-validator';
@@ -14,9 +15,9 @@ import type { FindAllInvoicesRequest, InvoiceStatus, SupportedCurrency } from '.
 
 @ValidatorConstraint({ name: 'mutuallyExclusivePageCursor', async: false })
 export class MutuallyExclusivePageCursor implements ValidatorConstraintInterface {
-  validate(value: string | undefined, args: object): boolean {
-    const dto = (args as { object: FindAllInvoicesRequest }).object;
-    return !(dto.cursor && dto.page !== undefined);
+  validate(_value: unknown, args?: ValidationArguments): boolean {
+    const dto = args?.object as FindAllInvoicesRequest | undefined;
+    return !(dto?.cursor && dto.page !== undefined);
   }
 
   defaultMessage(): string {

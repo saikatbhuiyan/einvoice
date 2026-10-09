@@ -12,6 +12,12 @@
         "passWithNoTests": true
       },
       "dependsOn": ["invoice:build", "invoice:serve"]
+    },
+    "type-check": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "tsc -p {projectRoot}/tsconfig.spec.json --noEmit"
+      }
     }
   }
 }

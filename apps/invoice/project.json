@@ -22,10 +22,7 @@
       "dependsOn": ["build"],
       "cache": true,
       "executor": "@nx/js:prune-lockfile",
-      "outputs": [
-        "{workspaceRoot}/dist/apps/invoice/package.json",
-        "{workspaceRoot}/dist/apps/invoice/pnpm-lock.yaml"
-      ],
+      "outputs": ["{workspaceRoot}/dist/apps/invoice/package.json", "{workspaceRoot}/dist/apps/invoice/pnpm-lock.yaml"],
       "options": {
         "buildTarget": "build"
       }
@@ -64,6 +61,12 @@
     "test": {
       "options": {
         "passWithNoTests": true
+      }
+    },
+    "type-check": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "tsc -p {projectRoot}/tsconfig.app.json --noEmit"
       }
     }
   }

@@ -62,6 +62,12 @@
       "options": {
         "passWithNoTests": true
       }
+    },
+    "type-check": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "tsc -p {projectRoot}/tsconfig.app.json --noEmit"
+      }
     }
   }
 }
