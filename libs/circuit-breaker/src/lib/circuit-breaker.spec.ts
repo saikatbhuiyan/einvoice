@@ -3,6 +3,7 @@ import {
   ConflictException,
   ForbiddenException,
   GatewayTimeoutException,
+  HttpException,
   Logger,
   NotFoundException,
   ServiceUnavailableException,
@@ -16,7 +17,7 @@ describe('CircuitBreaker', () => {
   let config: CircuitBreakerConfiguration;
   let logger: Logger;
   let now: number;
-  let clock: jest.Mock<typeof Date.now>;
+  let clock: jest.Mock<number, []>;
 
   beforeEach(() => {
     config = {
@@ -62,6 +63,49 @@ describe('CircuitBreaker', () => {
 
       expect(breaker.getMetrics().state).toBe(CircuitState.CLOSED);
       expect(breaker.getMetrics().failureCount).toBe(0);
+    });
+
+    it('should not open circuit on RPC client errors, which arrive as a plain HttpException', async () => {
+      const breaker = createBreaker();
+      // What BaseTcpClient.toHttpException actually produces for a downstream 404 / 422.
+      const rpcClientErrors = [
+        new HttpException({ statusCode: 404, message: 'Invoice not found', error: 'Not Found' }, 404),
+        new HttpException({ statusCode: 422, message: ['invalid'], error: 'Unprocessable Entity' }, 422),
+      ];
+
+      for (let i = 0; i < config.CIRCUIT_BREAKER_FAILURE_THRESHOLD * 2; i++) {
+        const error = rpcClientErrors[i % rpcClientErrors.length];
+        await expect(breaker.execute(() => Promise.reject(error))).rejects.toThrow(error);
+      }
+
+      expect(breaker.getMetrics().state).toBe(CircuitState.CLOSED);
+      expect(breaker.getMetrics().failureCount).toBe(0);
+    });
+
+    it('should count 5xx HttpExceptions, 429, and non-HTTP errors as failures', async () => {
+      const breaker = createBreaker();
+
+      await expect(breaker.execute(() => Promise.reject(new HttpException('bad gateway', 502)))).rejects.toThrow();
+      await expect(breaker.execute(() => Promise.reject(new HttpException('slow down', 429)))).rejects.toThrow();
+      await expect(breaker.execute(() => Promise.reject(new Error('ECONNREFUSED')))).rejects.toThrow();
+
+      expect(breaker.getMetrics().failureCount).toBe(3);
+    });
+
+    it('should only open on consecutive failures: a success resets the count', async () => {
+      const breaker = createBreaker();
+      const fail = () => Promise.reject(new ServiceUnavailableException('down'));
+
+      for (let round = 0; round < 3; round++) {
+        for (let i = 0; i < config.CIRCUIT_BREAKER_FAILURE_THRESHOLD - 1; i++) {
+          await expect(breaker.execute(fail)).rejects.toThrow(ServiceUnavailableException);
+        }
+        await breaker.execute(() => Promise.resolve('ok'));
+      }
+
+      expect(breaker.getMetrics().state).toBe(CircuitState.CLOSED);
+      expect(breaker.getMetrics().failureCount).toBe(0);
+      expect(breaker.getMetrics().totalErrors).toBe(3 * (config.CIRCUIT_BREAKER_FAILURE_THRESHOLD - 1));
     });
 
     it('should open circuit after reaching failure threshold', async () => {
@@ -175,12 +219,21 @@ describe('CircuitBreaker', () => {
 
       now += config.CIRCUIT_BREAKER_RESET_TIMEOUT_MS + 1;
 
-      for (let i = 0; i < config.CIRCUIT_BREAKER_HALF_OPEN_MAX_PROBES; i++) {
-        await breaker.execute(() => Promise.resolve('probe'));
-      }
+      // The limit caps probes *in flight* while half-open. Run sequentially, the probes would all
+      // succeed and close the circuit before the next call, so hold them open until the excess
+      // call has been made.
+      let releaseProbes!: () => void;
+      const probesReleased = new Promise<void>((resolve) => (releaseProbes = resolve));
+      const probes = Array.from({ length: config.CIRCUIT_BREAKER_HALF_OPEN_MAX_PROBES }, () =>
+        breaker.execute(() => probesReleased.then(() => 'probe')),
+      );
 
       await expect(breaker.execute(() => Promise.resolve('excess'))).rejects.toThrow(ServiceUnavailableException);
-      expect(breaker.getMetrics().totalRejected).toBeGreaterThanOrEqual(1);
+      expect(breaker.getMetrics().totalRejected).toBe(1);
+
+      releaseProbes();
+      await expect(Promise.all(probes)).resolves.toEqual(['probe', 'probe', 'probe']);
+      expect(breaker.getMetrics().state).toBe(CircuitState.CLOSED);
     });
 
     it('should not count client errors as probe failure in HALF_OPEN', async () => {

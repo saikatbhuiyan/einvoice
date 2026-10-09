@@ -21,6 +21,22 @@ import { createRpcEnvelope, type RpcEnvelope } from './rpc-envelope';
 
 const DEFAULT_RPC_TIMEOUT_MS = 10_000;
 
+/**
+ * A failed `ClientProxy.send()` usually rejects with the callee's plain error object
+ * (`{ status, message, error }`), not an Error -- `String()` on that logged "[object Object]".
+ */
+export function describeRpcError(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === 'object') {
+    try {
+      return JSON.stringify(error);
+    } catch {
+      return Object.prototype.toString.call(error);
+    }
+  }
+  return String(error);
+}
+
 export abstract class BaseTcpClient implements OnModuleInit {
   protected abstract readonly logger: Logger;
   protected abstract readonly client: ClientProxy;
@@ -74,7 +90,7 @@ export abstract class BaseTcpClient implements OnModuleInit {
               sourceService: this.sourceService,
               correlationId: envelope.meta.correlationId,
               traceId: envelope.meta.traceId,
-              error: err instanceof Error ? err.message : String(err),
+              error: describeRpcError(err),
               stack: err instanceof Error ? err.stack : undefined,
             });
             return throwError(() => this.toHttpException(err, pattern));

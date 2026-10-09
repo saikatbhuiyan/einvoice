@@ -1,11 +1,10 @@
-import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 import {
-  BadRequestException,
-  ConflictException,
-  ForbiddenException,
   GatewayTimeoutException,
-  NotFoundException,
-  UnauthorizedException,
+  HttpException,
+  HttpStatus,
+  Injectable,
+  Logger,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { CircuitState } from './circuit-breaker.state';
 import type { CircuitBreakerMetrics } from './circuit-breaker.state';
@@ -76,17 +75,31 @@ export class CircuitBreaker {
     };
   }
 
+  /**
+   * Only failures that say the callee is unhealthy count: 5xx, timeouts, connection errors, and
+   * 429 (the callee explicitly asking for less load). Any other 4xx means the callee answered
+   * fine and the *request* was the problem -- counting those would let a client probing missing
+   * ids open the breaker and take the whole service offline for everyone.
+   *
+   * Classified by status, not exception class: BaseTcpClient maps a downstream 404 to a plain
+   * `new HttpException(body, 404)`, never a NotFoundException, so the instanceof checks this
+   * replaced never matched a real RPC client error at all.
+   */
   private isCircuitBreakingError(error: unknown): boolean {
-    if (error instanceof NotFoundException) return false;
-    if (error instanceof BadRequestException) return false;
-    if (error instanceof UnauthorizedException) return false;
-    if (error instanceof ForbiddenException) return false;
-    if (error instanceof ConflictException) return false;
-    return true;
+    if (!(error instanceof HttpException)) return true;
+    const status = error.getStatus();
+    return status >= 500 || status === HttpStatus.TOO_MANY_REQUESTS;
   }
 
   private onSuccess(): void {
     this.successCount++;
+
+    if (this.state === CircuitState.CLOSED) {
+      // The threshold is for *consecutive* failures. Without this reset, failures spread over
+      // hours of otherwise healthy traffic accumulated until the breaker eventually tripped.
+      this.failureCount = 0;
+      return;
+    }
 
     if (this.state === CircuitState.HALF_OPEN) {
       this.halfOpenSuccessCount++;
