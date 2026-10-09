@@ -1,5 +1,8 @@
+// Must stay the first import -- see instrumentation.ts.
+import './instrumentation';
 import { Logger as NestLogger, VersioningType } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
+import { shutdownTelemetry } from '@libs/telemetry';
 import helmet from 'helmet';
 import { HttpAdapterHost, Reflector } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
@@ -114,6 +117,8 @@ async function bootstrap(): Promise<void> {
       process.exit(1);
     }, SHUTDOWN_DRAIN_TIMEOUT_MS);
     await app.close();
+    // Flush the last batch of spans before the process goes away.
+    await shutdownTelemetry();
     process.exit(0);
   };
 

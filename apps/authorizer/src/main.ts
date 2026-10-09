@@ -1,10 +1,13 @@
+// Must stay the first import -- see instrumentation.ts.
+import './instrumentation';
 import { Logger as NestLogger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
+import { shutdownTelemetry } from '@libs/telemetry';
 import { ConfigService } from '@nestjs/config';
 import { Logger, LoggerErrorInterceptor } from 'nestjs-pino';
 import { SHUTDOWN_DRAIN_TIMEOUT_MS } from '@libs/constants';
 import { createGrpcServerConfig, GrpcServiceName } from '@libs/transports';
-import { RpcLoggingInterceptor } from '@libs/interceptors';
+import { RpcLoggingInterceptor, RpcTracingInterceptor } from '@libs/interceptors';
 import { AppModule } from './app/app.module';
 
 async function bootstrap() {
@@ -17,7 +20,12 @@ async function bootstrap() {
   const globalPrefix = configService.get<string>('GLOBAL_PREFIX') ?? 'api';
   const httpPort = Number(process.env['AUTHORIZER_HTTP_PORT'] ?? 3309);
 
-  app.useGlobalInterceptors(new LoggerErrorInterceptor(), new RpcLoggingInterceptor());
+  app.useGlobalInterceptors(
+    // Outermost, so the RPC log lines below are written inside the span (and carry its trace_id).
+    new RpcTracingInterceptor(),
+    new LoggerErrorInterceptor(),
+    new RpcLoggingInterceptor(),
+  );
   app.enableShutdownHooks();
 
   app.connectMicroservice(createGrpcServerConfig(GrpcServiceName.AUTHORIZER), {
@@ -38,6 +46,8 @@ async function bootstrap() {
       process.exit(1);
     }, SHUTDOWN_DRAIN_TIMEOUT_MS);
     await app.close();
+    // Flush the last batch of spans before the process goes away.
+    await shutdownTelemetry();
     process.exit(0);
   };
 

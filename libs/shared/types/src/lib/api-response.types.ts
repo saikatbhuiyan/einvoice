@@ -5,7 +5,10 @@ export interface ProblemDetail {
   detail?: string;
   instance?: string;
   errors?: Record<string, string[]>;
+  /** The distributed trace id -- the same value as the x-trace-id response header; look it up in Tempo. */
   traceId?: string;
+  /** The request's correlation id -- the same value as the x-correlation-id response header. */
+  correlationId?: string;
 }
 
 export interface ApiEnvelope<T = unknown, M = unknown> {

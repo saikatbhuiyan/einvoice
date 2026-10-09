@@ -1,0 +1,38 @@
+# Scrapes each Node service's OpenTelemetry Prometheus exporter on its dedicated metrics port
+# (9464, internal network only -- never bff's public port), plus the observability stack itself.
+# Tempo's metrics-generator pushes service-graph/span metrics in through remote write instead
+# (prometheus runs with --web.enable-remote-write-receiver).
+global:
+  scrape_interval: 15s
+  scrape_timeout: 10s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: einvoice-services
+    static_configs:
+      - targets:
+          - bff:9464
+          - invoice:9464
+          - product:9464
+          - user-access:9464
+          - authorizer:9464
+          - payment:9464
+          - pdf-generator:9464
+          - media:9464
+    relabel_configs:
+      # `service="invoice"` rather than `instance="invoice:9464"`, matching the Loki label name so
+      # one dashboard variable filters both logs and metrics.
+      - source_labels: [__address__]
+        regex: "([^:]+):\\d+"
+        target_label: service
+
+  - job_name: observability
+    static_configs:
+      - targets: [prometheus:9090]
+        labels: { service: prometheus }
+      - targets: [loki:3100]
+        labels: { service: loki }
+      - targets: [tempo:3200]
+        labels: { service: tempo }
+      - targets: [alloy:12345]
+        labels: { service: alloy }

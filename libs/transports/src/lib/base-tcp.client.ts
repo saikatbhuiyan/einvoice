@@ -10,7 +10,9 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ClientProxy } from '@nestjs/microservices';
+import { context } from '@opentelemetry/api';
 import { firstValueFrom, timeout, catchError, throwError, TimeoutError } from 'rxjs';
+import { startRpcClientSpan } from '@libs/telemetry/rpc-tracing';
 import { statusTitle } from '@libs/shared/utils';
 import { CIRCUIT_BREAKER_FACTORY } from '@libs/circuit-breaker';
 import type { CircuitBreakerFactory } from '@libs/circuit-breaker';
@@ -64,7 +66,28 @@ export abstract class BaseTcpClient implements OnModuleInit {
     payload: TInput,
     timeoutMs = DEFAULT_RPC_TIMEOUT_MS,
   ): Promise<TResult> {
-    const envelope = createRpcEnvelope(payload, this.sourceService);
+    // One CLIENT span per call, made active while the envelope is built so the `traceparent` it
+    // carries names this span as the callee's parent. It spans the whole call as the caller sees
+    // it -- including a circuit-breaker rejection or a timeout, which never reach the callee.
+    const rpcSpan = startRpcClientSpan(this.serviceName, pattern);
+    const envelope = context.with(rpcSpan.context, () => createRpcEnvelope(payload, this.sourceService));
+    try {
+      const result = await context.with(rpcSpan.context, () =>
+        this.sendEnvelope<TResult, TInput>(pattern, envelope, timeoutMs),
+      );
+      rpcSpan.end();
+      return result;
+    } catch (error) {
+      rpcSpan.end(error);
+      throw error;
+    }
+  }
+
+  private async sendEnvelope<TResult, TInput>(
+    pattern: string,
+    envelope: RpcEnvelope<TInput>,
+    timeoutMs: number,
+  ): Promise<TResult> {
     const execute = () =>
       firstValueFrom(
         this.client.send<TResult, RpcEnvelope<TInput>>(pattern, envelope).pipe(

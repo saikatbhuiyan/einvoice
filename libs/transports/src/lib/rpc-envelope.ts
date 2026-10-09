@@ -1,6 +1,12 @@
 import { getCurrentCorrelationContext, type CorrelationContext } from '@libs/logging';
+import { injectTraceContext, type TraceCarrier } from '@libs/telemetry/rpc-tracing';
 
-export interface RpcMeta extends CorrelationContext {
+/**
+ * `traceparent`/`tracestate` (from TraceCarrier) are the W3C trace context of the caller's span:
+ * Nest's TCP transport has no headers, so the envelope is the only place it can travel. Absent
+ * when the caller runs without tracing.
+ */
+export interface RpcMeta extends CorrelationContext, TraceCarrier {
   sourceService: string;
   timestamp: string;
 }
@@ -25,6 +31,7 @@ export function createRpcEnvelope<T>(data: T, sourceService: string): RpcEnvelop
       permissions: context?.permissions,
       sourceService,
       timestamp: new Date().toISOString(),
+      ...injectTraceContext(),
     },
   };
 }

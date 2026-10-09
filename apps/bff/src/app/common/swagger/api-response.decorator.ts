@@ -4,6 +4,7 @@ import { ApiEnvelopeDto, ProblemDetailDto } from '@libs/shared/types';
 import { problemTitles } from '@libs/shared/utils';
 
 const correlationIdExample = '01HWN0N6VNJY4A4Y9K2Q48ZY6Q';
+const traceIdExample = '4bf92f3577b34da6a3ce929d0e0e4736';
 
 interface ApiEnvelopeResponseOptions {
   status: HttpStatus;
@@ -115,7 +116,8 @@ function problemExample(status: HttpStatus): ProblemDetailDto {
       errors: {
         '/body/client.email': ['email must be an email'],
       },
-      traceId: correlationIdExample,
+      traceId: traceIdExample,
+      correlationId: correlationIdExample,
     };
   }
 
@@ -125,7 +127,8 @@ function problemExample(status: HttpStatus): ProblemDetailDto {
     status,
     detail: defaultProblemDetail(status),
     instance: '/api/v1/invoices',
-    traceId: correlationIdExample,
+    traceId: traceIdExample,
+    correlationId: correlationIdExample,
   };
 }
 
