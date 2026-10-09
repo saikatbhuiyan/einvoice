@@ -14,8 +14,8 @@ export class ConnectionErrorDetector {
   isConnectionError(error: unknown): boolean {
     const unwrapped = this.unwrapRpcError(error);
     const record = this.isRecord(unwrapped) ? unwrapped : this.isRecord(error) ? error : undefined;
-    const code = record?.code;
-    const message = error instanceof Error ? error.message : this.isRecord(error) ? String(error.message ?? '') : '';
+    const code = record?.['code'];
+    const message = error instanceof Error ? error.message : this.isRecord(error) ? String(error['message'] ?? '') : '';
 
     return (
       (typeof code === 'string' && CONNECTION_ERROR_CODES.has(code)) ||
@@ -28,16 +28,16 @@ export class ConnectionErrorDetector {
       return error;
     }
 
-    if (this.isRecord(error.response)) {
-      return error.response;
+    if (this.isRecord(error['response'])) {
+      return error['response'];
     }
 
-    if (this.isRecord(error.err)) {
-      return error.err;
+    if (this.isRecord(error['err'])) {
+      return error['err'];
     }
 
-    if (this.isRecord(error.error)) {
-      return error.error;
+    if (this.isRecord(error['error'])) {
+      return error['error'];
     }
 
     return error;
