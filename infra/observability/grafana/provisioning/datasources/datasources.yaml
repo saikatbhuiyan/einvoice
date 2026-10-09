@@ -1,5 +1,9 @@
 # Provisioned at Grafana startup, so a fresh `docker compose up` has working datasources with
-# fixed UIDs -- the dashboards under ../../dashboards reference these UIDs directly.
+# fixed UIDs -- the dashboards under ../../dashboards reference these UIDs directly. The three are
+# cross-linked so you can move between signals for the same request:
+#   log line (trace_id)  -> Tempo trace
+#   Tempo span           -> that service's log lines for the trace (Loki), and its metrics
+#   latency exemplar     -> the Tempo trace behind that sample
 apiVersion: 1
 
 datasources:
@@ -8,7 +12,63 @@ datasources:
     type: loki
     access: proxy
     url: http://loki:3100
-    isDefault: true
     editable: false
     jsonData:
       maxLines: 1000
+      derivedFields:
+        # Alloy stores trace_id as structured metadata (not a label), which a "label"-type
+        # derived field reads directly.
+        - name: TraceID
+          matcherType: label
+          matcherRegex: trace_id
+          datasourceUid: tempo
+          url: "$${__value.raw}"
+          urlDisplayLabel: View trace
+
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      httpMethod: POST
+      exemplarTraceIdDestinations:
+        # Tempo's metrics-generator labels exemplars `traceID` (not trace_id).
+        - name: traceID
+          datasourceUid: tempo
+
+  - name: Tempo
+    uid: tempo
+    type: tempo
+    access: proxy
+    url: http://tempo:3200
+    editable: false
+    jsonData:
+      tracesToLogsV2:
+        datasourceUid: loki
+        spanStartTimeShift: -5m
+        spanEndTimeShift: 5m
+        # Span's service.name -> the Loki `service` label; then a line filter on the trace id.
+        tags:
+          - key: service.name
+            value: service
+        filterByTraceID: true
+        filterBySpanID: false
+      tracesToMetrics:
+        datasourceUid: prometheus
+        spanStartTimeShift: -5m
+        spanEndTimeShift: 5m
+        tags:
+          - key: service.name
+            value: service
+        queries:
+          - name: Request rate
+            query: sum(rate(http_server_request_duration_count{$$__tags}[1m]))
+      serviceMap:
+        datasourceUid: prometheus
+      nodeGraph:
+        enabled: true
+      lokiSearch:
+        datasourceUid: loki

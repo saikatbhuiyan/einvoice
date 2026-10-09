@@ -53,6 +53,7 @@ export class ApiResponseBuilder {
       instance: partial.instance,
       errors: partial.errors,
       traceId: partial.traceId ?? randomUUID(),
+      correlationId: partial.correlationId,
     };
   }
 }

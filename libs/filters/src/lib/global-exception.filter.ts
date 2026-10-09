@@ -1,6 +1,7 @@
 import { ArgumentsHost, Catch, ExceptionFilter, HttpException, HttpStatus, Logger } from '@nestjs/common';
 import { HttpAdapterHost } from '@nestjs/core';
 import { Request } from 'express';
+import { getCurrentCorrelationContext } from '@libs/logging';
 import { ProblemDetail } from '@libs/shared/types';
 import { problem as problemFactory, statusTitle } from '@libs/shared/utils';
 
@@ -22,14 +23,21 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     const request = ctx.getRequest<Request>();
 
     const correlationId = (request.headers['x-correlation-id'] as string) ?? 'unknown';
+    // `traceId` must be the id a support engineer can paste into Tempo: the x-trace-id header
+    // already set on this response (the OpenTelemetry trace id when tracing is on). It used to be
+    // the correlation id, which stopped being the same value once real tracing was introduced.
+    const traceHeader = ctx.getResponse<{ getHeader(name: string): unknown }>().getHeader('x-trace-id');
+    const traceId =
+      (typeof traceHeader === 'string' && traceHeader) || getCurrentCorrelationContext()?.traceId || correlationId;
 
-    const problemDetail = this.toProblemDetail(exception, request, correlationId);
+    const problemDetail = this.toProblemDetail(exception, request, { traceId, correlationId });
 
     if (problemDetail.status >= 500) {
       this.logger.error(
         {
           event: 'unhandled_exception',
           correlationId,
+          traceId,
           status: problemDetail.status,
           title: problemDetail.title,
           detail: problemDetail.detail,
@@ -42,6 +50,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       this.logger.warn({
         event: 'http_exception',
         correlationId,
+        traceId,
         status: problemDetail.status,
         title: problemDetail.title,
         path: request.url,
@@ -54,7 +63,11 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     httpAdapter.reply(ctx.getResponse(), problemDetail, problemDetail.status);
   }
 
-  private toProblemDetail(exception: unknown, request: Request, correlationId: string): ProblemDetail {
+  private toProblemDetail(
+    exception: unknown,
+    request: Request,
+    ids: { traceId: string; correlationId: string },
+  ): ProblemDetail {
     const instance = request.url;
 
     if (exception instanceof HttpException) {
@@ -66,7 +79,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
           return problemFactory(statusTitle(status), 'One or more fields failed validation.', status, {
             instance,
             errors: this.normaliseValidationMessages(body.message),
-            traceId: correlationId,
+            ...ids,
           });
         }
       }
@@ -77,7 +90,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
         status,
         {
           instance,
-          traceId: correlationId,
+          ...ids,
         },
       );
     }
@@ -94,7 +107,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       HttpStatus.INTERNAL_SERVER_ERROR,
       {
         instance,
-        traceId: correlationId,
+        ...ids,
       },
     );
   }

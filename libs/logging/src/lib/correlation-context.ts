@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import { AsyncLocalStorage } from 'async_hooks';
 import type { IncomingHttpHeaders } from 'http';
+import { isSpanContextValid, trace } from '@opentelemetry/api';
 
 const TRACEPARENT_PATTERN = /^[\da-f]{2}-([\da-f]{32})-[\da-f]{16}-[\da-f]{2}(?:-.+)?$/i;
 const ID_PATTERN = /^[\w:.-]{1,128}$/;
@@ -19,10 +20,21 @@ export function resolveCorrelationContext(headers: IncomingHttpHeaders): Correla
   const correlationId =
     validHeader(headers['x-correlation-id']) ?? validHeader(headers['x-request-id']) ?? randomUUID();
 
+  // With tracing on, the HTTP instrumentation has already started (or continued, from an inbound
+  // `traceparent`) this request's span -- use its id, so the x-trace-id response header, the
+  // RpcEnvelope's traceId and every log line all carry the one id you can look up in Tempo.
   const traceId =
-    validHeader(headers['x-b3-traceid']) ?? extractTraceIdFromTraceparent(headers['traceparent']) ?? correlationId;
+    activeOpenTelemetryTraceId() ??
+    validHeader(headers['x-b3-traceid']) ??
+    extractTraceIdFromTraceparent(headers['traceparent']) ??
+    correlationId;
 
   return { correlationId, traceId };
+}
+
+export function activeOpenTelemetryTraceId(): string | undefined {
+  const spanContext = trace.getActiveSpan()?.spanContext();
+  return spanContext && isSpanContextValid(spanContext) ? spanContext.traceId : undefined;
 }
 
 export function firstHeader(value: string | string[] | number | undefined): string | undefined {

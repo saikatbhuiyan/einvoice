@@ -94,8 +94,14 @@ export class ProblemDetailDto implements ProblemDetail {
   errors?: Record<string, string[]>;
 
   @ApiPropertyOptional({
-    example: '01HWN0N6VNJY4A4Y9K2Q48ZY6Q',
-    description: 'Correlation identifier for support and log lookup.',
+    example: '4bf92f3577b34da6a3ce929d0e0e4736',
+    description: 'Distributed trace id (same as the x-trace-id response header) for looking the request up in tracing.',
   })
   traceId?: string;
+
+  @ApiPropertyOptional({
+    example: '01HWN0N6VNJY4A4Y9K2Q48ZY6Q',
+    description: 'Correlation identifier (same as the x-correlation-id response header) for support and log lookup.',
+  })
+  correlationId?: string;
 }

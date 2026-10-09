@@ -1,0 +1,58 @@
+# Monolithic Tempo (every component in one process: distributor, live-store, querier, compactor,
+# metrics-generator) on local disk. Tempo 3's distributed mode decouples ingestion through Kafka;
+# monolithic mode needs none of that, which is right for one host. Moving to object storage (S3)
+# is a `storage.trace.backend` change -- the apps' OTLP export doesn't change.
+server:
+  http_listen_port: 3200
+  log_level: warn
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        # The apps export OTLP/HTTP (protobuf) to tempo:4318.
+        http:
+          endpoint: 0.0.0.0:4318
+        grpc:
+          endpoint: 0.0.0.0:4317
+
+storage:
+  trace:
+    backend: local
+    local:
+      path: /var/tempo/traces
+    wal:
+      path: /var/tempo/wal
+
+# Tempo 3 replaced 2.x's `compactor` with a backend scheduler + worker pair; retention is enforced
+# by the scheduler and applied by the worker, so both carry it. 7 days, same as Loki.
+backend_scheduler:
+  provider:
+    compaction:
+      compaction:
+        block_retention: 168h
+backend_worker:
+  compaction:
+    block_retention: 168h
+
+# Derives metrics from the spans themselves and remote-writes them to Prometheus:
+# - service-graphs: request rate / errors / latency between each pair of services, which is what
+#   Grafana's service map (Tempo datasource -> "Service Graph") draws;
+# - span-metrics: RED metrics per span name, with exemplars linking a latency spike to a trace.
+metrics_generator:
+  storage:
+    path: /var/tempo/generator/wal
+    remote_write:
+      - url: http://prometheus:9090/api/v1/write
+        send_exemplars: true
+  registry:
+    external_labels:
+      source: tempo
+
+overrides:
+  defaults:
+    metrics_generator:
+      processors: [service-graphs, span-metrics]
+
+usage_report:
+  reporting_enabled: false
