@@ -667,6 +667,10 @@ services:
       PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@einvoice.local}
       PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-dev-pgadmin-password}
       PGADMIN_CONFIG_SERVER_MODE: "False"
+      # Recent pgadmin images reject special-use domains like `.local` as the login email and
+      # refuse to boot. Allow it explicitly (a Python literal, as pgadmin's config expects) so the
+      # dev default above keeps working.
+      PGADMIN_CONFIG_ALLOW_SPECIAL_EMAIL_DOMAINS: "['local']"
     ports:
       - "${PGADMIN_PORT:-5050}:80"
     volumes:
