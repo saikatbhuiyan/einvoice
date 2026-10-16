@@ -9,9 +9,11 @@
       "outputs": ["{workspaceRoot}/coverage/{e2eProjectRoot}"],
       "options": {
         "jestConfig": "apps/invoice-e2e/jest.config.cts",
-        "passWithNoTests": true
+        "passWithNoTests": false,
+        "runInBand": true
       },
-      "dependsOn": ["invoice:build", "invoice:serve"]
+      "dependsOn": ["invoice:build"],
+      "cache": false
     },
     "type-check": {
       "executor": "nx:run-commands",
