@@ -1,0 +1,24 @@
+{
+  "data": {
+    "type": "invoice.pdf.generated",
+    "invoiceId": "6700000000000000000000a1",
+    "invoiceNumber": "INV-2026-001",
+    "clientName": "Acme Corp",
+    "clientEmail": "billing@acme.test",
+    "pdfUrl": "https://einvoice-media.s3.eu-west-1.amazonaws.com/invoices/1760605200000-invoice-INV-2026-001.pdf",
+    "fileName": "invoice-INV-2026-001.pdf",
+    "currency": "EUR",
+    "total": 129.9,
+    "issueDate": "2026-10-01T00:00:00.000Z",
+    "dueDate": "2026-10-31T00:00:00.000Z"
+  },
+  "meta": {
+    "correlationId": "corr-contract-1",
+    "traceId": "trace-contract-1",
+    "userId": "user-1",
+    "roles": ["accountant"],
+    "permissions": ["invoice:write"],
+    "sourceService": "invoice",
+    "timestamp": "2026-10-16T09:00:00.000Z"
+  }
+}

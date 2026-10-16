@@ -1,9 +1,5 @@
-import { killPort } from '@nx/node/utils';
-
+// Deliberately nothing to tear down: the stack under test is long-lived and shared. (The Nx
+// scaffold's killPort(port) here would kill Docker's port-forwarding process on the host.)
 module.exports = async function () {
-  // Put clean up logic here (e.g. stopping services, docker-compose, etc.).
-  // Hint: `globalThis` is shared between setup and teardown.
-  const port = process.env.PORT ? Number(process.env.PORT) : 3000;
-  await killPort(port);
-  console.log(globalThis.__TEARDOWN_MESSAGE__);
+  return undefined;
 };
