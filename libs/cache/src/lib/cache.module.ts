@@ -36,11 +36,16 @@ export class CacheModule {
           useFactory: (configService: ConfigService) => {
             const config = configService.get<RedisCacheConfiguration>('CACHE_CONFIG', { infer: true });
 
-            const redisUrl = config.REDIS_PASSWORD
-              ? `redis://:${config.REDIS_PASSWORD}@${config.REDIS_HOST}:${config.REDIS_PORT}/${config.REDIS_DB}`
-              : `redis://${config.REDIS_HOST}:${config.REDIS_PORT}/${config.REDIS_DB}`;
-
-            const keyv = createKeyv(redisUrl, { namespace: prefix });
+            // Structured options, not a redis:// URL: a password containing "@", "/", "#" or "?"
+            // made the concatenated URL invalid and crashed every service at boot.
+            const keyv = createKeyv(
+              {
+                socket: { host: config.REDIS_HOST, port: config.REDIS_PORT },
+                password: config.REDIS_PASSWORD || undefined,
+                database: config.REDIS_DB,
+              },
+              { namespace: prefix },
+            );
 
             return createCache({
               stores: [keyv],

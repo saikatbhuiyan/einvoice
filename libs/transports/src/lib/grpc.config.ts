@@ -21,6 +21,12 @@ interface GrpcServiceDefinition {
 // ratelimit.lua earlier — @grpc/proto-loader needs a real file on disk at runtime, not a string.
 const PROTO_DIR = join(__dirname, 'proto');
 
+// proto3 never puts default values on the wire (an empty repeated field, `false`, `''`), and
+// proto-loader's own defaults decode those as *absent* — so `permissions: []` arrived as undefined
+// and Authorizer granted a permission literally named "undefined". With these options the decoded
+// object always has every field, which is what the hand-written TS contracts already promise.
+export const GRPC_LOADER_OPTIONS = { arrays: true, defaults: true } as const;
+
 export const GRPC_SERVICES: Record<GrpcServiceName, GrpcServiceDefinition> = {
   [GrpcServiceName.AUTHORIZER]: {
     host: process.env['AUTHORIZER_GRPC_HOST'] ?? 'localhost',
@@ -58,6 +64,7 @@ export function createGrpcServerConfig(service: GrpcServiceKey): GrpcOptions {
       package: [def.package, 'grpc.health.v1'],
       protoPath: [join(PROTO_DIR, def.protoFileName), join(PROTO_DIR, 'health.proto')],
       url: `0.0.0.0:${def.port}`,
+      loader: GRPC_LOADER_OPTIONS,
     },
   };
 }
@@ -71,6 +78,7 @@ export function createGrpcClientConfig(service: GrpcServiceKey) {
       package: def.package,
       protoPath: join(PROTO_DIR, def.protoFileName),
       url: `${def.host}:${def.port}`,
+      loader: GRPC_LOADER_OPTIONS,
     },
   } as const;
 }

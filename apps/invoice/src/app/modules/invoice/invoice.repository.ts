@@ -1,15 +1,23 @@
 import { BadRequestException, ConflictException, Inject, Injectable } from '@nestjs/common';
-import { Types, isValidObjectId } from 'mongoose';
+import { Error as MongooseError, Types, isValidObjectId } from 'mongoose';
 import { DEFAULT_LIMIT, DEFAULT_PAGE } from '@libs/constants';
 import { InvoiceDocument, InvoiceModel } from '@libs/schemas';
 import { CreateInvoiceRequest, FindAllInvoicesRequest, UpdateInvoiceRequest } from '@libs/interfaces/gateway';
 import { buildPaginationMeta } from '@libs/shared/types';
+import { escapeRegExp } from '@libs/shared/utils';
 import {
   IInvoiceRepository,
   INVOICE_READ_MODEL,
   INVOICE_WRITE_MODEL,
   PaginatedResult,
 } from './invoice.repository.interface';
+
+const CONCURRENT_MODIFICATION_MESSAGE = 'Invoice was modified by another user. Please refresh and retry.';
+
+function isDuplicateKey(error: unknown, field?: string): boolean {
+  const mongoError = error as { code?: unknown; keyPattern?: Record<string, unknown> } | null;
+  return mongoError?.code === 11000 && (field === undefined || Boolean(mongoError.keyPattern?.[field]));
+}
 
 @Injectable()
 export class InvoiceRepository implements IInvoiceRepository {
@@ -19,14 +27,31 @@ export class InvoiceRepository implements IInvoiceRepository {
   ) {}
 
   async create(data: CreateInvoiceRequest): Promise<InvoiceDocument> {
-    if (data.idempotencyKey) {
-      const existing = await this.writeModel
-        .findOne({ idempotencyKey: data.idempotencyKey.trim(), deletedAt: null })
-        .exec();
+    const idempotencyKey = data.idempotencyKey?.trim();
+
+    if (idempotencyKey) {
+      const existing = await this.findByIdempotencyKey(idempotencyKey);
       if (existing) return existing;
     }
 
-    return this.writeModel.create(this.toPersistencePayload(data));
+    try {
+      return await this.writeModel.create(this.toPersistencePayload(data));
+    } catch (error) {
+      // Concurrent retries with the same key can all pass the lookup above; a unique index lets
+      // exactly one insert win. A retry carries the identical payload, so Mongo may report the
+      // duplicate on invoiceNumber rather than idempotencyKey — whichever index it hits first.
+      // Idempotency means the losers get the winner's invoice, not an error.
+      if (idempotencyKey && isDuplicateKey(error)) {
+        const winner = await this.findByIdempotencyKey(idempotencyKey);
+        if (winner) return winner;
+        if (isDuplicateKey(error, 'idempotencyKey')) {
+          throw new ConflictException(
+            'This idempotency key was already used for an invoice that has since been deleted.',
+          );
+        }
+      }
+      throw error;
+    }
   }
 
   async findAll(query: FindAllInvoicesRequest): Promise<PaginatedResult<InvoiceDocument>> {
@@ -58,14 +83,23 @@ export class InvoiceRepository implements IInvoiceRepository {
       if (version !== undefined) {
         const exists = await this.writeModel.exists({ _id: id, deletedAt: null });
         if (exists) {
-          throw new ConflictException('Invoice was modified by another user. Please refresh and retry.');
+          throw new ConflictException(CONCURRENT_MODIFICATION_MESSAGE);
         }
       }
       return null;
     }
 
     invoice.set(this.toPersistencePayload(data));
-    await invoice.save();
+    try {
+      await invoice.save();
+    } catch (error) {
+      // Another writer saved between our versioned read and this save; optimisticConcurrency makes
+      // Mongoose reject it. Same outcome as a stale If-Match, so the same 409.
+      if (error instanceof MongooseError.VersionError) {
+        throw new ConflictException(CONCURRENT_MODIFICATION_MESSAGE);
+      }
+      throw error;
+    }
     return invoice;
   }
 
@@ -84,7 +118,7 @@ export class InvoiceRepository implements IInvoiceRepository {
     if (!result && version !== undefined) {
       const exists = await this.writeModel.exists({ _id: id, deletedAt: null });
       if (exists) {
-        throw new ConflictException('Invoice was modified by another user. Please refresh and retry.');
+        throw new ConflictException(CONCURRENT_MODIFICATION_MESSAGE);
       }
     }
 
@@ -103,6 +137,10 @@ export class InvoiceRepository implements IInvoiceRepository {
     if (!isValidObjectId(id)) return null;
 
     return this.writeModel.findOneAndUpdate({ _id: id, deletedAt: null }, { status: 'paid' }, { new: true }).exec();
+  }
+
+  private findByIdempotencyKey(idempotencyKey: string): Promise<InvoiceDocument | null> {
+    return this.writeModel.findOne({ idempotencyKey, deletedAt: null }).exec();
   }
 
   private async findAllWithCursor(
@@ -182,7 +220,9 @@ export class InvoiceRepository implements IInvoiceRepository {
     }
 
     if (query.search) {
-      const search = query.search.trim();
+      // User input: escaped so "." or "(" match literally and can't form an invalid or
+      // catastrophically backtracking pattern on the database.
+      const search = escapeRegExp(query.search.trim());
       if (search) {
         filter.$or = [
           { invoiceNumber: { $regex: search, $options: 'i' } },

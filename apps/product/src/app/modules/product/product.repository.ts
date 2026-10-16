@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { containsPattern } from '@libs/shared/utils';
 import { DEFAULT_LIMIT, DEFAULT_PAGE } from '@libs/constants';
 import { CreateProductRequest, FindAllProductsRequest } from '@libs/interfaces/gateway';
 import { ProductEntity } from '../../../database/entities/product.entity';
@@ -33,7 +34,9 @@ export class ProductRepository implements IProductRepository {
     }
 
     if (query.search) {
-      qb.andWhere('(product.sku ILIKE :search OR product.name ILIKE :search)', { search: `%${query.search}%` });
+      qb.andWhere('(product.sku ILIKE :search OR product.name ILIKE :search)', {
+        search: containsPattern(query.search),
+      });
     }
 
     qb.orderBy('product.createdAt', 'DESC')
