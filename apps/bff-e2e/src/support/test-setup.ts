@@ -1,8 +1,5 @@
 import axios from 'axios';
 
-module.exports = async function () {
-  // Configure axios for tests to use.
-  const host = process.env.HOST ?? 'localhost';
-  const port = process.env.PORT ?? '3000';
-  axios.defaults.baseURL = `http://${host}:${port}`;
-};
+axios.defaults.baseURL = `${process.env['BFF_URL'] ?? 'http://localhost:3300'}/api/v1`;
+// Assert on status codes explicitly instead of letting axios throw on every 4xx.
+axios.defaults.validateStatus = () => true;

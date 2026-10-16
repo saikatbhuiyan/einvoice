@@ -6,5 +6,13 @@
     "moduleResolution": "node10",
     "types": ["jest", "node"]
   },
-  "include": ["jest.config.ts", "jest.config.cts", "src/**/*.test.ts", "src/**/*.spec.ts", "src/**/*.d.ts"]
+  "include": [
+    "jest.config.ts",
+    "jest.config.cts",
+    "src/**/*.test.ts",
+    "src/**/*.spec.ts",
+    "src/**/*.d.ts",
+    "jest.integration.config.cts",
+    "src/**/*.int-spec.ts"
+  ]
 }

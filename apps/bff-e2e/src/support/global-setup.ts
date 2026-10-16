@@ -1,16 +1,45 @@
-import { waitForPortOpen } from '@nx/node/utils';
-
-/* eslint-disable */
-var __TEARDOWN_MESSAGE__: string;
-
+/**
+ * E2E runs against the already-running dev stack (`docker compose -f docker-compose.dev.yml up -d`),
+ * not a locally served bff: the flows under test cross Keycloak, Authorizer (gRPC), and the TCP
+ * services, none of which `nx serve bff` starts. Waits for bff's *readiness* endpoint rather than
+ * an open port — Docker publishes the port before the app (or its Redis) is actually ready.
+ */
 module.exports = async function () {
-  // Start services that that the app needs to run (e.g. database, docker-compose, etc.).
-  console.log('\nSetting up...\n');
+  const base = process.env['BFF_URL'] ?? 'http://localhost:3300';
+  const deadline = Date.now() + 180_000;
+  let lastError = '';
 
-  const host = process.env.HOST ?? 'localhost';
-  const port = process.env.PORT ? Number(process.env.PORT) : 3000;
-  await waitForPortOpen(port, { host });
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(`${base}/api/health/ready`);
+      if (response.ok) {
+        await loginOnce(base);
+        return;
+      }
+      lastError = `HTTP ${response.status}`;
+    } catch (error) {
+      lastError = (error as Error).message;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
+  }
 
-  // Hint: Use `globalThis` to pass variables to global teardown.
-  globalThis.__TEARDOWN_MESSAGE__ = '\nTearing down...\n';
+  throw new Error(
+    `bff at ${base} never became ready (${lastError}). Start the stack first: docker compose -f docker-compose.dev.yml up -d`,
+  );
 };
+
+// Logs in once for the whole run. /auth/login allows 5 attempts per IP (refilling one per 10s), so
+// per-file logins exhaust it and the suite starts failing on 429s from its own setup.
+async function loginOnce(base: string): Promise<void> {
+  const users = { ADMIN: 'dev.admin', ACCOUNTANT: 'dev.accountant' } as const;
+  for (const [key, username] of Object.entries(users)) {
+    const response = await fetch(`${base}/api/v1/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password: 'DevPassw0rd!' }),
+    });
+    if (!response.ok) throw new Error(`login as ${username} failed: HTTP ${response.status}`);
+    const body = (await response.json()) as { data: { accessToken: string } };
+    process.env[`E2E_TOKEN_${key}`] = body.data.accessToken;
+  }
+}
