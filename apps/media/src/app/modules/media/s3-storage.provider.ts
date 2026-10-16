@@ -62,11 +62,14 @@ export class S3StorageProvider implements StorageProvider {
   // to); real AWS S3 can omit it and fall back to the standard virtual-hosted-style URL.
   private resolveUrl(key: string): string {
     const config = CONFIGURATION.S3_CONFIG;
+    // Keys embed the user-supplied invoice number, so "#", "?" or a space would otherwise truncate
+    // or corrupt the emailed link. Encode per segment so the "/" separators stay literal.
+    const path = key.split('/').map(encodeURIComponent).join('/');
 
     if (config.S3_PUBLIC_BASE_URL) {
-      return `${config.S3_PUBLIC_BASE_URL.replace(/\/$/, '')}/${key}`;
+      return `${config.S3_PUBLIC_BASE_URL.replace(/\/$/, '')}/${path}`;
     }
 
-    return `https://${config.S3_BUCKET}.s3.${config.S3_REGION}.amazonaws.com/${key}`;
+    return `https://${config.S3_BUCKET}.s3.${config.S3_REGION}.amazonaws.com/${path}`;
   }
 }

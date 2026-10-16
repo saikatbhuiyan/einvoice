@@ -17,7 +17,6 @@ export class RedisTokenBucketStorage {
   constructor(@Inject(RATE_LIMIT_STORAGE) private readonly redis: Redis) {}
 
   async consume(key: string, burst: number, rate: number, cost: number, now?: number): Promise<ConsumeResult> {
-    const timestamp = now ?? Date.now();
     const ratePerMs = rate / 1000;
 
     const result = (await this.redis.eval(
@@ -26,7 +25,8 @@ export class RedisTokenBucketStorage {
       key,
       String(burst),
       String(ratePerMs),
-      String(timestamp),
+      // Empty → the script uses Redis TIME. Only tests pass an explicit timestamp.
+      now === undefined ? '' : String(now),
       String(cost),
     )) as [number, number, number, number];
 
