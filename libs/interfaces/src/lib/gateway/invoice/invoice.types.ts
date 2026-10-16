@@ -60,10 +60,15 @@ export interface UpdateInvoiceRequest {
   notes?: string;
 }
 
+export const PAGINATION_MODES = ['offset', 'cursor'] as const;
+export type PaginationMode = (typeof PAGINATION_MODES)[number];
+
 export interface FindAllInvoicesRequest {
   page?: number;
   limit?: number;
   cursor?: string;
+  /** `cursor` starts cursor pagination without a cursor (the first page). Omitted = offset mode. */
+  pagination?: PaginationMode;
   status?: InvoiceStatus;
   currency?: SupportedCurrency;
   clientEmail?: string;

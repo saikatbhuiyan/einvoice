@@ -77,6 +77,32 @@ describe('Invoice lifecycle through bff (e2e)', () => {
     expect(response.headers['content-type']).toContain('application/problem+json');
   });
 
+  // pagination=cursor has to pass bff's forbidNonWhitelisted validation and survive the TCP hop.
+  it('starts cursor pagination with pagination=cursor and follows the cursor through the gateway', async () => {
+    const marker = `E2E-CURSOR-${Date.now()}`;
+    const older = await axios.post('/invoices', newInvoice({ invoiceNumber: `${marker}-1` }), auth);
+    const newer = await axios.post('/invoices', newInvoice({ invoiceNumber: `${marker}-2` }), auth);
+
+    const first = await axios.get('/invoices', { ...auth, params: { pagination: 'cursor', limit: 1, search: marker } });
+    expect(first.status).toBe(200);
+    expect(first.data.data.items.map((i: { id: string }) => i.id)).toEqual([newer.data.data.id]);
+    expect(first.data.data.meta).toMatchObject({ limit: 1, hasNextPage: true });
+    expect(first.data.data.meta).not.toHaveProperty('total');
+
+    const second = await axios.get('/invoices', {
+      ...auth,
+      params: { cursor: first.data.data.meta.cursor, limit: 1, search: marker },
+    });
+    expect(second.data.data.items.map((i: { id: string }) => i.id)).toEqual([older.data.data.id]);
+    expect(second.data.data.meta.hasNextPage).toBe(false);
+  });
+
+  it('rejects pagination=cursor combined with page at the gateway', async () => {
+    const response = await axios.get('/invoices', { ...auth, params: { pagination: 'cursor', page: 2 } });
+
+    expect(response.status).toBe(422);
+  });
+
   it('treats regex characters in search literally', async () => {
     const response = await axios.get('/invoices', { ...auth, params: { search: 'E2E(' } });
 

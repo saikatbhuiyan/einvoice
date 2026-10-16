@@ -58,7 +58,7 @@ export class InvoiceRepository implements IInvoiceRepository {
     const limit = query.limit ?? DEFAULT_LIMIT;
     const filter = this.buildFilter(query);
 
-    if (query.cursor) {
+    if (query.cursor || query.pagination === 'cursor') {
       return this.findAllWithCursor(query.cursor, limit, filter);
     }
 
@@ -143,17 +143,13 @@ export class InvoiceRepository implements IInvoiceRepository {
     return this.writeModel.findOne({ idempotencyKey, deletedAt: null }).exec();
   }
 
+  // No cursor = the first cursor page (`pagination=cursor`); otherwise everything older than it.
   private async findAllWithCursor(
-    cursor: string,
+    cursor: string | undefined,
     limit: number,
     filter: Record<string, unknown>,
   ): Promise<PaginatedResult<InvoiceDocument>> {
-    const decodedId = this.decodeCursor(cursor);
-
-    const cursorFilter = {
-      ...filter,
-      _id: { $lt: new Types.ObjectId(decodedId) },
-    };
+    const cursorFilter = cursor ? { ...filter, _id: { $lt: new Types.ObjectId(this.decodeCursor(cursor)) } } : filter;
 
     const items = await this.readModel
       .find(cursorFilter)
