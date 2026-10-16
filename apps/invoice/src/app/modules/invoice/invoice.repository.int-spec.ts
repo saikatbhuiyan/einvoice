@@ -141,16 +141,15 @@ describe('InvoiceRepository against real MongoDB', () => {
   });
 
   describe('listing', () => {
-    // Cursor mode only starts when a cursor is supplied (a request with no cursor is offset mode),
-    // so — like the invoice-e2e suite — the walk starts from an all-f ObjectId, which sorts after
-    // every real id. See docs/PAGINATION-ARCHITECTURE.md, which describes a first cursor being
-    // returned for a plain `?limit=` request; the implementation doesn't do that today.
-    it('paginates by cursor, newest first, without gaps or duplicates', async () => {
+    it('starts cursor pagination with pagination=cursor and walks newest first without gaps or duplicates', async () => {
       const created: string[] = [];
       for (let i = 0; i < 5; i++) created.push((await repository.create(payload())).id);
 
-      const seen: string[] = [];
-      let cursor: string | undefined = Buffer.from('ffffffffffffffffffffffff').toString('base64url');
+      const first = await repository.findAll({ limit: 2, pagination: 'cursor' });
+      expect(first.meta).toMatchObject({ mode: 'cursor', hasNextPage: true });
+
+      const seen = first.items.map((item) => item.id);
+      let cursor = (first.meta as { cursor?: string }).cursor;
       while (cursor) {
         const page = await repository.findAll({ limit: 2, cursor });
         seen.push(...page.items.map((item) => item.id));
@@ -158,6 +157,14 @@ describe('InvoiceRepository against real MongoDB', () => {
       }
 
       expect(seen).toEqual([...created].reverse());
+    });
+
+    it('keeps offset mode (with totals) when pagination is not requested', async () => {
+      for (let i = 0; i < 3; i++) await repository.create(payload());
+
+      const result = await repository.findAll({ limit: 2 });
+
+      expect(result.meta).toMatchObject({ mode: 'offset', total: 3, totalPages: 2 });
     });
 
     it('rejects a forged cursor with 400', async () => {

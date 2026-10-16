@@ -58,17 +58,25 @@ describe('Invoice CRUD (e2e)', () => {
     expect(res.data.items.map((item: { id: string }) => item.id)).toContain(created.data.id);
   });
 
-  it('lists invoices in cursor mode when a cursor is supplied', async () => {
-    await axios.post(basePath, buildPayload());
-    // An all-Fs ObjectId cursor is greater than any real id, so `_id < cursor` matches everything.
-    const farFutureCursor = Buffer.from('ffffffffffffffffffffffff').toString('base64url');
+  it('starts cursor pagination with pagination=cursor and follows the returned cursor', async () => {
+    const older = await axios.post(basePath, buildPayload());
+    const newer = await axios.post(basePath, buildPayload());
 
-    const res = await axios.get(basePath, { params: { cursor: farFutureCursor, limit: 1 } });
+    const first = await axios.get(basePath, { params: { pagination: 'cursor', limit: 1 } });
+    expect(first.status).toBe(200);
+    expect(first.data.meta).toMatchObject({ limit: 1, hasNextPage: true });
+    expect(first.data.meta).not.toHaveProperty('total');
+    expect(first.data.items.map((item: { id: string }) => item.id)).toEqual([newer.data.id]);
 
-    expect(res.status).toBe(200);
-    expect(res.data.meta).toMatchObject({ limit: 1 });
-    expect(res.data.meta).not.toHaveProperty('page');
-    expect(res.data.items.length).toBeLessThanOrEqual(1);
+    const second = await axios.get(basePath, { params: { cursor: first.data.meta.cursor, limit: 1 } });
+    expect(second.status).toBe(200);
+    expect(second.data.items.map((item: { id: string }) => item.id)).toEqual([older.data.id]);
+  });
+
+  it('rejects pagination=cursor combined with page', async () => {
+    await expect(axios.get(basePath, { params: { pagination: 'cursor', page: 2 } })).rejects.toMatchObject({
+      response: { status: 422 },
+    });
   });
 
   it('updates an invoice with a matching If-Match version, then rejects a stale retry with 409', async () => {
