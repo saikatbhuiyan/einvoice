@@ -220,6 +220,24 @@ export class InvoiceController {
     return this.invoiceService.remove(params.id, isNaN(version as number) ? undefined : version);
   }
 
+  @Get(':id/pdf')
+  @RequirePermission('invoice:read')
+  @ResponseMessage('Invoice PDF link created')
+  @ApiOperation({
+    summary: 'Get a download link for the invoice PDF',
+    description:
+      'Returns a short-lived (5 minute) presigned link to the latest rendered PDF. PDFs are private: request a new link each time rather than storing one. 404 if no PDF has been generated yet.',
+  })
+  @ApiParam({
+    name: 'id',
+    example: INVOICE_ID_EXAMPLE,
+    description: 'MongoDB ObjectId of the invoice.',
+  })
+  @ApiProblemResponses(HttpStatus.NOT_FOUND, HttpStatus.BAD_GATEWAY, HttpStatus.SERVICE_UNAVAILABLE)
+  getPdfDownloadUrl(@Param() params: InvoiceIdGatewayDto) {
+    return this.invoiceService.getPdfDownloadUrl(params.id);
+  }
+
   @Post(':id/pdf')
   @RequirePermission('invoice:write')
   @RateLimit({ burst: RATE_LIMIT_MUTATE_BURST, rate: RATE_LIMIT_MUTATE_RATE })
@@ -227,7 +245,7 @@ export class InvoiceController {
   @ApiOperation({
     summary: 'Generate invoice PDF',
     description:
-      'Renders the invoice to PDF (via the pdf-generator service), uploads it to object storage (via the media service), and returns its URL. Does not contact the client — use POST /invoices/{id}/send for that.',
+      'Renders the invoice to PDF (via the pdf-generator service), stores it privately (via the media service), and returns a short-lived download link. Does not contact the client — use POST /invoices/{id}/send for that.',
   })
   @ApiParam({
     name: 'id',

@@ -48,8 +48,14 @@ module.exports = async function () {
   const app = spawn(process.execPath, [join(WORKSPACE_ROOT, 'dist/apps/invoice/main.js')], {
     cwd: WORKSPACE_ROOT,
     // NODE_ENV is set explicitly, not inherited: Jest sets it to "test", and the app would then look
-    // for a .env.test that doesn't exist instead of loading .env.dev.
-    env: { ...process.env, NODE_ENV: 'development', INVOICE_HTTP_PORT: String(port) },
+    // for a .env.test that doesn't exist instead of loading .env.dev. MONGODB_DIRECT_CONNECTION too:
+    // dev Mongo is a replica set advertising the member host "mongodb", unresolvable from the host.
+    env: {
+      ...process.env,
+      NODE_ENV: 'development',
+      INVOICE_HTTP_PORT: String(port),
+      MONGODB_DIRECT_CONNECTION: 'true',
+    },
     stdio: ['ignore', log, log],
   });
   globalThis.__INVOICE_E2E_APP__ = app;

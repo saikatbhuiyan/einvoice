@@ -318,8 +318,9 @@ services:
       # No S3_ENDPOINT, S3_ACCESS_KEY_ID, or S3_SECRET_ACCESS_KEY here -- unlike dev's s3mock
       # stand-in, production talks to real AWS S3 (S3_ENDPOINT unset) via whatever IAM role this
       # container's host/task already has (see apps/media's S3Configuration and
-      # S3StorageProvider), not a static key pair. S3_BUCKET/S3_REGION/S3_PUBLIC_BASE_URL come
-      # from .env.prod like everything else below.
+      # S3StorageProvider), not a static key pair. S3_BUCKET/S3_REGION come from
+      # .env.prod like everything else below. The bucket is private: PDFs are only ever served
+      # through short-lived presigned URLs (see S3StorageProvider.getDownloadUrl).
     expose:
       - "${MEDIA_HTTP_PORT:-3313}"
       - "${MEDIA_SERVICE_PORT:-3312}"
@@ -352,6 +353,11 @@ services:
       GLOBAL_PREFIX: ${GLOBAL_PREFIX:-api}
       PAYMENT_HTTP_PORT: ${PAYMENT_HTTP_PORT:-3314}
       PAYMENT_SERVICE_HOST: 0.0.0.0
+      # payment calls invoice over TCP (checkout: read the invoice; webhook: mark it paid). Without
+      # this the client falls back to localhost -- this container -- and every call fails.
+      INVOICE_SERVICE_HOST: invoice
+      # invoice.events consumer (InvoiceEventsController).
+      KAFKA_BROKERS: kafka:9092
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
       POSTGRES_DB: ${POSTGRES_DB:-einvoice}
@@ -362,6 +368,8 @@ services:
         condition: service_healthy
       invoice:
         condition: service_started
+      kafka:
+        condition: service_healthy
     expose:
       - "${PAYMENT_HTTP_PORT:-3314}"
       - "${PAYMENT_SERVICE_PORT:-3004}"
@@ -385,7 +393,7 @@ services:
   # documents for the realm/clients. See docker-compose.dev.yml's kafka service comment for why
   # every one of these KAFKA_* vars is required together, not optional tuning.
   kafka:
-    image: apache/kafka:latest
+    image: apache/kafka:4.3.1
     restart: unless-stopped
     environment:
       KAFKA_NODE_ID: 1
@@ -413,7 +421,7 @@ services:
       - backend
 
   # No `expose`/healthcheck here, unlike every other service in this file -- this container makes
-  # only outbound connections (to kafka, and to SES/SMTP/the PDF URL), never receives inbound
+  # only outbound connections (to kafka, redis, S3, and SES/SMTP), never receives inbound
   # traffic from anyone, and its scratch-based image (see services/mail/Dockerfile) has no shell
   # at all for a CMD-SHELL healthcheck to run even if it needed one.
   mail-service:
@@ -430,11 +438,22 @@ services:
       KAFKA_BROKERS: kafka:9092
       KAFKA_TOPIC_INVOICE_EVENTS: invoice.events
       KAFKA_CONSUMER_GROUP: mail-service
+      KAFKA_TOPIC_INVOICE_EVENTS_DLQ: invoice.events.dlq
       MAIL_PROVIDER: ${MAIL_PROVIDER:-ses}
       AWS_REGION: ${AWS_REGION:-us-east-1}
       SES_FROM_EMAIL: ${SES_FROM_EMAIL:-}
+      # Dedupe store. Shares the cache instance, whose allkeys-lru policy can evict dedupe keys
+      # under memory pressure -- dedupe is then best-effort (a possible duplicate email, never a
+      # lost one). Give it its own non-evicting instance if duplicates matter more than that.
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-change-me-redis-password}
+      # Reads PDFs from the private bucket with this container's IAM role (s3:GetObject) -- no
+      # static keys. S3_BUCKET / S3_REGION come from .env.prod, shared with media.
     depends_on:
       kafka:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     networks:
       - backend
@@ -482,6 +501,10 @@ services:
     networks:
       - backend
 
+  # Single-node replica set (invoice's transactional outbox needs transactions) -- see the same
+  # service in docker-compose.dev.yml for the keyFile/healthcheck reasoning. A real production
+  # deployment should run a 3-member set (or a managed service); one member gives transactions,
+  # not redundancy.
   mongodb:
     image: mongo:7
     restart: unless-stopped
@@ -492,13 +515,20 @@ services:
       MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:-einvoice_root}
       MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-change-me-mongo-password}
       MONGO_INITDB_DATABASE: ${MONGO_DB:-einvoice}
+    entrypoint:
+      - bash
+      - -c
+      - |
+        head -c 756 /dev/urandom | base64 > /tmp/mongo-keyfile
+        chmod 400 /tmp/mongo-keyfile && chown 999:999 /tmp/mongo-keyfile
+        exec docker-entrypoint.sh mongod --replSet rs0 --keyFile /tmp/mongo-keyfile --bind_ip_all
     volumes:
       - mongodb_data:/data/db
     healthcheck:
       test:
         [
           "CMD-SHELL",
-          "mongosh --quiet --username ${MONGO_ROOT_USERNAME:-einvoice_root} --password ${MONGO_ROOT_PASSWORD:-change-me-mongo-password} --authenticationDatabase admin --eval \"db.adminCommand({ ping: 1 }).ok\" | grep 1",
+          "mongosh --quiet --username ${MONGO_ROOT_USERNAME:-einvoice_root} --password ${MONGO_ROOT_PASSWORD:-change-me-mongo-password} --authenticationDatabase admin --eval \"try { rs.status() } catch (e) { rs.initiate({ _id: 'rs0', members: [{ _id: 0, host: 'mongodb:27017' }] }) } db.hello().isWritablePrimary ? 1 : 0\" | grep 1",
         ]
       interval: 15s
       timeout: 10s

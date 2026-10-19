@@ -7,9 +7,12 @@ import {
   ServiceName,
   TCP_CLIENT_TOKENS,
   TCP_PATTERNS,
+  type GetDownloadUrlRequest,
+  type GetDownloadUrlResponse,
   type UploadFileRequest,
   type UploadFileResponse,
 } from '@libs/transports';
+import type { InvoicePdfDownload } from '@libs/interfaces/gateway';
 
 @Injectable()
 export class MediaClientService extends BaseTcpClient {
@@ -27,5 +30,13 @@ export class MediaClientService extends BaseTcpClient {
 
   async uploadFile(data: UploadFileRequest): Promise<UploadFileResponse> {
     return this.send<UploadFileResponse, UploadFileRequest>(TCP_PATTERNS.MEDIA.UPLOAD, data);
+  }
+
+  async getDownloadUrl(request: GetDownloadUrlRequest & { fileName: string }): Promise<InvoicePdfDownload> {
+    const { url, expiresAt } = await this.send<GetDownloadUrlResponse, GetDownloadUrlRequest>(
+      TCP_PATTERNS.MEDIA.GET_DOWNLOAD_URL,
+      request,
+    );
+    return { url, expiresAt, fileName: request.fileName };
   }
 }

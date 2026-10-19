@@ -14,3 +14,10 @@ Changing the event shape means changing a fixture, which fails whichever side wa
 any more (it was replaced by `invoice.sent`, same payload), but messages of that type can still be
 on the topic within its retention window, so the Go consumer must keep decoding it. Delete the
 fixture together with the Go alias once retention has passed.
+
+`invoice.sent.pdf-url.legacy.json` is **consumer-only** too: `invoice.sent` messages produced before
+PDFs became private carry a public `pdfUrl` (and no `eventId`) instead of `pdfKey`. The Go consumer
+fetches those by URL and can't dedupe them. Delete it together with that fallback once retention has
+passed.
+
+Every current event carries `eventId` (the producer's outbox row id); consumers dedupe on it.

@@ -8,7 +8,7 @@ import { json, urlencoded } from 'express';
 import { Logger, LoggerErrorInterceptor } from 'nestjs-pino';
 import { BODY_SIZE_LIMIT, SHUTDOWN_DRAIN_TIMEOUT_MS } from '@libs/constants';
 import { createValidationPipe } from '@libs/shared/utils';
-import { createTcpServerConfig, ServiceName } from '@libs/transports';
+import { createKafkaConsumerConfig, createTcpServerConfig, ServiceName } from '@libs/transports';
 import { RpcExceptionInterceptor, RpcLoggingInterceptor, RpcTracingInterceptor } from '@libs/interceptors';
 import { RpcPermissionGuard } from '@libs/auth/rpc-permission.guard';
 import { AppModule } from './app/app.module';
@@ -37,6 +37,11 @@ async function bootstrap() {
   app.enableShutdownHooks();
 
   app.connectMicroservice(createTcpServerConfig(ServiceName.PAYMENT), {
+    inheritAppConfig: true,
+  });
+  // invoice.events consumer (InvoiceEventsController): expires a cancelled invoice's open checkout
+  // session. Same global guards/interceptors as the TCP handlers.
+  app.connectMicroservice(createKafkaConsumerConfig('payment', 'payment'), {
     inheritAppConfig: true,
   });
 

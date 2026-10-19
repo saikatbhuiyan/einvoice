@@ -230,6 +230,22 @@ export class PaymentService {
     this.logger.log(`Invoice "${payment.invoiceId}" marked paid via Stripe session "${payment.providerSessionId}".`);
   }
 
+  /**
+   * The invoice was cancelled: make its open checkout session unpayable, so the client can't pay a
+   * cancelled invoice through a link they already have. Idempotent -- a redelivered event finds no
+   * open session. Returns whether there was one.
+   *
+   * If the client completed checkout just before this ran, Stripe refuses the expiry (swallowed in
+   * expireCheckoutSession) and its completion webhook still arrives; invoice then refuses mark-paid
+   * for a cancelled invoice, and that payment is flagged reconciliation_required as before.
+   */
+  async expireOpenSessionForInvoice(invoiceId: string): Promise<boolean> {
+    const open = await this.paymentRepository.findOpenByInvoiceId(invoiceId);
+    if (!open) return false;
+    await this.retire(open);
+    return true;
+  }
+
   private isReusable(payment: PaymentEntity): boolean {
     return (
       !!payment.checkoutUrl &&

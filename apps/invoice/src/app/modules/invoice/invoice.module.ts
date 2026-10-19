@@ -1,10 +1,10 @@
 import { DynamicModule, Module, Provider } from '@nestjs/common';
 import { getModelToken } from '@nestjs/mongoose';
-import { ClientsModule } from '@nestjs/microservices';
 import { CacheModule } from '@libs/cache';
 import { READ_DB } from '@libs/constants';
 import { InvoiceModelName } from '@libs/schemas';
-import { ServiceName, TcpClientModule, createKafkaClientConfig } from '@libs/transports';
+import { ServiceName, TcpClientModule } from '@libs/transports';
+import { OutboxModule } from '../outbox/outbox.module';
 import { InvoiceHttpController } from './invoice-http.controller';
 import { InvoiceRpcController } from './invoice-rpc.controller';
 import { InvoiceService } from './invoice.service';
@@ -26,7 +26,8 @@ export class InvoiceModule {
       imports: [
         CacheModule.forRoot('svc'),
         TcpClientModule.forServices([ServiceName.PDF_GENERATOR, ServiceName.MEDIA]),
-        ClientsModule.register([createKafkaClientConfig('invoice')]),
+        // Events go through the transactional outbox; its relay is the only thing that talks to Kafka.
+        OutboxModule,
       ],
       controllers: [InvoiceHttpController, InvoiceRpcController],
       providers: [
