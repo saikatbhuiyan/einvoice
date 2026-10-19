@@ -9,3 +9,8 @@ contract. They are not documentation; two test suites assert against them:
   `events.Decode` and asserts the typed fields.
 
 Changing the event shape means changing a fixture, which fails whichever side wasn't updated.
+
+`invoice.pdf.generated.legacy.json` is **consumer-only**: nothing produces `invoice.pdf.generated`
+any more (it was replaced by `invoice.sent`, same payload), but messages of that type can still be
+on the topic within its retention window, so the Go consumer must keep decoding it. Delete the
+fixture together with the Go alias once retention has passed.

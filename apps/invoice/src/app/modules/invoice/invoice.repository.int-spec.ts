@@ -140,6 +140,77 @@ describe('InvoiceRepository against real MongoDB', () => {
     });
   });
 
+  describe('lifecycle (status transitions and immutability)', () => {
+    const issued = async () => {
+      const created = await repository.create(payload());
+      await repository.transitionStatus(created.id, ['draft'], 'issued');
+      return created.id;
+    };
+
+    it('creates every invoice as a draft, even when the payload claims otherwise', async () => {
+      const created = await repository.create({ ...payload(), status: 'paid' } as CreateInvoiceRequest);
+
+      expect(created.status).toBe('draft');
+    });
+
+    it('transitions only from an allowed status, bumping the version', async () => {
+      const created = await repository.create(payload());
+
+      const result = await repository.transitionStatus(created.id, ['draft'], 'issued');
+
+      expect(result).toMatchObject({ outcome: 'transitioned', from: 'draft' });
+      const stored = await model.findById(created.id);
+      expect(stored).toMatchObject({ status: 'issued', version: created.version + 1 });
+    });
+
+    it('rejects a transition from a status not in `from`, leaving the invoice untouched', async () => {
+      const id = await issued();
+      await repository.transitionStatus(id, ['issued', 'overdue'], 'cancelled');
+
+      const result = await repository.transitionStatus(id, ['issued', 'overdue'], 'paid');
+
+      expect(result).toMatchObject({ outcome: 'rejected', invoice: { status: 'cancelled' } });
+      expect((await model.findById(id))?.status).toBe('cancelled');
+    });
+
+    // e.g. a Stripe webhook racing a user's cancel: exactly one of the two may land.
+    it('lets exactly one of two concurrent conflicting transitions win', async () => {
+      const id = await issued();
+
+      const [paid, cancelled] = await Promise.all([
+        repository.transitionStatus(id, ['issued', 'overdue'], 'paid'),
+        repository.transitionStatus(id, ['issued', 'overdue'], 'cancelled'),
+      ]);
+
+      expect([paid.outcome, cancelled.outcome].sort()).toEqual(['rejected', 'transitioned']);
+      const final = (await model.findById(id))?.status;
+      expect(final).toBe(paid.outcome === 'transitioned' ? 'paid' : 'cancelled');
+    });
+
+    it('refuses to edit or delete an issued invoice with 409, leaving it unchanged', async () => {
+      const id = await issued();
+
+      await expect(repository.update(id, { notes: 'sneaky edit' })).rejects.toThrow(
+        /Invoice is issued; only draft invoices can be edited/,
+      );
+      await expect(repository.remove(id)).rejects.toThrow(/Invoice is issued; only draft invoices can be deleted/);
+      expect(await model.findById(id)).toMatchObject({ notes: undefined, deletedAt: null });
+    });
+
+    // The draft-edit read happens before the save; issuing in between must make that save fail,
+    // which only works because transitionStatus bumps the version the save is conditioned on.
+    it('fails an in-flight draft edit whose invoice was issued between its read and its save', async () => {
+      const created = await repository.create(payload());
+      const staleDraft = await model.findById(created.id);
+      if (!staleDraft) throw new Error('seeded invoice not found');
+      await repository.transitionStatus(created.id, ['draft'], 'issued');
+
+      staleDraft.set({ notes: 'written over an issued invoice' });
+      await expect(staleDraft.save()).rejects.toBeInstanceOf(mongoose.Error.VersionError);
+      expect((await model.findById(created.id))?.notes).toBeUndefined();
+    });
+  });
+
   describe('listing', () => {
     it('starts cursor pagination with pagination=cursor and walks newest first without gaps or duplicates', async () => {
       const created: string[] = [];

@@ -1,4 +1,13 @@
-import { BadRequestException, Inject, Injectable, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  HttpException,
+  HttpStatus,
+  Inject,
+  Injectable,
+  Logger,
+} from '@nestjs/common';
+import type { InvoiceStatus } from '@libs/shared/types';
 import { Saga, SagaExecutionError } from '@libs/saga';
 import { PAYMENT_PROVIDER, PaymentProvider } from './payment-provider.interface';
 import { IPaymentRepository, PAYMENT_REPOSITORY } from './payment.repository.interface';
@@ -16,7 +25,25 @@ interface CreateCheckoutSagaContext {
   currency: string;
   providerSessionId?: string;
   checkoutUrl?: string;
+  expiresAt?: Date;
 }
+
+/** Only an invoice that has been issued and not yet settled or cancelled can take payment. */
+const PAYABLE_INVOICE_STATUSES: readonly InvoiceStatus[] = ['issued', 'overdue'];
+
+/**
+ * An open session is handed out again only if the customer has at least this long to finish
+ * paying through it; otherwise it is retired and a fresh one created.
+ */
+const MIN_REUSABLE_SESSION_LIFETIME_MS = 30 * 60 * 1000;
+
+const PG_UNIQUE_VIOLATION = '23505';
+
+/**
+ * invoice answered markPaid with a deterministic refusal (the invoice can't become paid, or no
+ * longer exists): retrying the webhook would get the same answer forever.
+ */
+const NON_RETRYABLE_MARK_PAID_STATUSES = new Set<number>([HttpStatus.NOT_FOUND, HttpStatus.CONFLICT]);
 
 interface MarkPaidSagaContext {
   payment: PaymentEntity;
@@ -43,6 +70,19 @@ export class PaymentService {
   async createCheckoutSession(invoiceId: string): Promise<CreateCheckoutSessionResponse> {
     const invoice = await this.invoiceClient.findOneInvoice(invoiceId);
 
+    if (!PAYABLE_INVOICE_STATUSES.includes(invoice.status)) {
+      throw new ConflictException(`Cannot take payment for an invoice that is ${invoice.status}.`);
+    }
+
+    // Issued invoices are immutable, so an open session's amount can never be out of date.
+    const open = await this.paymentRepository.findOpenByInvoiceId(invoiceId);
+    if (open) {
+      if (this.isReusable(open)) {
+        return { checkoutUrl: open.checkoutUrl as string };
+      }
+      await this.retire(open);
+    }
+
     const context: CreateCheckoutSagaContext = {
       invoiceId,
       invoiceNumber: invoice.invoiceNumber,
@@ -63,6 +103,7 @@ export class PaymentService {
           });
           ctx.providerSessionId = session.providerSessionId;
           ctx.checkoutUrl = session.checkoutUrl;
+          ctx.expiresAt = session.expiresAt;
         },
         compensate: async (ctx) => {
           await this.paymentProvider.expireCheckoutSession(ctx.providerSessionId as string);
@@ -79,11 +120,24 @@ export class PaymentService {
             amount: ctx.amount,
             currency: ctx.currency,
             checkoutUrl: ctx.checkoutUrl as string,
+            expiresAt: ctx.expiresAt as Date,
           });
         },
       });
 
-    await saga.execute(context);
+    try {
+      await saga.execute(context);
+    } catch (error) {
+      if (!(error instanceof SagaExecutionError)) throw error;
+
+      // A concurrent request for the same invoice persisted its open session first (partial unique
+      // index). Our session was already expired by the saga's compensation; hand out the winner's.
+      if (this.isUniqueViolation(error.cause)) {
+        const winner = await this.paymentRepository.findOpenByInvoiceId(invoiceId);
+        if (winner?.checkoutUrl) return { checkoutUrl: winner.checkoutUrl };
+      }
+      throw error.cause;
+    }
 
     return { checkoutUrl: context.checkoutUrl as string };
   }
@@ -107,6 +161,16 @@ export class PaymentService {
     }
 
     if (event.type === 'payment_succeeded') {
+      if (await this.paymentRepository.hasOtherPaidPayment(payment.invoiceId, payment.id)) {
+        // The invoice was already paid through another session (e.g. one retired as nearly expired
+        // while the customer was still on it). invoice's markPaid is idempotent, so without this
+        // check the second charge would look like a normal success; it needs a refund instead.
+        await this.paymentRepository.updateStatus(payment.id, 'reconciliation_required');
+        this.logger.error(
+          `Payment "${payment.id}" for invoice "${payment.invoiceId}" succeeded but the invoice was already paid through another payment -- flagged for reconciliation (refund).`,
+        );
+        return;
+      }
       await this.markPaid(payment);
       return;
     }
@@ -153,14 +217,42 @@ export class PaymentService {
       await saga.execute(context);
     } catch (error) {
       if (error instanceof SagaExecutionError) {
-        // Already logged + flagged for reconciliation above; this is a webhook handler, not an
-        // HTTP request -- there's no caller waiting on a response to shape, but the failure still
-        // needs to propagate so bff's relay surfaces a non-2xx and Stripe retries the webhook.
+        // Already logged + flagged for reconciliation above. A deterministic refusal from invoice
+        // (e.g. the invoice was cancelled after this session was created) won't change on retry,
+        // so the webhook is acknowledged; anything else propagates so bff's relay surfaces a
+        // non-2xx and Stripe retries.
+        if (this.isNonRetryableMarkPaidFailure(error.cause)) return;
         throw error.cause;
       }
       throw error;
     }
 
     this.logger.log(`Invoice "${payment.invoiceId}" marked paid via Stripe session "${payment.providerSessionId}".`);
+  }
+
+  private isReusable(payment: PaymentEntity): boolean {
+    return (
+      !!payment.checkoutUrl &&
+      !!payment.expiresAt &&
+      payment.expiresAt.getTime() - Date.now() > MIN_REUSABLE_SESSION_LIFETIME_MS
+    );
+  }
+
+  /**
+   * Makes sure a nearly-expired (or expiry-unknown) open session can't be paid through any more
+   * before replacing it. Expiring at Stripe first matters: marking the row 'failed' alone would leave
+   * a payable session behind that this system no longer treats as open.
+   */
+  private async retire(payment: PaymentEntity): Promise<void> {
+    await this.paymentProvider.expireCheckoutSession(payment.providerSessionId);
+    await this.paymentRepository.updateStatus(payment.id, 'failed');
+  }
+
+  private isUniqueViolation(error: unknown): boolean {
+    return (error as { driverError?: { code?: string } } | null)?.driverError?.code === PG_UNIQUE_VIOLATION;
+  }
+
+  private isNonRetryableMarkPaidFailure(error: unknown): boolean {
+    return error instanceof HttpException && NON_RETRYABLE_MARK_PAID_STATUSES.has(error.getStatus());
   }
 }

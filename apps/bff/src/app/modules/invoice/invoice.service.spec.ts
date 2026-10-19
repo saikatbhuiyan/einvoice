@@ -5,7 +5,17 @@ import { InvoiceClientService } from './invoice-client.service';
 type MockCache = { get: jest.Mock; set: jest.Mock; del: jest.Mock };
 type MockRedis = { get: jest.Mock; incr: jest.Mock };
 type MockClient = jest.Mocked<
-  Pick<InvoiceClientService, 'findOneInvoice' | 'findAllInvoices' | 'createInvoice' | 'updateInvoice' | 'removeInvoice'>
+  Pick<
+    InvoiceClientService,
+    | 'findOneInvoice'
+    | 'findAllInvoices'
+    | 'createInvoice'
+    | 'updateInvoice'
+    | 'removeInvoice'
+    | 'issueInvoice'
+    | 'cancelInvoice'
+    | 'sendInvoice'
+  >
 >;
 type MockCbFactory = { get: jest.Mock };
 
@@ -23,6 +33,9 @@ describe('BFF InvoiceService', () => {
       createInvoice: jest.fn(),
       updateInvoice: jest.fn(),
       removeInvoice: jest.fn(),
+      issueInvoice: jest.fn(),
+      cancelInvoice: jest.fn(),
+      sendInvoice: jest.fn(),
     };
     cacheManager = { get: jest.fn(), set: jest.fn(), del: jest.fn() };
     redis = { get: jest.fn().mockResolvedValue(null), incr: jest.fn().mockResolvedValue(1) };
@@ -95,6 +108,30 @@ describe('BFF InvoiceService', () => {
 
       expect(cacheManager.del).toHaveBeenCalled();
       expect(redis.incr).toHaveBeenCalled();
+    });
+
+    // A status change moves the invoice between ?status= list filters, so lists must refresh too.
+    it.each([
+      ['issue', 'issueInvoice'],
+      ['cancel', 'cancelInvoice'],
+      ['send', 'sendInvoice'],
+    ] as const)('%s deletes the entity cache entry and bumps the list version', async (method, clientMethod) => {
+      client[clientMethod].mockResolvedValue({ id: 'invoice-1' } as never);
+
+      await service[method]('invoice-1');
+
+      expect(client[clientMethod]).toHaveBeenCalledWith('invoice-1');
+      expect(cacheManager.del).toHaveBeenCalledWith('bff:invoice:one:invoice-1');
+      expect(redis.incr).toHaveBeenCalled();
+    });
+
+    it('does not invalidate anything when the lifecycle call fails', async () => {
+      client.cancelInvoice.mockRejectedValue(new Error('409'));
+
+      await expect(service.cancel('invoice-1')).rejects.toThrow('409');
+
+      expect(cacheManager.del).not.toHaveBeenCalled();
+      expect(redis.incr).not.toHaveBeenCalled();
     });
 
     it('remove deletes the entity cache entry and bumps the list version', async () => {

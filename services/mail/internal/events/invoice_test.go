@@ -17,7 +17,7 @@ func TestDecodeRejectsMalformedMessages(t *testing.T) {
 	cases := map[string]string{
 		"not json":           `{"data":`,
 		"data is not object": `{"data":"invoice.demo","meta":{}}`,
-		"wrong field type":   `{"data":{"type":"invoice.pdf.generated","total":"129.90"},"meta":{}}`,
+		"wrong field type":   `{"data":{"type":"invoice.sent","total":"129.90"},"meta":{}}`,
 		"type is not string": `{"data":{"type":42},"meta":{}}`,
 	}
 

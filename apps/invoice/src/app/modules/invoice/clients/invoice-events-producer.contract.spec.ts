@@ -48,23 +48,23 @@ describe('invoice.events producer contract', () => {
     expect(emitted()).toEqual({ topic: INVOICE_EVENTS_TOPIC, key: expected['data'].invoiceId, value: expected });
   });
 
-  it('emits invoice.pdf.generated exactly as the contract fixture', () => {
-    const expected = fixture('invoice.pdf.generated.json');
+  it('emits invoice.sent exactly as the contract fixture', () => {
+    const expected = fixture('invoice.sent.json');
     const { type, ...payload } = expected['data'];
 
-    runWithCorrelationContext(IDENTITY, () => producer.emitPdfGenerated(payload));
+    runWithCorrelationContext(IDENTITY, () => producer.emitSent(payload));
 
-    expect(type).toBe('invoice.pdf.generated');
+    expect(type).toBe('invoice.sent');
     expect(emitted()).toEqual({ topic: INVOICE_EVENTS_TOPIC, key: payload.invoiceId, value: expected });
   });
 
   it('omits dueDate from the wire entirely when the invoice has none', () => {
-    const expected = fixture('invoice.pdf.generated.no-due-date.json');
+    const expected = fixture('invoice.sent.no-due-date.json');
     const { type, ...payload } = expected['data'];
 
-    runWithCorrelationContext(IDENTITY, () => producer.emitPdfGenerated({ ...payload, dueDate: undefined }));
+    runWithCorrelationContext(IDENTITY, () => producer.emitSent({ ...payload, dueDate: undefined }));
 
-    expect(type).toBe('invoice.pdf.generated');
+    expect(type).toBe('invoice.sent');
     expect(emitted().value).toEqual(expected);
     expect('dueDate' in emitted().value.data).toBe(false);
   });

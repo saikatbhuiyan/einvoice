@@ -3,14 +3,17 @@ import { Error as MongooseError, Types, isValidObjectId } from 'mongoose';
 import { DEFAULT_LIMIT, DEFAULT_PAGE } from '@libs/constants';
 import { InvoiceDocument, InvoiceModel } from '@libs/schemas';
 import { CreateInvoiceRequest, FindAllInvoicesRequest, UpdateInvoiceRequest } from '@libs/interfaces/gateway';
-import { buildPaginationMeta } from '@libs/shared/types';
+import { EDITABLE_INVOICE_STATUSES, buildPaginationMeta, type InvoiceStatus } from '@libs/shared/types';
 import { escapeRegExp } from '@libs/shared/utils';
 import {
   IInvoiceRepository,
   INVOICE_READ_MODEL,
   INVOICE_WRITE_MODEL,
   PaginatedResult,
+  StatusTransitionResult,
 } from './invoice.repository.interface';
+
+const CONTENT_FIELDS = ['invoiceNumber', 'client', 'items', 'currency', 'notes'] as const;
 
 const CONCURRENT_MODIFICATION_MESSAGE = 'Invoice was modified by another user. Please refresh and retry.';
 
@@ -35,7 +38,7 @@ export class InvoiceRepository implements IInvoiceRepository {
     }
 
     try {
-      return await this.writeModel.create(this.toPersistencePayload(data));
+      return await this.writeModel.create({ ...this.toContentPayload(data), idempotencyKey });
     } catch (error) {
       // Concurrent retries with the same key can all pass the lookup above; a unique index lets
       // exactly one insert win. A retry carries the identical payload, so Mongo may report the
@@ -67,34 +70,23 @@ export class InvoiceRepository implements IInvoiceRepository {
 
   async findOne(id: string): Promise<InvoiceDocument | null> {
     if (!isValidObjectId(id)) return null;
-    return this.readModel.findOne({ _id: id, deletedAt: null }).exec();
+    return this.readModel.findOne(this.activeFilter(id)).exec();
   }
 
   async update(id: string, data: UpdateInvoiceRequest, version?: number): Promise<InvoiceDocument | null> {
     if (!isValidObjectId(id)) return null;
 
-    const filter: Record<string, unknown> = { _id: id, deletedAt: null };
-    if (version !== undefined) {
-      filter.version = version;
-    }
-
-    const invoice = await this.writeModel.findOne(filter as Record<string, unknown>).exec();
+    const invoice = await this.writeModel.findOne(this.editableFilter(id, version)).exec();
     if (!invoice) {
-      if (version !== undefined) {
-        const exists = await this.writeModel.exists({ _id: id, deletedAt: null });
-        if (exists) {
-          throw new ConflictException(CONCURRENT_MODIFICATION_MESSAGE);
-        }
-      }
-      return null;
+      return this.explainEditMiss(id, version, 'edited');
     }
 
-    invoice.set(this.toPersistencePayload(data));
+    invoice.set(this.toContentPayload(data));
     try {
       await invoice.save();
     } catch (error) {
-      // Another writer saved between our versioned read and this save; optimisticConcurrency makes
-      // Mongoose reject it. Same outcome as a stale If-Match, so the same 409.
+      // Another writer saved (or changed the status) between our read and this save;
+      // optimisticConcurrency makes Mongoose reject it. Same outcome as a stale If-Match, so the same 409.
       if (error instanceof MongooseError.VersionError) {
         throw new ConflictException(CONCURRENT_MODIFICATION_MESSAGE);
       }
@@ -106,37 +98,87 @@ export class InvoiceRepository implements IInvoiceRepository {
   async remove(id: string, version?: number): Promise<InvoiceDocument | null> {
     if (!isValidObjectId(id)) return null;
 
-    const filter: Record<string, unknown> = { _id: id, deletedAt: null };
-    if (version !== undefined) {
-      filter.version = version;
-    }
-
     const result = await this.writeModel
-      .findOneAndUpdate(filter as Record<string, unknown>, { deletedAt: new Date() }, { new: true })
+      .findOneAndUpdate(this.editableFilter(id, version), { deletedAt: new Date() }, { returnDocument: 'after' })
       .exec();
 
-    if (!result && version !== undefined) {
-      const exists = await this.writeModel.exists({ _id: id, deletedAt: null });
-      if (exists) {
-        throw new ConflictException(CONCURRENT_MODIFICATION_MESSAGE);
-      }
-    }
-
-    return result;
+    return result ?? this.explainEditMiss(id, version, 'deleted');
   }
 
   async setPdfMetadata(id: string, pdfUrl: string, pdfGeneratedAt: Date): Promise<InvoiceDocument | null> {
     if (!isValidObjectId(id)) return null;
 
     return this.writeModel
-      .findOneAndUpdate({ _id: id, deletedAt: null }, { pdfUrl, pdfGeneratedAt }, { new: true })
+      .findOneAndUpdate(this.activeFilter(id), { pdfUrl, pdfGeneratedAt }, { returnDocument: 'after' })
       .exec();
   }
 
-  async markPaid(id: string): Promise<InvoiceDocument | null> {
-    if (!isValidObjectId(id)) return null;
+  async transitionStatus(
+    id: string,
+    from: readonly InvoiceStatus[],
+    to: InvoiceStatus,
+  ): Promise<StatusTransitionResult> {
+    if (!isValidObjectId(id)) return { outcome: 'not_found' };
 
-    return this.writeModel.findOneAndUpdate({ _id: id, deletedAt: null }, { status: 'paid' }, { new: true }).exec();
+    // returnDocument 'before' is the only way to learn which of `from` the invoice was actually in
+    // (for the audit diff) from the same atomic operation that changed it.
+    const before = await this.writeModel
+      .findOneAndUpdate(
+        { ...this.activeFilter(id), status: { $in: from } },
+        { $set: { status: to }, $inc: { version: 1 } },
+        { returnDocument: 'before' },
+      )
+      .exec();
+
+    if (!before) {
+      const current = await this.writeModel.findOne(this.activeFilter(id)).exec();
+      return current ? { outcome: 'rejected', invoice: current } : { outcome: 'not_found' };
+    }
+
+    const invoice = await this.writeModel.findOne(this.activeFilter(id)).exec();
+    // Only a concurrent soft-delete could remove it in between, and only drafts can be deleted —
+    // a transitioned invoice is never a draft. Treat it as gone rather than assert.
+    if (!invoice) return { outcome: 'not_found' };
+
+    return { outcome: 'transitioned', invoice, from: before.status };
+  }
+
+  /**
+   * Base filter for every single-invoice query. Tenancy (organization scoping) is added here, once,
+   * rather than at each call site.
+   */
+  private activeFilter(id: string): Record<string, unknown> {
+    return { _id: id, deletedAt: null };
+  }
+
+  private editableFilter(id: string, version?: number): Record<string, unknown> {
+    return {
+      ...this.activeFilter(id),
+      status: { $in: EDITABLE_INVOICE_STATUSES },
+      ...(version !== undefined && { version }),
+    };
+  }
+
+  /**
+   * The editable filter matched nothing: work out which of its conditions failed so the caller
+   * gets the right answer — 404 (gone), 409 stale version, or 409 wrong status.
+   */
+  private async explainEditMiss(id: string, version: number | undefined, verb: 'edited' | 'deleted'): Promise<null> {
+    const current = await this.writeModel.findOne(this.activeFilter(id)).select({ status: 1, version: 1 }).exec();
+    if (!current) return null;
+
+    if (version !== undefined && current.version !== version) {
+      throw new ConflictException(CONCURRENT_MODIFICATION_MESSAGE);
+    }
+
+    if (!EDITABLE_INVOICE_STATUSES.includes(current.status)) {
+      throw new ConflictException(
+        `Invoice is ${current.status}; only draft invoices can be ${verb}. Issued invoices are immutable.`,
+      );
+    }
+
+    // Matched every condition on re-read, so it changed between the two queries.
+    throw new ConflictException(CONCURRENT_MODIFICATION_MESSAGE);
   }
 
   private findByIdempotencyKey(idempotencyKey: string): Promise<InvoiceDocument | null> {
@@ -231,11 +273,23 @@ export class InvoiceRepository implements IInvoiceRepository {
     return filter;
   }
 
-  private toPersistencePayload(payload: Partial<CreateInvoiceRequest | UpdateInvoiceRequest>) {
-    const result: Record<string, unknown> = { ...payload };
+  /**
+   * Allow-lists the user-editable content fields. RPC payloads reach this service without DTO
+   * validation (a `RpcEnvelope<Dto> | Dto` parameter reflects as Object, so the ValidationPipe
+   * skips it), so this is the boundary that keeps `status`, `deletedAt`, `pdfUrl`, `version` etc.
+   * out of a create/update — status only ever changes through transitionStatus.
+   */
+  private toContentPayload(payload: Partial<CreateInvoiceRequest | UpdateInvoiceRequest>): Record<string, unknown> {
+    const result: Record<string, unknown> = {};
 
-    // Only touch these keys when actually provided: unconditionally assigning them (even to
-    // `undefined`) would make a partial update's `.set()` call clear existing values on the document.
+    for (const field of CONTENT_FIELDS) {
+      // Only touch keys actually provided: assigning `undefined` would make a partial update's
+      // `.set()` call clear existing values on the document.
+      if (payload[field] !== undefined) {
+        result[field] = payload[field];
+      }
+    }
+
     if (payload.issueDate) {
       result.issueDate = new Date(payload.issueDate);
     }

@@ -16,6 +16,12 @@ const decimalTransformer: ValueTransformer = {
  */
 export type PaymentStatus = 'pending' | 'paid' | 'failed' | 'reconciliation_required';
 
+/**
+ * At most one open (pending) checkout session per invoice: PaymentService reuses it rather than
+ * creating another, and this index is what makes that hold under concurrent requests -- two
+ * simultaneous "pay" clicks would otherwise both find nothing open and create two payable sessions.
+ */
+@Index('UQ_payments_open_session_per_invoice', ['invoiceId'], { unique: true, where: `"status" = 'pending'` })
 @Entity({ name: 'payments' })
 export class PaymentEntity {
   @PrimaryGeneratedColumn('uuid')
@@ -43,6 +49,10 @@ export class PaymentEntity {
 
   @Column({ type: 'varchar', length: 2048, nullable: true })
   checkoutUrl?: string | null;
+
+  /** When the provider session stops accepting payment. Null only for rows created before it was recorded. */
+  @Column({ type: 'timestamptz', nullable: true })
+  expiresAt?: Date | null;
 
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt!: Date;

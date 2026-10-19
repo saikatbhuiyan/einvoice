@@ -44,14 +44,14 @@ func (h *InvoiceHandler) Handle(ctx context.Context, _ []byte, value []byte) err
 	case events.DemoEvent:
 		slog.Info("received demo event", "invoiceId", e.InvoiceID, "message", e.Message, "correlationId", meta.CorrelationID)
 		return nil
-	case events.PdfGeneratedEvent:
-		return h.handlePdfGenerated(ctx, e, meta)
+	case events.SentEvent:
+		return h.handleSent(ctx, e, meta)
 	default:
 		return nil
 	}
 }
 
-func (h *InvoiceHandler) handlePdfGenerated(ctx context.Context, e events.PdfGeneratedEvent, meta events.Meta) error {
+func (h *InvoiceHandler) handleSent(ctx context.Context, e events.SentEvent, meta events.Meta) error {
 	slog.Info("sending invoice email", "invoiceId", e.InvoiceID, "invoiceNumber", e.InvoiceNumber, "correlationId", meta.CorrelationID)
 
 	pdfBytes, err := h.fetchPDF(ctx, e.PdfURL)

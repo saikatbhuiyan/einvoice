@@ -1,6 +1,6 @@
 {
   "data": {
-    "type": "invoice.pdf.generated",
+    "type": "invoice.sent",
     "invoiceId": "6700000000000000000000a2",
     "invoiceNumber": "INV-2026-002",
     "clientName": "Globex",

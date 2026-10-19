@@ -1,4 +1,16 @@
-import { Body, Controller, Delete, Get, Headers, Param, Patch, Post, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Headers,
+  HttpCode,
+  HttpStatus,
+  Param,
+  Patch,
+  Post,
+  Query,
+} from '@nestjs/common';
 import { CreateInvoiceDto, FindAllInvoicesDto, UpdateInvoiceDto } from '@libs/interfaces/gateway';
 import { InvoiceService } from './invoice.service';
 
@@ -36,5 +48,23 @@ export class InvoiceHttpController {
   @Post(':id/pdf')
   generatePdf(@Param('id') id: string) {
     return this.invoiceService.generatePdf(id);
+  }
+
+  @Post(':id/issue')
+  @HttpCode(HttpStatus.OK)
+  issue(@Param('id') id: string) {
+    return this.invoiceService.issue(id);
+  }
+
+  @Post(':id/cancel')
+  @HttpCode(HttpStatus.OK)
+  cancel(@Param('id') id: string) {
+    return this.invoiceService.cancel(id);
+  }
+
+  @Post(':id/send')
+  @HttpCode(HttpStatus.OK)
+  send(@Param('id') id: string) {
+    return this.invoiceService.send(id);
   }
 }

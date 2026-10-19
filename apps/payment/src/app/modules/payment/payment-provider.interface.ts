@@ -10,6 +10,8 @@ export interface CheckoutSessionParams {
 export interface CheckoutSession {
   providerSessionId: string;
   checkoutUrl: string;
+  /** After this the session can no longer be paid through; PaymentService reuses it until shortly before. */
+  expiresAt: Date;
 }
 
 export type WebhookEventType = 'payment_succeeded' | 'payment_failed' | 'ignored';
@@ -32,7 +34,9 @@ export interface PaymentProvider {
   /**
    * Compensating action for createCheckoutSession, used by PaymentService's saga when the
    * follow-up local persist fails -- a Checkout Session Stripe thinks is still open but this
-   * system has no record of is exactly the orphaned-session gap this exists to close.
+   * system has no record of is exactly the orphaned-session gap this exists to close. Also retires
+   * an open session that is too close to expiry to hand out again. Expiring a session that is
+   * already complete or expired is a no-op.
    */
   expireCheckoutSession(providerSessionId: string): Promise<void>;
 
