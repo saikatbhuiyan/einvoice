@@ -55,18 +55,10 @@ func TestContractDemoEvent(t *testing.T) {
 	wantMeta(t, meta)
 }
 
-func TestContractPdfGeneratedEvent(t *testing.T) {
-	event, meta, ok, err := Decode(readFixture(t, "invoice.pdf.generated.json"))
-	if err != nil || !ok {
-		t.Fatalf("Decode: ok=%v err=%v", ok, err)
-	}
-
-	got, isPdf := event.(PdfGeneratedEvent)
-	if !isPdf {
-		t.Fatalf("event type = %T, want PdfGeneratedEvent", event)
-	}
-	want := PdfGeneratedEvent{
-		Type:          TypePdfGenerated,
+func wantSentEvent(t *testing.T, got SentEvent, wantType string) {
+	t.Helper()
+	want := SentEvent{
+		Type:          wantType,
 		InvoiceID:     "6700000000000000000000a1",
 		InvoiceNumber: "INV-2026-001",
 		ClientName:    "Acme Corp",
@@ -81,18 +73,46 @@ func TestContractPdfGeneratedEvent(t *testing.T) {
 	if got != want {
 		t.Fatalf("event =\n %+v\nwant\n %+v", got, want)
 	}
-	wantMeta(t, meta)
 }
 
-// The producer drops dueDate entirely (JSON.stringify omits undefined); it must decode as empty.
-func TestContractPdfGeneratedWithoutDueDate(t *testing.T) {
-	event, _, ok, err := Decode(readFixture(t, "invoice.pdf.generated.no-due-date.json"))
+func TestContractSentEvent(t *testing.T) {
+	event, meta, ok, err := Decode(readFixture(t, "invoice.sent.json"))
 	if err != nil || !ok {
 		t.Fatalf("Decode: ok=%v err=%v", ok, err)
 	}
 
-	got := event.(PdfGeneratedEvent)
+	got, isSent := event.(SentEvent)
+	if !isSent {
+		t.Fatalf("event type = %T, want SentEvent", event)
+	}
+	wantSentEvent(t, got, TypeSent)
+	wantMeta(t, meta)
+}
+
+// The producer drops dueDate entirely (JSON.stringify omits undefined); it must decode as empty.
+func TestContractSentWithoutDueDate(t *testing.T) {
+	event, _, ok, err := Decode(readFixture(t, "invoice.sent.no-due-date.json"))
+	if err != nil || !ok {
+		t.Fatalf("Decode: ok=%v err=%v", ok, err)
+	}
+
+	got := event.(SentEvent)
 	if got.DueDate != "" || got.Total != 10 || got.Currency != "USD" {
 		t.Fatalf("event = %+v", got)
 	}
+}
+
+// Messages produced before the rename can still be on the topic: they must still be emailed.
+func TestContractLegacyPdfGeneratedDecodesAsSent(t *testing.T) {
+	event, meta, ok, err := Decode(readFixture(t, "invoice.pdf.generated.legacy.json"))
+	if err != nil || !ok {
+		t.Fatalf("Decode: ok=%v err=%v", ok, err)
+	}
+
+	got, isSent := event.(SentEvent)
+	if !isSent {
+		t.Fatalf("event type = %T, want SentEvent", event)
+	}
+	wantSentEvent(t, got, TypePdfGeneratedLegacy)
+	wantMeta(t, meta)
 }

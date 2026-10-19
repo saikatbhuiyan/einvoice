@@ -41,14 +41,15 @@ export class StripePaymentProvider implements PaymentProvider {
       throw new Error(`Stripe did not return a checkout URL for session "${session.id}".`);
     }
 
-    return { providerSessionId: session.id, checkoutUrl: session.url };
+    // expires_at is always set (Stripe's default is 24h after creation), in Unix seconds.
+    return { providerSessionId: session.id, checkoutUrl: session.url, expiresAt: new Date(session.expires_at * 1000) };
   }
 
   async expireCheckoutSession(providerSessionId: string): Promise<void> {
-    // Expiring an already-completed/already-expired session is a 400 from Stripe, not a no-op --
-    // this is only ever called as compensation right after creating the session (before anyone
-    // could plausibly have paid through it yet), but swallow that specific case defensively
-    // rather than let a compensation step itself throw over a session that's already gone.
+    // Expiring an already-completed/already-expired session is a 400 from Stripe, not a no-op.
+    // Both callers (saga compensation, retiring a nearly-expired session) want "this session can't
+    // be paid through any more", which an already-completed or -expired session already satisfies --
+    // a completed one's webhook still marks the invoice paid as normal.
     try {
       await this.stripe.checkout.sessions.expire(providerSessionId);
     } catch (error) {

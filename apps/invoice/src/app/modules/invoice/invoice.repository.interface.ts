@@ -1,5 +1,6 @@
 import { InvoiceDocument } from '@libs/schemas';
 import { CreateInvoiceRequest, FindAllInvoicesRequest, UpdateInvoiceRequest } from '@libs/interfaces/gateway';
+import type { InvoiceStatus } from '@libs/shared/types';
 
 export const INVOICE_REPOSITORY = Symbol('INVOICE_REPOSITORY');
 
@@ -37,8 +38,10 @@ export interface IInvoiceRepository {
 
   findOne(id: string): Promise<InvoiceDocument | null>;
 
+  /** Only a draft can be edited: 409 for any other status, decided atomically with the write. */
   update(id: string, data: UpdateInvoiceRequest, version?: number): Promise<InvoiceDocument | null>;
 
+  /** Only a draft can be deleted: 409 for any other status, decided atomically with the write. */
   remove(id: string, version?: number): Promise<InvoiceDocument | null>;
 
   /**
@@ -48,6 +51,17 @@ export interface IInvoiceRepository {
    */
   setPdfMetadata(id: string, pdfUrl: string, pdfGeneratedAt: Date): Promise<InvoiceDocument | null>;
 
-  /** Same rationale as setPdfMetadata: a webhook-driven status flip isn't a user edit racing on version. */
-  markPaid(id: string): Promise<InvoiceDocument | null>;
+  /**
+   * Atomically moves the invoice to `to`, only if its current status is one of `from` — the
+   * single place any status change is written, so a concurrent change can never be overwritten.
+   * Bumps `version` (unlike setPdfMetadata): a status change is a real change, and an in-flight
+   * draft edit must fail its optimistic-concurrency check if the invoice was issued underneath it.
+   */
+  transitionStatus(id: string, from: readonly InvoiceStatus[], to: InvoiceStatus): Promise<StatusTransitionResult>;
 }
+
+export type StatusTransitionResult =
+  | { outcome: 'transitioned'; invoice: InvoiceDocument; from: InvoiceStatus }
+  | { outcome: 'not_found' }
+  /** The invoice exists but its status isn't one of `from`; `invoice` is its current state. */
+  | { outcome: 'rejected'; invoice: InvoiceDocument };

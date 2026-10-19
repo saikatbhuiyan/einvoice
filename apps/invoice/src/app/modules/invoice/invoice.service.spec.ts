@@ -8,7 +8,7 @@ type MockRedis = { get: jest.Mock; incr: jest.Mock };
 type MockAuditLog = { record: jest.Mock };
 type MockPdfGeneratorClient = { generateInvoicePdf: jest.Mock };
 type MockMediaClient = { uploadFile: jest.Mock };
-type MockEventsProducer = { emitDemo: jest.Mock; emitPdfGenerated: jest.Mock };
+type MockEventsProducer = { emitDemo: jest.Mock; emitSent: jest.Mock };
 
 const buildInvoiceDoc = (overrides: Record<string, unknown> = {}) => {
   const base = {
@@ -16,6 +16,29 @@ const buildInvoiceDoc = (overrides: Record<string, unknown> = {}) => {
     toJSON: () => ({ id: overrides['id'] ?? 'invoice-1', invoiceNumber: 'INV-0001', ...overrides }),
   };
   return base as unknown as Awaited<ReturnType<IInvoiceRepository['create']>>;
+};
+
+const ID = '507f1f77bcf86cd799439011';
+
+// A document with everything PDF rendering and the invoice.sent event read.
+const buildFullInvoiceDoc = (status: string) => {
+  const fields = {
+    id: ID,
+    invoiceNumber: 'INV-0001',
+    status,
+    client: { name: 'Acme Corp', email: 'billing@acme.test', address: '1 Main St' },
+    items: [{ catalogId: 'sku-1', name: 'Widget', quantity: 1, unitPrice: 100, vatRate: 20, total: 120 }],
+    currency: 'EUR',
+    issueDate: new Date('2026-10-01T00:00:00.000Z'),
+    dueDate: undefined,
+    notes: undefined,
+    subtotal: 100,
+    vatTotal: 20,
+    total: 120,
+  };
+  return { ...fields, _id: { toString: () => ID }, toJSON: () => fields } as unknown as Awaited<
+    ReturnType<IInvoiceRepository['create']>
+  >;
 };
 
 describe('InvoiceService', () => {
@@ -36,14 +59,14 @@ describe('InvoiceService', () => {
       update: jest.fn(),
       remove: jest.fn(),
       setPdfMetadata: jest.fn(),
-      markPaid: jest.fn(),
+      transitionStatus: jest.fn(),
     };
     cacheManager = { get: jest.fn(), set: jest.fn(), del: jest.fn() };
     redis = { get: jest.fn().mockResolvedValue(null), incr: jest.fn().mockResolvedValue(1) };
     auditLog = { record: jest.fn().mockResolvedValue(undefined) };
     pdfGeneratorClient = { generateInvoicePdf: jest.fn() };
     mediaClient = { uploadFile: jest.fn() };
-    eventsProducer = { emitDemo: jest.fn(), emitPdfGenerated: jest.fn() };
+    eventsProducer = { emitDemo: jest.fn(), emitSent: jest.fn() };
 
     service = new InvoiceService(
       repository,
@@ -238,6 +261,161 @@ describe('InvoiceService', () => {
       repository.update.mockRejectedValue(new ConflictException('stale version'));
 
       await expect(service.update('507f1f77bcf86cd799439011', {}, 1)).rejects.toBeInstanceOf(ConflictException);
+    });
+  });
+
+  describe('update audit diff', () => {
+    it('records which fields changed, from and to, ignoring bookkeeping fields', async () => {
+      repository.findOne.mockResolvedValue(buildInvoiceDoc({ notes: 'old', version: 1 }));
+      repository.update.mockResolvedValue(buildInvoiceDoc({ notes: 'new', version: 2 }));
+
+      await service.update(ID, { notes: 'new' });
+
+      expect(auditLog.record).toHaveBeenCalledWith(
+        expect.objectContaining({ action: 'UPDATE', diff: { notes: { from: 'old', to: 'new' } } }),
+      );
+    });
+  });
+
+  describe('lifecycle transitions', () => {
+    it('issues a draft: moves it from every status that can reach issued, invalidates caches, audits the change', async () => {
+      const issued = buildFullInvoiceDoc('issued');
+      repository.transitionStatus.mockResolvedValue({ outcome: 'transitioned', invoice: issued, from: 'draft' });
+
+      const result = await service.issue(ID);
+
+      expect(repository.transitionStatus).toHaveBeenCalledWith(ID, ['draft'], 'issued');
+      expect(result).toEqual(issued.toJSON());
+      expect(cacheManager.del).toHaveBeenCalled();
+      expect(redis.incr).toHaveBeenCalled();
+      expect(auditLog.record).toHaveBeenCalledWith({
+        action: 'STATUS_CHANGE',
+        entityType: 'invoice',
+        entityId: ID,
+        diff: { status: { from: 'draft', to: 'issued' } },
+      });
+    });
+
+    it('cancels only from issued or overdue', async () => {
+      repository.transitionStatus.mockResolvedValue({
+        outcome: 'transitioned',
+        invoice: buildFullInvoiceDoc('cancelled'),
+        from: 'overdue',
+      });
+
+      await service.cancel(ID);
+
+      expect(repository.transitionStatus).toHaveBeenCalledWith(ID, ['issued', 'overdue'], 'cancelled');
+    });
+
+    it('refuses an illegal transition with a 409 naming the current status', async () => {
+      repository.transitionStatus.mockResolvedValue({ outcome: 'rejected', invoice: buildFullInvoiceDoc('cancelled') });
+
+      await expect(service.markPaid(ID)).rejects.toThrow(
+        new ConflictException('Cannot mark as paid an invoice that is cancelled.'),
+      );
+      expect(auditLog.record).not.toHaveBeenCalled();
+    });
+
+    // Stripe redelivers webhooks; a retried issue/cancel from a client must not fail either.
+    it('treats a transition to the status the invoice already has as an idempotent no-op', async () => {
+      const paid = buildFullInvoiceDoc('paid');
+      repository.transitionStatus.mockResolvedValue({ outcome: 'rejected', invoice: paid });
+
+      await expect(service.markPaid(ID)).resolves.toEqual(paid.toJSON());
+      expect(auditLog.record).not.toHaveBeenCalled();
+      expect(redis.incr).not.toHaveBeenCalled();
+    });
+
+    it('throws NotFoundException for a missing invoice', async () => {
+      repository.transitionStatus.mockResolvedValue({ outcome: 'not_found' });
+
+      await expect(service.cancel(ID)).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
+  describe('generatePdf and send', () => {
+    beforeEach(() => {
+      pdfGeneratorClient.generateInvoicePdf.mockResolvedValue({
+        base64: 'JVBERg==',
+        contentType: 'application/pdf',
+        fileName: 'invoice-INV-0001.pdf',
+      });
+      mediaClient.uploadFile.mockResolvedValue({ url: 'https://s3.test/invoice-INV-0001.pdf' });
+    });
+
+    it('generatePdf renders and stores the PDF but never emails the client', async () => {
+      repository.findOne.mockResolvedValue(buildFullInvoiceDoc('draft'));
+
+      const result = await service.generatePdf(ID);
+
+      expect(result).toEqual({ url: 'https://s3.test/invoice-INV-0001.pdf', fileName: 'invoice-INV-0001.pdf' });
+      expect(repository.setPdfMetadata).toHaveBeenCalledWith(
+        ID,
+        'https://s3.test/invoice-INV-0001.pdf',
+        expect.any(Date),
+      );
+      expect(eventsProducer.emitSent).not.toHaveBeenCalled();
+      expect(auditLog.record).toHaveBeenCalledWith(expect.objectContaining({ action: 'GENERATE_PDF' }));
+    });
+
+    it('send issues a draft first, so the PDF and the email show it as issued', async () => {
+      repository.findOne.mockResolvedValue(buildFullInvoiceDoc('draft'));
+      repository.transitionStatus.mockResolvedValue({
+        outcome: 'transitioned',
+        invoice: buildFullInvoiceDoc('issued'),
+        from: 'draft',
+      });
+
+      const result = await service.send(ID);
+
+      expect(repository.transitionStatus).toHaveBeenCalledWith(ID, ['draft'], 'issued');
+      expect(pdfGeneratorClient.generateInvoicePdf).toHaveBeenCalledWith(expect.objectContaining({ status: 'issued' }));
+      expect(eventsProducer.emitSent).toHaveBeenCalledWith({
+        invoiceId: ID,
+        invoiceNumber: 'INV-0001',
+        clientName: 'Acme Corp',
+        clientEmail: 'billing@acme.test',
+        pdfUrl: 'https://s3.test/invoice-INV-0001.pdf',
+        fileName: 'invoice-INV-0001.pdf',
+        currency: 'EUR',
+        total: 120,
+        issueDate: '2026-10-01T00:00:00.000Z',
+        dueDate: undefined,
+      });
+      expect(result).toEqual({
+        invoice: expect.objectContaining({ status: 'issued' }),
+        pdfUrl: 'https://s3.test/invoice-INV-0001.pdf',
+        fileName: 'invoice-INV-0001.pdf',
+      });
+      expect(auditLog.record).toHaveBeenCalledWith(expect.objectContaining({ action: 'SEND' }));
+    });
+
+    it('re-sends an overdue invoice (a reminder) without changing its status', async () => {
+      repository.findOne.mockResolvedValue(buildFullInvoiceDoc('overdue'));
+
+      await service.send(ID);
+
+      expect(repository.transitionStatus).not.toHaveBeenCalled();
+      expect(eventsProducer.emitSent).toHaveBeenCalled();
+    });
+
+    it.each(['paid', 'cancelled'])('refuses to send a %s invoice, before rendering anything', async (status) => {
+      repository.findOne.mockResolvedValue(buildFullInvoiceDoc(status));
+
+      await expect(service.send(ID)).rejects.toThrow(
+        new ConflictException(`Cannot send an invoice that is ${status}.`),
+      );
+      expect(pdfGeneratorClient.generateInvoicePdf).not.toHaveBeenCalled();
+      expect(eventsProducer.emitSent).not.toHaveBeenCalled();
+    });
+
+    it('does not email the client if rendering fails', async () => {
+      repository.findOne.mockResolvedValue(buildFullInvoiceDoc('issued'));
+      pdfGeneratorClient.generateInvoicePdf.mockRejectedValue(new Error('chromium crashed'));
+
+      await expect(service.send(ID)).rejects.toThrow('chromium crashed');
+      expect(eventsProducer.emitSent).not.toHaveBeenCalled();
     });
   });
 

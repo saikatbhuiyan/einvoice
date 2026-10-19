@@ -115,74 +115,158 @@ describe('InvoiceRepository', () => {
     });
   });
 
+  // A Mongoose query stub: awaitable via exec(), and chainable through select() (used when a
+  // missed conditional write re-reads the document to explain why).
+  const query = (result: unknown) => {
+    const exec = jest.fn().mockResolvedValue(result);
+    return { exec, select: jest.fn(() => ({ exec })) };
+  };
+
   describe('update', () => {
-    it('applies the version filter and saves when the document exists', async () => {
+    it('only matches a draft at the given version, then saves', async () => {
       const id = objectId();
-      const invoiceDoc = {
-        set: jest.fn(),
-        save: jest.fn().mockResolvedValue(undefined),
-      };
-      writeModel.findOne.mockReturnValue({ exec: jest.fn().mockResolvedValue(invoiceDoc) } as never);
+      const invoiceDoc = { set: jest.fn(), save: jest.fn().mockResolvedValue(undefined) };
+      writeModel.findOne.mockReturnValue(query(invoiceDoc) as never);
 
       const result = await repository.update(id, { notes: 'updated' }, 3);
 
-      expect(writeModel.findOne).toHaveBeenCalledWith({ _id: id, deletedAt: null, version: 3 });
-      expect(invoiceDoc.set).toHaveBeenCalled();
+      expect(writeModel.findOne).toHaveBeenCalledWith({
+        _id: id,
+        deletedAt: null,
+        status: { $in: ['draft'] },
+        version: 3,
+      });
+      expect(invoiceDoc.set).toHaveBeenCalledWith({ notes: 'updated' });
       expect(invoiceDoc.save).toHaveBeenCalled();
       expect(result).toBe(invoiceDoc);
     });
 
+    // RPC payloads skip DTO validation, so the repository is the boundary that keeps a caller from
+    // writing status (or deletedAt, pdfUrl, version...) through a content edit.
+    it('persists only content fields, dropping status and bookkeeping fields from the payload', async () => {
+      const invoiceDoc = { set: jest.fn(), save: jest.fn().mockResolvedValue(undefined) };
+      writeModel.findOne.mockReturnValue(query(invoiceDoc) as never);
+
+      await repository.update(objectId(), {
+        notes: 'n',
+        status: 'paid',
+        deletedAt: new Date(),
+        pdfUrl: 'https://evil.test/x.pdf',
+        version: 99,
+        total: 0,
+      } as never);
+
+      expect(invoiceDoc.set).toHaveBeenCalledWith({ notes: 'n' });
+    });
+
+    it('refuses to edit an invoice that is no longer a draft', async () => {
+      const id = objectId();
+      writeModel.findOne
+        .mockReturnValueOnce(query(null) as never)
+        .mockReturnValueOnce(query({ status: 'issued', version: 2 }) as never);
+
+      await expect(repository.update(id, { notes: 'x' })).rejects.toThrow(
+        new ConflictException('Invoice is issued; only draft invoices can be edited. Issued invoices are immutable.'),
+      );
+    });
+
     it('throws ConflictException when a version is given but the document has since moved on', async () => {
       const id = objectId();
-      writeModel.findOne.mockReturnValue({ exec: jest.fn().mockResolvedValue(null) } as never);
-      writeModel.exists.mockResolvedValue({ _id: id } as never);
+      writeModel.findOne
+        .mockReturnValueOnce(query(null) as never)
+        .mockReturnValueOnce(query({ status: 'draft', version: 2 }) as never);
 
-      await expect(repository.update(id, {}, 1)).rejects.toBeInstanceOf(ConflictException);
+      await expect(repository.update(id, {}, 1)).rejects.toThrow(/modified by another user/);
     });
 
     it('returns null when the document truly does not exist', async () => {
-      const id = objectId();
-      writeModel.findOne.mockReturnValue({ exec: jest.fn().mockResolvedValue(null) } as never);
-      writeModel.exists.mockResolvedValue(null);
+      writeModel.findOne.mockReturnValueOnce(query(null) as never).mockReturnValueOnce(query(null) as never);
 
-      const result = await repository.update(id, {}, 1);
+      const result = await repository.update(objectId(), {}, 1);
 
       expect(result).toBeNull();
     });
   });
 
   describe('remove', () => {
-    it('sets deletedAt instead of hard-deleting the document', async () => {
+    it('soft-deletes, and only a draft', async () => {
       const id = objectId();
       const deleted = { _id: id, deletedAt: new Date() };
-      writeModel.findOneAndUpdate.mockReturnValue({ exec: jest.fn().mockResolvedValue(deleted) } as never);
+      writeModel.findOneAndUpdate.mockReturnValue(query(deleted) as never);
 
       const result = await repository.remove(id);
 
       expect(writeModel.findOneAndUpdate).toHaveBeenCalledWith(
-        { _id: id, deletedAt: null },
+        { _id: id, deletedAt: null, status: { $in: ['draft'] } },
         { deletedAt: expect.any(Date) },
-        { new: true },
+        { returnDocument: 'after' },
       );
       expect(result).toBe(deleted);
     });
 
-    it('throws ConflictException on a version mismatch against a still-existing document', async () => {
-      const id = objectId();
-      writeModel.findOneAndUpdate.mockReturnValue({ exec: jest.fn().mockResolvedValue(null) } as never);
-      writeModel.exists.mockResolvedValue({ _id: id } as never);
+    it('refuses to delete a paid invoice', async () => {
+      writeModel.findOneAndUpdate.mockReturnValue(query(null) as never);
+      writeModel.findOne.mockReturnValue(query({ status: 'paid', version: 4 }) as never);
 
-      await expect(repository.remove(id, 5)).rejects.toBeInstanceOf(ConflictException);
+      await expect(repository.remove(objectId())).rejects.toThrow(
+        /Invoice is paid; only draft invoices can be deleted/,
+      );
+    });
+
+    it('throws ConflictException on a version mismatch against a still-existing document', async () => {
+      writeModel.findOneAndUpdate.mockReturnValue(query(null) as never);
+      writeModel.findOne.mockReturnValue(query({ status: 'draft', version: 6 }) as never);
+
+      await expect(repository.remove(objectId(), 5)).rejects.toThrow(/modified by another user/);
     });
 
     it('returns null when the document is already gone', async () => {
-      const id = objectId();
-      writeModel.findOneAndUpdate.mockReturnValue({ exec: jest.fn().mockResolvedValue(null) } as never);
-      writeModel.exists.mockResolvedValue(null);
+      writeModel.findOneAndUpdate.mockReturnValue(query(null) as never);
+      writeModel.findOne.mockReturnValue(query(null) as never);
 
-      const result = await repository.remove(id, 5);
+      const result = await repository.remove(objectId(), 5);
 
       expect(result).toBeNull();
+    });
+  });
+
+  describe('transitionStatus', () => {
+    it('changes status only from an allowed status, bumps version, and reports where it came from', async () => {
+      const id = objectId();
+      const after = { _id: id, status: 'paid' };
+      writeModel.findOneAndUpdate.mockReturnValue(query({ _id: id, status: 'overdue' }) as never);
+      writeModel.findOne.mockReturnValue(query(after) as never);
+
+      const result = await repository.transitionStatus(id, ['issued', 'overdue'], 'paid');
+
+      expect(writeModel.findOneAndUpdate).toHaveBeenCalledWith(
+        { _id: id, deletedAt: null, status: { $in: ['issued', 'overdue'] } },
+        { $set: { status: 'paid' }, $inc: { version: 1 } },
+        { returnDocument: 'before' },
+      );
+      expect(result).toEqual({ outcome: 'transitioned', invoice: after, from: 'overdue' });
+    });
+
+    it('rejects, returning the current state, when the invoice is not in an allowed status', async () => {
+      const current = { status: 'cancelled' };
+      writeModel.findOneAndUpdate.mockReturnValue(query(null) as never);
+      writeModel.findOne.mockReturnValue(query(current) as never);
+
+      const result = await repository.transitionStatus(objectId(), ['issued', 'overdue'], 'paid');
+
+      expect(result).toEqual({ outcome: 'rejected', invoice: current });
+    });
+
+    it('reports not_found for a missing invoice or a malformed id', async () => {
+      writeModel.findOneAndUpdate.mockReturnValue(query(null) as never);
+      writeModel.findOne.mockReturnValue(query(null) as never);
+
+      await expect(repository.transitionStatus(objectId(), ['draft'], 'issued')).resolves.toEqual({
+        outcome: 'not_found',
+      });
+      await expect(repository.transitionStatus('nope', ['draft'], 'issued')).resolves.toEqual({
+        outcome: 'not_found',
+      });
     });
   });
 });

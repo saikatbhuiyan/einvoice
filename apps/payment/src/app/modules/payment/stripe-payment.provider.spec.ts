@@ -93,7 +93,7 @@ describe('StripePaymentProvider', () => {
     it('charges the invoice total in minor units and tags the session with the invoice id', async () => {
       const create = jest
         .spyOn(stripeFor(provider).checkout.sessions, 'create')
-        .mockResolvedValue({ id: 'cs_1', url: 'https://checkout.stripe.test/cs_1' } as never);
+        .mockResolvedValue({ id: 'cs_1', url: 'https://checkout.stripe.test/cs_1', expires_at: 1792000000 } as never);
 
       const session = await provider.createCheckoutSession({
         invoiceId: 'inv-1',
@@ -102,7 +102,12 @@ describe('StripePaymentProvider', () => {
         currency: 'EUR',
       });
 
-      expect(session).toEqual({ providerSessionId: 'cs_1', checkoutUrl: 'https://checkout.stripe.test/cs_1' });
+      expect(session).toEqual({
+        providerSessionId: 'cs_1',
+        checkoutUrl: 'https://checkout.stripe.test/cs_1',
+        // Stripe's expires_at is Unix seconds.
+        expiresAt: new Date(1792000000 * 1000),
+      });
       expect(create).toHaveBeenCalledWith(
         expect.objectContaining({
           mode: 'payment',

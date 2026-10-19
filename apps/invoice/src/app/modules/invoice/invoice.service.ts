@@ -14,7 +14,13 @@ import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import type { Cache } from 'cache-manager';
 import { REDIS_CLIENT } from '@libs/cache';
 import { DEFAULT_LIMIT, DEFAULT_PAGE } from '@libs/constants';
-import { buildPaginationMeta, type CursorPaginationMeta } from '@libs/shared/types';
+import {
+  buildPaginationMeta,
+  statusesTransitionableTo,
+  type CursorPaginationMeta,
+  type InvoiceStatus,
+} from '@libs/shared/types';
+import type { InvoiceDocument } from '@libs/schemas';
 import {
   CreateInvoiceRequest,
   DeleteInvoiceResponse,
@@ -22,10 +28,11 @@ import {
   FindAllInvoicesRequest,
   FindAllInvoicesResponse,
   InvoiceResponse,
+  SendInvoiceResponse,
   UpdateInvoiceRequest,
 } from '@libs/interfaces/gateway';
 import { AuditLogService } from '@libs/audit-log';
-import { INVOICE_REPOSITORY, IInvoiceRepository, type PaginatedResultMeta } from './invoice.repository.interface';
+import { INVOICE_REPOSITORY, IInvoiceRepository } from './invoice.repository.interface';
 import { PdfGeneratorClientService } from './clients/pdf-generator-client.service';
 import { MediaClientService } from './clients/media-client.service';
 import { InvoiceEventsProducerService } from './clients/invoice-events-producer.service';
@@ -42,6 +49,19 @@ const CACHE_KEY_LIST_VERSION = `${SVC_PREFIX}:invoice:list:version`;
 
 const TTL_ONE_MS = 30_000;
 const TTL_LIST_MS = 15_000;
+
+/** A draft is issued on send; issued/overdue can be re-sent (a reminder). */
+const SENDABLE_STATUSES: readonly InvoiceStatus[] = ['draft', 'issued', 'overdue'];
+
+const TRANSITION_VERBS: Record<InvoiceStatus, string> = {
+  draft: 'revert to draft',
+  issued: 'issue',
+  paid: 'mark as paid',
+  overdue: 'mark as overdue',
+  cancelled: 'cancel',
+};
+
+const DIFF_IGNORED_FIELDS = new Set(['version', 'updatedAt', 'createdAt', 'id']);
 
 @Injectable()
 export class InvoiceService {
@@ -71,7 +91,7 @@ export class InvoiceService {
         entityId: createdInvoice._id.toString(),
       });
       // Demo event: proves the producer -> Kafka -> services/mail pipe end to end, independent
-      // of the real pdf.generated event this same topic carries (see generatePdf below).
+      // of the real invoice.sent event this same topic carries (see send below).
       this.eventsProducer.emitDemo(createdInvoice._id.toString());
       return this.toInvoiceResponse(createdInvoice);
     } catch (error) {
@@ -167,11 +187,15 @@ export class InvoiceService {
     }
 
     await Promise.all([this.delCacheKey(CACHE_KEY_ONE(id)), this.bumpListVersion()]);
+    const previousJson = previous ? (previous.toJSON() as unknown as Record<string, unknown>) : undefined;
     await this.auditLog.record({
       action: 'UPDATE',
       entityType: 'invoice',
       entityId: id,
-      previous: previous ? (previous.toJSON() as unknown as Record<string, unknown>) : undefined,
+      diff: previousJson
+        ? this.diffFields(previousJson, invoice.toJSON() as unknown as Record<string, unknown>)
+        : undefined,
+      previous: previousJson,
     });
 
     return this.toInvoiceResponse(invoice);
@@ -199,6 +223,7 @@ export class InvoiceService {
     };
   }
 
+  /** Renders and stores the PDF only. Never contacts the client — that is send(). */
   async generatePdf(id: string): Promise<GenerateInvoicePdfResult> {
     const invoice = await this.invoiceRepository.findOne(this.ensureObjectId(id));
 
@@ -206,6 +231,102 @@ export class InvoiceService {
       throw new NotFoundException(`Invoice not found for id "${id}".`);
     }
 
+    const result = await this.renderAndStorePdf(invoice);
+    await this.auditLog.record({ action: 'GENERATE_PDF', entityType: 'invoice', entityId: id });
+
+    return result;
+  }
+
+  async issue(id: string): Promise<InvoiceResponse> {
+    return this.toInvoiceResponse(await this.transition(id, 'issued'));
+  }
+
+  async cancel(id: string): Promise<InvoiceResponse> {
+    return this.toInvoiceResponse(await this.transition(id, 'cancelled'));
+  }
+
+  /**
+   * Called by payment once Stripe confirms the money moved. Idempotent (Stripe redelivers
+   * webhooks); a 409 here means the invoice can't legally become paid — payment flags that for
+   * reconciliation rather than retrying.
+   */
+  async markPaid(id: string): Promise<InvoiceResponse> {
+    return this.toInvoiceResponse(await this.transition(id, 'paid'));
+  }
+
+  /**
+   * Issues the invoice if it is still a draft, renders a fresh PDF (so it shows the issued state —
+   * issued invoices are immutable, so it can never be stale afterwards) and hands it to
+   * services/mail over Kafka. Re-sending an issued or overdue invoice is allowed (a reminder).
+   */
+  async send(id: string): Promise<SendInvoiceResponse> {
+    const current = await this.invoiceRepository.findOne(this.ensureObjectId(id));
+
+    if (!current) {
+      throw new NotFoundException(`Invoice not found for id "${id}".`);
+    }
+
+    if (!SENDABLE_STATUSES.includes(current.status)) {
+      throw new ConflictException(`Cannot send an invoice that is ${current.status}.`);
+    }
+
+    const invoice = current.status === 'draft' ? await this.transition(id, 'issued') : current;
+    const { url, fileName } = await this.renderAndStorePdf(invoice);
+
+    await this.auditLog.record({ action: 'SEND', entityType: 'invoice', entityId: id });
+
+    // Fire-and-forget: a slow/unavailable mail service must never fail or block the request.
+    // (Delivery is not yet guaranteed if Kafka itself is down — see the outbox follow-up.)
+    this.eventsProducer.emitSent({
+      invoiceId: id,
+      invoiceNumber: invoice.invoiceNumber,
+      clientName: invoice.client.name,
+      clientEmail: invoice.client.email,
+      pdfUrl: url,
+      fileName,
+      currency: invoice.currency,
+      total: invoice.total,
+      issueDate: invoice.issueDate.toISOString(),
+      dueDate: invoice.dueDate?.toISOString(),
+    });
+
+    return { invoice: this.toInvoiceResponse(invoice), pdfUrl: url, fileName };
+  }
+
+  /**
+   * The one path for every status change. Requesting the status the invoice is already in is a
+   * no-op success (safe retries, Stripe redeliveries); any other illegal change is a 409 naming the
+   * current status.
+   */
+  private async transition(id: string, to: InvoiceStatus): Promise<InvoiceDocument> {
+    const result = await this.invoiceRepository.transitionStatus(
+      this.ensureObjectId(id),
+      statusesTransitionableTo(to),
+      to,
+    );
+
+    if (result.outcome === 'not_found') {
+      throw new NotFoundException(`Invoice not found for id "${id}".`);
+    }
+
+    if (result.outcome === 'rejected') {
+      if (result.invoice.status === to) return result.invoice;
+      throw new ConflictException(`Cannot ${TRANSITION_VERBS[to]} an invoice that is ${result.invoice.status}.`);
+    }
+
+    await Promise.all([this.delCacheKey(CACHE_KEY_ONE(id)), this.bumpListVersion()]);
+    await this.auditLog.record({
+      action: 'STATUS_CHANGE',
+      entityType: 'invoice',
+      entityId: id,
+      diff: { status: { from: result.from, to } },
+    });
+
+    return result.invoice;
+  }
+
+  private async renderAndStorePdf(invoice: InvoiceDocument): Promise<GenerateInvoicePdfResult> {
+    const id = invoice._id.toString();
     const { base64, contentType, fileName } = await this.pdfGeneratorClient.generateInvoicePdf({
       invoiceNumber: invoice.invoiceNumber,
       client: {
@@ -233,46 +354,24 @@ export class InvoiceService {
 
     const { url } = await this.mediaClient.uploadFile({ fileName, contentType, base64 });
 
-    const pdfGeneratedAt = new Date();
-    await this.invoiceRepository.setPdfMetadata(id, url, pdfGeneratedAt);
+    await this.invoiceRepository.setPdfMetadata(id, url, new Date());
     await this.delCacheKey(CACHE_KEY_ONE(id));
-
-    await this.auditLog.record({
-      action: 'GENERATE_PDF',
-      entityType: 'invoice',
-      entityId: id,
-    });
-
-    // Fire-and-forget: services/mail picks this up over Kafka and emails the invoice with the
-    // PDF attached. Decoupled on purpose -- a slow/unavailable mail service should never make
-    // PDF generation itself fail or block.
-    this.eventsProducer.emitPdfGenerated({
-      invoiceId: id,
-      invoiceNumber: invoice.invoiceNumber,
-      clientName: invoice.client.name,
-      clientEmail: invoice.client.email,
-      pdfUrl: url,
-      fileName,
-      currency: invoice.currency,
-      total: invoice.total,
-      issueDate: invoice.issueDate.toISOString(),
-      dueDate: invoice.dueDate?.toISOString(),
-    });
 
     return { url, fileName };
   }
 
-  async markPaid(id: string): Promise<InvoiceResponse> {
-    const invoice = await this.invoiceRepository.markPaid(this.ensureObjectId(id));
+  /** Top-level fields whose value changed, as `{ field: { from, to } }`, ignoring bookkeeping fields. */
+  private diffFields(before: Record<string, unknown>, after: Record<string, unknown>): Record<string, unknown> {
+    const diff: Record<string, unknown> = {};
 
-    if (!invoice) {
-      throw new NotFoundException(`Invoice not found for id "${id}".`);
+    for (const field of Object.keys({ ...before, ...after })) {
+      if (DIFF_IGNORED_FIELDS.has(field)) continue;
+      if (JSON.stringify(before[field]) !== JSON.stringify(after[field])) {
+        diff[field] = { from: before[field], to: after[field] };
+      }
     }
 
-    await Promise.all([this.delCacheKey(CACHE_KEY_ONE(id)), this.bumpListVersion()]);
-    await this.auditLog.record({ action: 'UPDATE', entityType: 'invoice', entityId: id });
-
-    return this.toInvoiceResponse(invoice);
+    return diff;
   }
 
   private async getListVersion(): Promise<number> {

@@ -62,12 +62,30 @@ export class InvoiceRpcController {
     return this.invoiceService.generatePdf(data.id);
   }
 
+  @MessagePattern(TCP_PATTERNS.INVOICE.ISSUE)
+  @RequirePermission('invoice:write')
+  issueByMessage(@Payload() payload: RpcEnvelope<InvoiceIdPayload> | InvoiceIdPayload) {
+    return this.invoiceService.issue(unwrapRpcPayload(payload).id);
+  }
+
+  @MessagePattern(TCP_PATTERNS.INVOICE.CANCEL)
+  @RequirePermission('invoice:write')
+  cancelByMessage(@Payload() payload: RpcEnvelope<InvoiceIdPayload> | InvoiceIdPayload) {
+    return this.invoiceService.cancel(unwrapRpcPayload(payload).id);
+  }
+
+  @MessagePattern(TCP_PATTERNS.INVOICE.SEND)
+  @RequirePermission('invoice:write')
+  sendByMessage(@Payload() payload: RpcEnvelope<InvoiceIdPayload> | InvoiceIdPayload) {
+    return this.invoiceService.send(unwrapRpcPayload(payload).id);
+  }
+
   // @Public(): payment calls this once its Stripe webhook confirms a checkout session succeeded,
   // which carries no end-user identity to forward (bff's webhook route is itself @Public(), so no
   // JwtAuthGuard ever ran to populate one) — the same "service-to-service, no permission to check"
-  // exception role-grpc.controller.ts's findAllRoles already documents. Deliberately narrow (only
-  // flips status to 'paid', nothing else an attacker with raw TCP access could misuse) rather than
-  // widening the general-purpose UPDATE pattern, which stays permission-gated for real user edits.
+  // exception role-grpc.controller.ts's findAllRoles already documents. Deliberately narrow: it can
+  // only move an issued/overdue invoice to 'paid' (the service's state machine refuses anything
+  // else), never edit content or reach any other status.
   @MessagePattern(TCP_PATTERNS.INVOICE.MARK_PAID)
   @Public()
   markPaidByMessage(@Payload() payload: RpcEnvelope<InvoiceIdPayload> | InvoiceIdPayload) {

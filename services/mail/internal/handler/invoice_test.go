@@ -40,10 +40,10 @@ func pdfServer(t *testing.T, status int) *httptest.Server {
 	return server
 }
 
-func pdfGeneratedMessage(pdfURL string) []byte {
+func sentMessage(pdfURL string) []byte {
 	return []byte(fmt.Sprintf(`{
 	  "data": {
-	    "type": "invoice.pdf.generated", "invoiceId": "i1", "invoiceNumber": "INV-7",
+	    "type": "invoice.sent", "invoiceId": "i1", "invoiceNumber": "INV-7",
 	    "clientName": "Acme Corp", "clientEmail": "billing@acme.test", "pdfUrl": %q,
 	    "fileName": "invoice-INV-7.pdf", "currency": "EUR", "total": 1234.5, "issueDate": "2026-10-01"
 	  },
@@ -51,11 +51,11 @@ func pdfGeneratedMessage(pdfURL string) []byte {
 	}`, pdfURL))
 }
 
-func TestHandleEmailsTheGeneratedPdfToTheClient(t *testing.T) {
+func TestHandleEmailsTheSentInvoicePdfToTheClient(t *testing.T) {
 	sender := &fakeSender{}
 	server := pdfServer(t, http.StatusOK)
 
-	if err := NewInvoiceHandler(sender).Handle(context.Background(), nil, pdfGeneratedMessage(server.URL+"/invoice.pdf")); err != nil {
+	if err := NewInvoiceHandler(sender).Handle(context.Background(), nil, sentMessage(server.URL+"/invoice.pdf")); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
@@ -81,7 +81,7 @@ func TestHandleFailsWithoutSendingWhenThePdfCannotBeFetched(t *testing.T) {
 	sender := &fakeSender{}
 	server := pdfServer(t, http.StatusNotFound)
 
-	err := NewInvoiceHandler(sender).Handle(context.Background(), nil, pdfGeneratedMessage(server.URL+"/missing.pdf"))
+	err := NewInvoiceHandler(sender).Handle(context.Background(), nil, sentMessage(server.URL+"/missing.pdf"))
 
 	if err == nil || !strings.Contains(err.Error(), "unexpected status 404") {
 		t.Fatalf("err = %v, want a 404 fetch error", err)
@@ -95,7 +95,7 @@ func TestHandleReturnsTheSenderError(t *testing.T) {
 	sender := &fakeSender{err: errors.New("smtp: 421 try again later")}
 	server := pdfServer(t, http.StatusOK)
 
-	err := NewInvoiceHandler(sender).Handle(context.Background(), nil, pdfGeneratedMessage(server.URL))
+	err := NewInvoiceHandler(sender).Handle(context.Background(), nil, sentMessage(server.URL))
 
 	if err == nil || !strings.Contains(err.Error(), "421") {
 		t.Fatalf("err = %v, want the sender error", err)

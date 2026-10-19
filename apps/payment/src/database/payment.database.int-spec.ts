@@ -3,6 +3,7 @@ import { join } from 'path';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { DataSource, type MigrationInterface } from 'typeorm';
 import { PaymentEntity } from './entities/payment.entity';
+import { PaymentRepository } from '../app/modules/payment/payment.repository';
 
 // Every migration file on disk, in the order `payment:migration:run` applies them.
 const MIGRATIONS_DIR = join(__dirname, 'migrations');
@@ -47,10 +48,10 @@ describe('payment database (real Postgres)', () => {
     return dataSource;
   }
 
-  const insertPayment = (dataSource: DataSource, status: string, session: string) =>
+  const insertPayment = (dataSource: DataSource, status: string, session: string, invoiceId = 'inv-1') =>
     dataSource.query(
       `INSERT INTO payments ("invoiceId", "providerSessionId", status, amount, currency) VALUES ($1, $2, $3, $4, $5)`,
-      ['inv-1', session, status, 129.9, 'EUR'],
+      [invoiceId, session, status, 129.9, 'EUR'],
     );
 
   it('produce exactly the schema the entity describes (no drift)', async () => {
@@ -93,17 +94,22 @@ describe('payment database (real Postgres)', () => {
   });
 
   // Narrowing back would truncate 'reconciliation_required'; Postgres must refuse rather than lose it.
+  // Targets the widening migration by name, not as "the last one": later migrations exist.
   it('refuses to revert the widening while a status longer than the old column exists', async () => {
+    const Widen = migrations.find((Migration) => Migration.name.startsWith('WidenPaymentStatusColumn'));
+    if (!Widen) throw new Error('WidenPaymentStatusColumn migration not found');
     const dataSource = await freshDataSource('revert');
+    const runner = dataSource.createQueryRunner();
     try {
       await dataSource.runMigrations();
       await insertPayment(dataSource, 'reconciliation_required', 'cs_recon');
 
-      await expect(dataSource.undoLastMigration()).rejects.toMatchObject({
+      await expect(new Widen().down(runner)).rejects.toMatchObject({
         driverError: expect.objectContaining({ code: '22001' }),
       });
       expect(await dataSource.query(`SELECT status FROM payments`)).toEqual([{ status: 'reconciliation_required' }]);
     } finally {
+      await runner.release();
       await dataSource.destroy();
     }
   });
@@ -117,6 +123,80 @@ describe('payment database (real Postgres)', () => {
       await expect(insertPayment(dataSource, 'pending', 'cs_1')).rejects.toMatchObject({
         driverError: expect.objectContaining({ code: '23505' }),
       });
+    } finally {
+      await dataSource.destroy();
+    }
+  });
+
+  // Two concurrent "pay" clicks must not both leave a payable Stripe session behind.
+  it('allows at most one pending (open) session per invoice, but any number of closed ones', async () => {
+    const dataSource = await freshDataSource('open_session');
+    try {
+      await dataSource.runMigrations();
+      await insertPayment(dataSource, 'pending', 'cs_open');
+
+      await expect(insertPayment(dataSource, 'pending', 'cs_second_open')).rejects.toMatchObject({
+        driverError: expect.objectContaining({ code: '23505' }),
+      });
+      await expect(insertPayment(dataSource, 'failed', 'cs_failed_1')).resolves.toBeDefined();
+      await expect(insertPayment(dataSource, 'failed', 'cs_failed_2')).resolves.toBeDefined();
+      await expect(insertPayment(dataSource, 'pending', 'cs_other_invoice', 'inv-2')).resolves.toBeDefined();
+    } finally {
+      await dataSource.destroy();
+    }
+  });
+
+  // Each duplicate is a session a customer may still pay through; choosing one is a human call.
+  it('refuses to add the open-session index over existing duplicates, naming the invoices, and changes nothing', async () => {
+    const before = migrations.slice(0, -1);
+    const AddOpenSessionGuard = migrations[migrations.length - 1];
+    const dataSource = await freshDataSource('open_session_dupes', []);
+    const runner = dataSource.createQueryRunner();
+    try {
+      for (const Migration of before) await new Migration().up(runner);
+      await insertPayment(dataSource, 'pending', 'cs_a', 'inv-dup');
+      await insertPayment(dataSource, 'pending', 'cs_b', 'inv-dup');
+
+      await expect(new AddOpenSessionGuard().up(runner)).rejects.toThrow(/more than one pending payment: inv-dup\./);
+      expect(await dataSource.query(`SELECT status FROM payments ORDER BY "providerSessionId"`)).toEqual([
+        { status: 'pending' },
+        { status: 'pending' },
+      ]);
+    } finally {
+      await runner.release();
+      await dataSource.destroy();
+    }
+  });
+
+  it('PaymentRepository finds the open session and detects another collected payment', async () => {
+    const dataSource = await freshDataSource('repository');
+    try {
+      await dataSource.runMigrations();
+      const repository = new PaymentRepository(dataSource.getRepository(PaymentEntity));
+      const expiresAt = new Date('2026-10-20T12:00:00.000Z');
+      const first = await repository.create({
+        invoiceId: 'inv-1',
+        provider: 'stripe',
+        providerSessionId: 'cs_first',
+        status: 'pending',
+        amount: 129.9,
+        currency: 'EUR',
+        checkoutUrl: 'https://checkout.stripe.test/cs_first',
+        expiresAt,
+      });
+
+      expect(await repository.findOpenByInvoiceId('inv-1')).toMatchObject({ id: first.id, expiresAt });
+      expect(await repository.findOpenByInvoiceId('inv-2')).toBeNull();
+      expect(await repository.hasOtherPaidPayment('inv-1', first.id)).toBe(false);
+
+      await repository.updateStatus(first.id, 'paid');
+      await insertPayment(dataSource, 'pending', 'cs_second');
+      const second = await repository.findOpenByInvoiceId('inv-1');
+      if (!second) throw new Error('second open payment not found');
+
+      expect(await repository.hasOtherPaidPayment('inv-1', second.id)).toBe(true);
+      // A payment is never "another" payment relative to itself.
+      expect(await repository.hasOtherPaidPayment('inv-1', first.id)).toBe(false);
     } finally {
       await dataSource.destroy();
     }

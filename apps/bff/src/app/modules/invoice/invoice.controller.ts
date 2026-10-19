@@ -144,7 +144,8 @@ export class InvoiceController {
   @ResponseMessage('Invoice updated successfully')
   @ApiOperation({
     summary: 'Update invoice',
-    description: 'Applies a partial update to an invoice and returns the updated record.',
+    description:
+      'Applies a partial update to a draft invoice and returns the updated record. Issued, paid, overdue and cancelled invoices are immutable (409); status changes go through the lifecycle endpoints (issue, send, cancel).',
   })
   @ApiParam({
     name: 'id',
@@ -154,8 +155,8 @@ export class InvoiceController {
   @ApiBody({
     type: UpdateInvoiceDto,
     examples: {
-      paymentUpdate: {
-        summary: 'Mark invoice as paid',
+      notesUpdate: {
+        summary: 'Change payment terms on a draft',
         value: UPDATE_INVOICE_EXAMPLE,
       },
     },
@@ -167,8 +168,8 @@ export class InvoiceController {
     message: 'Invoice updated successfully',
     dataExample: {
       ...INVOICE_RESPONSE_EXAMPLE,
-      status: 'paid',
-      notes: 'Paid by bank transfer.',
+      status: 'draft',
+      notes: 'Payment due within 14 days.',
       updatedAt: '2026-04-28T11:30:00.000Z',
     },
   })
@@ -226,7 +227,7 @@ export class InvoiceController {
   @ApiOperation({
     summary: 'Generate invoice PDF',
     description:
-      'Renders the invoice to PDF (via the pdf-generator service), uploads it to object storage (via the media service), and returns its URL.',
+      'Renders the invoice to PDF (via the pdf-generator service), uploads it to object storage (via the media service), and returns its URL. Does not contact the client — use POST /invoices/{id}/send for that.',
   })
   @ApiParam({
     name: 'id',
@@ -236,5 +237,72 @@ export class InvoiceController {
   @ApiProblemResponses(HttpStatus.NOT_FOUND, HttpStatus.BAD_GATEWAY, HttpStatus.SERVICE_UNAVAILABLE)
   generatePdf(@Param() params: InvoiceIdGatewayDto) {
     return this.invoiceService.generatePdf(params.id);
+  }
+
+  @Post(':id/issue')
+  @RequirePermission('invoice:write')
+  @RateLimit({ burst: RATE_LIMIT_MUTATE_BURST, rate: RATE_LIMIT_MUTATE_RATE })
+  @HttpCode(HttpStatus.OK)
+  @ResponseMessage('Invoice issued successfully')
+  @ApiOperation({
+    summary: 'Issue invoice',
+    description:
+      'Moves a draft invoice to issued. From then on its content is immutable (PATCH/DELETE return 409). Issuing an already-issued invoice is a no-op; any other status is a 409.',
+  })
+  @ApiParam({ name: 'id', example: INVOICE_ID_EXAMPLE, description: 'MongoDB ObjectId of the invoice.' })
+  @ApiEnvelopeResponse({
+    status: HttpStatus.OK,
+    description: 'Invoice issued.',
+    model: InvoiceResponseDto,
+    message: 'Invoice issued successfully',
+    dataExample: INVOICE_RESPONSE_EXAMPLE,
+  })
+  @ApiProblemResponses(HttpStatus.NOT_FOUND, HttpStatus.CONFLICT, HttpStatus.BAD_GATEWAY)
+  issue(@Param() params: InvoiceIdGatewayDto) {
+    return this.invoiceService.issue(params.id);
+  }
+
+  @Post(':id/cancel')
+  @RequirePermission('invoice:write')
+  @RateLimit({ burst: RATE_LIMIT_MUTATE_BURST, rate: RATE_LIMIT_MUTATE_RATE })
+  @HttpCode(HttpStatus.OK)
+  @ResponseMessage('Invoice cancelled successfully')
+  @ApiOperation({
+    summary: 'Cancel invoice',
+    description:
+      'Cancels an issued or overdue invoice. Paid invoices cannot be cancelled, and drafts are deleted instead (409). Cancelling an already-cancelled invoice is a no-op.',
+  })
+  @ApiParam({ name: 'id', example: INVOICE_ID_EXAMPLE, description: 'MongoDB ObjectId of the invoice.' })
+  @ApiEnvelopeResponse({
+    status: HttpStatus.OK,
+    description: 'Invoice cancelled.',
+    model: InvoiceResponseDto,
+    message: 'Invoice cancelled successfully',
+    dataExample: { ...INVOICE_RESPONSE_EXAMPLE, status: 'cancelled' },
+  })
+  @ApiProblemResponses(HttpStatus.NOT_FOUND, HttpStatus.CONFLICT, HttpStatus.BAD_GATEWAY)
+  cancel(@Param() params: InvoiceIdGatewayDto) {
+    return this.invoiceService.cancel(params.id);
+  }
+
+  @Post(':id/send')
+  @RequirePermission('invoice:write')
+  @RateLimit({ burst: RATE_LIMIT_MUTATE_BURST, rate: RATE_LIMIT_MUTATE_RATE })
+  @HttpCode(HttpStatus.OK)
+  @ResponseMessage('Invoice sent successfully')
+  @ApiOperation({
+    summary: 'Send invoice to the client',
+    description:
+      'Issues the invoice if it is still a draft, renders a fresh PDF and emails it to the client (asynchronously, via the mail service). Issued and overdue invoices can be re-sent; paid and cancelled ones cannot (409).',
+  })
+  @ApiParam({ name: 'id', example: INVOICE_ID_EXAMPLE, description: 'MongoDB ObjectId of the invoice.' })
+  @ApiProblemResponses(
+    HttpStatus.NOT_FOUND,
+    HttpStatus.CONFLICT,
+    HttpStatus.BAD_GATEWAY,
+    HttpStatus.SERVICE_UNAVAILABLE,
+  )
+  send(@Param() params: InvoiceIdGatewayDto) {
+    return this.invoiceService.send(params.id);
   }
 }

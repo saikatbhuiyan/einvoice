@@ -9,7 +9,9 @@ import {
   FindAllInvoicesRequest,
   FindAllInvoicesResponse,
   FindOneInvoiceGatewayRequest,
+  InvoiceIdGatewayRequest,
   InvoiceResponse,
+  SendInvoiceResponse,
   UpdateInvoiceGatewayRequest,
   UpdateInvoiceRequest,
 } from '@libs/interfaces/gateway';
@@ -56,5 +58,17 @@ export class InvoiceClientService extends BaseTcpClient {
 
   async generatePdf(id: string): Promise<GenerateInvoicePdfGatewayResponse> {
     return this.send<GenerateInvoicePdfGatewayResponse, { id: string }>(TCP_PATTERNS.INVOICE.GENERATE_PDF, { id });
+  }
+
+  async issueInvoice(id: string): Promise<InvoiceResponse> {
+    return this.send<InvoiceResponse, InvoiceIdGatewayRequest>(TCP_PATTERNS.INVOICE.ISSUE, { id });
+  }
+
+  async cancelInvoice(id: string): Promise<InvoiceResponse> {
+    return this.send<InvoiceResponse, InvoiceIdGatewayRequest>(TCP_PATTERNS.INVOICE.CANCEL, { id });
+  }
+
+  async sendInvoice(id: string): Promise<SendInvoiceResponse> {
+    return this.send<SendInvoiceResponse, InvoiceIdGatewayRequest>(TCP_PATTERNS.INVOICE.SEND, { id });
   }
 }

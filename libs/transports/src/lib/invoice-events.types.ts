@@ -11,8 +11,16 @@ export interface InvoiceDemoEvent {
   message: string;
 }
 
-export interface InvoicePdfGeneratedEvent {
-  type: 'invoice.pdf.generated';
+/**
+ * The invoice was sent to the client: services/mail emails `clientEmail` with the PDF at `pdfUrl`
+ * attached. Emitted only by an explicit send, never by PDF generation alone.
+ *
+ * Replaces `invoice.pdf.generated` (identical payload), which was emitted on every PDF render and
+ * so re-emailed the client for internal previews. The Go consumer still accepts the old type for
+ * messages already on the topic; nothing produces it any more.
+ */
+export interface InvoiceSentEvent {
+  type: 'invoice.sent';
   invoiceId: string;
   invoiceNumber: string;
   clientName: string;
@@ -25,4 +33,4 @@ export interface InvoicePdfGeneratedEvent {
   dueDate?: string;
 }
 
-export type InvoiceEvent = InvoiceDemoEvent | InvoicePdfGeneratedEvent;
+export type InvoiceEvent = InvoiceDemoEvent | InvoiceSentEvent;

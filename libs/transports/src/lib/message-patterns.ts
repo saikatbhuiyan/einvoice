@@ -6,6 +6,9 @@ export const INVOICE_PATTERNS = {
   DELETE: 'invoice.delete',
   BULK_CREATE: 'invoice.bulkCreate',
   GENERATE_PDF: 'invoice.generatePdf',
+  ISSUE: 'invoice.issue',
+  CANCEL: 'invoice.cancel',
+  SEND: 'invoice.send',
   MARK_PAID: 'invoice.markPaid',
 } as const;
 
