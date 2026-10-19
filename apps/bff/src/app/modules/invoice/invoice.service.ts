@@ -16,6 +16,7 @@ import {
   FindAllInvoicesRequest,
   FindAllInvoicesResponse,
   InvoiceResponse,
+  SendInvoiceResponse,
   UpdateInvoiceRequest,
 } from '@libs/interfaces/gateway';
 import { GenerateInvoicePdfGatewayResponse, InvoiceClientService } from './invoice-client.service';
@@ -161,6 +162,29 @@ export class InvoiceService {
     const result = await this.invoiceClient.generatePdf(id);
     await this.delCacheKey(CACHE_KEY_ONE(id));
     return result;
+  }
+
+  async issue(id: string): Promise<InvoiceResponse> {
+    const invoice = await this.invoiceClient.issueInvoice(id);
+    await this.invalidate(id);
+    return invoice;
+  }
+
+  async cancel(id: string): Promise<InvoiceResponse> {
+    const invoice = await this.invoiceClient.cancelInvoice(id);
+    await this.invalidate(id);
+    return invoice;
+  }
+
+  async send(id: string): Promise<SendInvoiceResponse> {
+    const result = await this.invoiceClient.sendInvoice(id);
+    await this.invalidate(id);
+    return result;
+  }
+
+  // A status change alters both the invoice and which list filters (e.g. ?status=) it appears in.
+  private async invalidate(id: string): Promise<void> {
+    await Promise.all([this.delCacheKey(CACHE_KEY_ONE(id)), this.bumpListVersion()]);
   }
 
   private async getListVersion(): Promise<number> {

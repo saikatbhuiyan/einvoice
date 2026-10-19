@@ -2,6 +2,7 @@ import { Transform } from 'class-transformer';
 import {
   IsEmail,
   IsEnum,
+  IsIn,
   IsOptional,
   IsString,
   Validate,
@@ -11,7 +12,8 @@ import {
 } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { INVOICE_STATUSES, PaginationQueryDto, SUPPORTED_CURRENCIES } from '@libs/shared/types';
-import type { FindAllInvoicesRequest, InvoiceStatus, SupportedCurrency } from './invoice.types';
+import { PAGINATION_MODES } from './invoice.types';
+import type { FindAllInvoicesRequest, InvoiceStatus, PaginationMode, SupportedCurrency } from './invoice.types';
 
 @ValidatorConstraint({ name: 'mutuallyExclusivePageCursor', async: false })
 export class MutuallyExclusivePageCursor implements ValidatorConstraintInterface {
@@ -22,6 +24,23 @@ export class MutuallyExclusivePageCursor implements ValidatorConstraintInterface
 
   defaultMessage(): string {
     return 'Cannot use both `cursor` and `page` in the same request. Use one or the other.';
+  }
+}
+
+@ValidatorConstraint({ name: 'consistentPaginationMode', async: false })
+export class ConsistentPaginationMode implements ValidatorConstraintInterface {
+  validate(_value: unknown, args?: ValidationArguments): boolean {
+    const dto = args?.object as FindAllInvoicesRequest | undefined;
+    if (dto?.pagination === 'cursor') return dto.page === undefined;
+    if (dto?.pagination === 'offset') return !dto.cursor;
+    return true;
+  }
+
+  defaultMessage(args?: ValidationArguments): string {
+    const dto = args?.object as FindAllInvoicesRequest | undefined;
+    return dto?.pagination === 'cursor'
+      ? '`pagination=cursor` cannot be combined with `page`.'
+      : '`pagination=offset` cannot be combined with `cursor`.';
   }
 }
 
@@ -74,4 +93,15 @@ export class FindAllInvoicesDto extends PaginationQueryDto implements FindAllInv
   @IsString()
   @Validate(MutuallyExclusivePageCursor)
   cursor?: string;
+
+  @ApiPropertyOptional({
+    enum: PAGINATION_MODES,
+    example: 'cursor',
+    description:
+      'Set to `cursor` to start cursor pagination without a cursor (returns the first page and a cursor for the next). Omit for offset pagination. Not needed once you pass a `cursor`.',
+  })
+  @IsOptional()
+  @IsIn(PAGINATION_MODES)
+  @Validate(ConsistentPaginationMode)
+  pagination?: PaginationMode;
 }

@@ -1,0 +1,16 @@
+{
+  "data": {
+    "type": "invoice.demo",
+    "invoiceId": "6700000000000000000000a1",
+    "message": "Invoice 6700000000000000000000a1 was created."
+  },
+  "meta": {
+    "correlationId": "corr-contract-1",
+    "traceId": "trace-contract-1",
+    "userId": "user-1",
+    "roles": ["accountant"],
+    "permissions": ["invoice:write"],
+    "sourceService": "invoice",
+    "timestamp": "2026-10-16T09:00:00.000Z"
+  }
+}

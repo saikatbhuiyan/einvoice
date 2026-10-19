@@ -1,8 +1,8 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { HydratedDocument, Types } from 'mongoose';
+import { HydratedDocument } from 'mongoose';
 import { BASE_SCHEMA_OPTIONS, BaseSchema } from './base.schema';
 
-export type AuditAction = 'CREATE' | 'UPDATE' | 'DELETE' | 'GENERATE_PDF';
+export type AuditAction = 'CREATE' | 'UPDATE' | 'DELETE' | 'STATUS_CHANGE' | 'GENERATE_PDF' | 'SEND';
 
 @Schema({ ...BASE_SCHEMA_OPTIONS, collection: 'audit_logs' })
 export class AuditLog extends BaseSchema {

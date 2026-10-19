@@ -11,11 +11,11 @@ import {
   MaxLength,
   ValidateNested,
 } from 'class-validator';
-import { INVOICE_CONSTRAINTS, INVOICE_STATUSES, SUPPORTED_CURRENCIES } from '@libs/shared/types';
+import { INVOICE_CONSTRAINTS, SUPPORTED_CURRENCIES } from '@libs/shared/types';
 import { Sanitize } from '@libs/decorators';
 import type { UpdateClientSnapshotRequest, UpdateInvoiceItemRequest, UpdateInvoiceRequest } from './invoice.types';
 import { ClientSnapshotDto, InvoiceItemDto } from './invoice-fields.dto';
-import type { InvoiceStatus, SupportedCurrency } from './invoice.types';
+import type { SupportedCurrency } from './invoice.types';
 
 const constraints = INVOICE_CONSTRAINTS;
 
@@ -67,16 +67,6 @@ export class UpdateInvoiceDto implements UpdateInvoiceRequest {
   @IsOptional()
   @IsEnum(SUPPORTED_CURRENCIES)
   currency?: SupportedCurrency;
-
-  @ApiPropertyOptional({
-    enum: INVOICE_STATUSES,
-    enumName: 'InvoiceStatus',
-    example: 'issued',
-    description: 'Lifecycle status.',
-  })
-  @IsOptional()
-  @IsEnum(INVOICE_STATUSES)
-  status?: InvoiceStatus;
 
   @ApiPropertyOptional({
     example: '2026-04-28',

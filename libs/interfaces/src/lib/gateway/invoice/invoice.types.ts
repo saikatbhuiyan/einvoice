@@ -1,10 +1,4 @@
-import type {
-  CursorPaginationMeta,
-  InvoiceStatus,
-  PaginationMeta,
-  PaginationResultMeta,
-  SupportedCurrency,
-} from '@libs/shared/types';
+import type { CursorPaginationMeta, InvoiceStatus, PaginationMeta, SupportedCurrency } from '@libs/shared/types';
 
 export { INVOICE_CONSTRAINTS, INVOICE_STATUSES, SUPPORTED_CURRENCIES } from '@libs/shared/types';
 export type { InvoiceStatus, SupportedCurrency } from '@libs/shared/types';
@@ -28,7 +22,6 @@ export interface CreateInvoiceRequest {
   client: ClientSnapshotRequest;
   items: InvoiceItemRequest[];
   currency: SupportedCurrency;
-  status?: InvoiceStatus;
   issueDate?: string;
   dueDate?: string;
   notes?: string;
@@ -54,16 +47,20 @@ export interface UpdateInvoiceRequest {
   client?: UpdateClientSnapshotRequest;
   items?: UpdateInvoiceItemRequest[];
   currency?: SupportedCurrency;
-  status?: InvoiceStatus;
   issueDate?: string;
   dueDate?: string;
   notes?: string;
 }
 
+export const PAGINATION_MODES = ['offset', 'cursor'] as const;
+export type PaginationMode = (typeof PAGINATION_MODES)[number];
+
 export interface FindAllInvoicesRequest {
   page?: number;
   limit?: number;
   cursor?: string;
+  /** `cursor` starts cursor pagination without a cursor (the first page). Omitted = offset mode. */
+  pagination?: PaginationMode;
   status?: InvoiceStatus;
   currency?: SupportedCurrency;
   clientEmail?: string;
@@ -125,4 +122,11 @@ export type FindAllInvoicesResult = FindAllInvoicesResponse | FindAllInvoicesCur
 export interface DeleteInvoiceResponse {
   id: string;
   deleted: true;
+}
+
+export interface SendInvoiceResponse {
+  /** The invoice as sent — issued, if it was still a draft. */
+  invoice: InvoiceResponse;
+  pdfUrl: string;
+  fileName: string;
 }

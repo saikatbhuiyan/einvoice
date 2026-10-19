@@ -14,5 +14,11 @@
     "noFallthroughCasesInSwitch": true
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["jest.config.ts", "src/**/*.spec.ts", "src/**/*.test.ts"]
+  "exclude": [
+    "jest.config.ts",
+    "src/**/*.spec.ts",
+    "src/**/*.test.ts",
+    "jest.integration.config.cts",
+    "src/**/*.int-spec.ts"
+  ]
 }
