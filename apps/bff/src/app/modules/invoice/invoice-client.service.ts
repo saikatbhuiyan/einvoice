@@ -10,17 +10,13 @@ import {
   FindAllInvoicesResponse,
   FindOneInvoiceGatewayRequest,
   InvoiceIdGatewayRequest,
+  InvoicePdfDownload,
   InvoiceResponse,
   SendInvoiceResponse,
   UpdateInvoiceGatewayRequest,
   UpdateInvoiceRequest,
 } from '@libs/interfaces/gateway';
 import { BaseTcpClient, ServiceName, TCP_CLIENT_TOKENS, TCP_PATTERNS } from '@libs/transports';
-
-export interface GenerateInvoicePdfGatewayResponse {
-  url: string;
-  fileName: string;
-}
 
 @Injectable()
 export class InvoiceClientService extends BaseTcpClient {
@@ -56,8 +52,12 @@ export class InvoiceClientService extends BaseTcpClient {
     return this.send<DeleteInvoiceResponse, DeleteInvoiceGatewayRequest>(TCP_PATTERNS.INVOICE.DELETE, { id, version });
   }
 
-  async generatePdf(id: string): Promise<GenerateInvoicePdfGatewayResponse> {
-    return this.send<GenerateInvoicePdfGatewayResponse, { id: string }>(TCP_PATTERNS.INVOICE.GENERATE_PDF, { id });
+  async generatePdf(id: string): Promise<InvoicePdfDownload> {
+    return this.send<InvoicePdfDownload, { id: string }>(TCP_PATTERNS.INVOICE.GENERATE_PDF, { id });
+  }
+
+  async getPdfDownloadUrl(id: string): Promise<InvoicePdfDownload> {
+    return this.send<InvoicePdfDownload, InvoiceIdGatewayRequest>(TCP_PATTERNS.INVOICE.GET_PDF_URL, { id });
   }
 
   async issueInvoice(id: string): Promise<InvoiceResponse> {

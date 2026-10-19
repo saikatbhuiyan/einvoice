@@ -1,37 +1,34 @@
-import { ClientProviderOptions, Transport } from '@nestjs/microservices';
+import { Transport, type MicroserviceOptions } from '@nestjs/microservices';
 
-const KAFKA_BROKERS = (process.env['KAFKA_BROKERS'] ?? 'localhost:9092').split(',').map((broker) => broker.trim());
-
-/**
- * One Kafka cluster, not one-per-service the way TCP_SERVICES has one host:port per service --
- * so there's no ServiceName-style enum here. `clientId` is the free-form label this instead
- * shares with Kafka itself (shows up in its own broker-side logs/metrics), and the injection
- * token is derived from it so every producer's @Inject() call site stays symmetric with the
- * factory call that registered it, the same relationship TCP_CLIENT_TOKENS has to ServiceName.
- */
-export function kafkaClientToken(clientId: string): string {
-  return `KAFKA_CLIENT_${clientId.toUpperCase().replace(/[^A-Z0-9]+/g, '_')}`;
+/** The cluster's bootstrap brokers, from KAFKA_BROKERS (comma-separated). */
+export function kafkaBrokers(): string[] {
+  return (process.env['KAFKA_BROKERS'] ?? 'localhost:9092').split(',').map((broker) => broker.trim());
 }
 
 /**
- * Reusable by any NestJS producer, not invoice-specific -- mirrors createTcpClientConfig's role
- * for TCP. ClientKafka requires a consumer `groupId` even for a pure producer (it subscribes
- * internally to support Nest's request-reply pattern); every call site in this codebase uses
- * emit() only (fire-and-forget), never send(), so that reply-topic machinery is configured but
- * never exercised.
+ * A Nest Kafka consumer (`app.connectMicroservice(...)`) for one consumer group. Mirrors
+ * createTcpServerConfig's role for TCP. Producing is not done through Nest at all: invoice writes
+ * events to a transactional outbox and its relay publishes them with an awaited, acknowledged send.
+ *
+ * Delivery semantics, as implemented by Nest 11's ServerKafka + kafkajs: the event handler is
+ * awaited inside kafkajs's `eachMessage`, and with `autoCommit` an offset is only committed once
+ * `eachMessage` resolves. A handler that throws is therefore retried (kafkajs backoff), not skipped
+ * -- so handlers must be idempotent, and must swallow only failures retrying can't fix.
+ *
+ * Nest routes by *topic* (the pattern is the topic name), so one `@EventPattern(topic)` handler
+ * receives every event type on that topic and dispatches on `data.type` itself. `data` is the
+ * message's JSON value: the RpcEnvelope the producer wrote.
  */
-export function createKafkaClientConfig(clientId: string): ClientProviderOptions {
+export function createKafkaConsumerConfig(clientId: string, groupId: string): MicroserviceOptions {
   return {
-    name: kafkaClientToken(clientId),
     transport: Transport.KAFKA,
     options: {
-      client: {
-        clientId,
-        brokers: KAFKA_BROKERS,
-      },
-      consumer: {
-        groupId: `${clientId}-producer`,
-      },
+      client: { clientId, brokers: kafkaBrokers() },
+      consumer: { groupId },
+      // Kafka consumers only need to see events from when their group was first created on; earlier
+      // history describes state this service never had.
+      subscribe: { fromBeginning: false },
+      run: { autoCommit: true },
     },
   };
 }

@@ -6,6 +6,7 @@ export const INVOICE_PATTERNS = {
   DELETE: 'invoice.delete',
   BULK_CREATE: 'invoice.bulkCreate',
   GENERATE_PDF: 'invoice.generatePdf',
+  GET_PDF_URL: 'invoice.getPdfUrl',
   ISSUE: 'invoice.issue',
   CANCEL: 'invoice.cancel',
   SEND: 'invoice.send',
@@ -49,6 +50,7 @@ export const PDF_GENERATOR_PATTERNS = {
 
 export const MEDIA_PATTERNS = {
   UPLOAD: 'media.upload',
+  GET_DOWNLOAD_URL: 'media.getDownloadUrl',
 } as const;
 
 export const TCP_PATTERNS = {

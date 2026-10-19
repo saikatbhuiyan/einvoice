@@ -1,5 +1,6 @@
 import { InvoiceDocument } from '@libs/schemas';
 import { CreateInvoiceRequest, FindAllInvoicesRequest, UpdateInvoiceRequest } from '@libs/interfaces/gateway';
+import type { ClientSession } from 'mongoose';
 import type { InvoiceStatus } from '@libs/shared/types';
 
 export const INVOICE_REPOSITORY = Symbol('INVOICE_REPOSITORY');
@@ -31,8 +32,17 @@ export interface PaginatedResult<T = InvoiceDocument> {
   meta: PaginatedResultMeta;
 }
 
+/**
+ * Work that must commit or roll back together with a repository write -- in practice, enqueueing the
+ * domain event that write produced into the transactional outbox. Runs inside the write's
+ * transaction, after the write; throwing aborts both. May run more than once (transient transaction
+ * errors are retried), so every write in it must go through `session`.
+ */
+export type InTransaction = (invoice: InvoiceDocument, session: ClientSession) => Promise<void>;
+
 export interface IInvoiceRepository {
-  create(data: CreateInvoiceRequest): Promise<InvoiceDocument>;
+  /** `inTransaction` runs only when a new invoice is inserted, never for an idempotent replay. */
+  create(data: CreateInvoiceRequest, inTransaction?: InTransaction): Promise<InvoiceDocument>;
 
   findAll(query: FindAllInvoicesRequest): Promise<PaginatedResult>;
 
@@ -45,11 +55,17 @@ export interface IInvoiceRepository {
   remove(id: string, version?: number): Promise<InvoiceDocument | null>;
 
   /**
-   * Deliberately bypasses the If-Match optimistic-concurrency path update() uses: pdfUrl/
-   * pdfGeneratedAt are an informational cache, not user-editable business content, so a PDF
-   * regeneration shouldn't need (or bump) the same version a concurrent content edit would race on.
+   * Records the S3 key of the latest rendered PDF. Deliberately bypasses the If-Match
+   * optimistic-concurrency path update() uses: pdfKey/pdfGeneratedAt point at a rendering of the
+   * content, not user-editable content, so a regeneration shouldn't need (or bump) the version a
+   * concurrent content edit would race on.
    */
-  setPdfMetadata(id: string, pdfUrl: string, pdfGeneratedAt: Date): Promise<InvoiceDocument | null>;
+  setPdfMetadata(
+    id: string,
+    pdfKey: string,
+    pdfGeneratedAt: Date,
+    inTransaction?: InTransaction,
+  ): Promise<InvoiceDocument | null>;
 
   /**
    * Atomically moves the invoice to `to`, only if its current status is one of `from` — the
@@ -57,7 +73,12 @@ export interface IInvoiceRepository {
    * Bumps `version` (unlike setPdfMetadata): a status change is a real change, and an in-flight
    * draft edit must fail its optimistic-concurrency check if the invoice was issued underneath it.
    */
-  transitionStatus(id: string, from: readonly InvoiceStatus[], to: InvoiceStatus): Promise<StatusTransitionResult>;
+  transitionStatus(
+    id: string,
+    from: readonly InvoiceStatus[],
+    to: InvoiceStatus,
+    inTransaction?: InTransaction,
+  ): Promise<StatusTransitionResult>;
 }
 
 export type StatusTransitionResult =

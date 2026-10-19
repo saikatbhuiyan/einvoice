@@ -1,5 +1,5 @@
 import { Controller } from '@nestjs/common';
-import { MessagePattern, Payload } from '@nestjs/microservices';
+import { MessagePattern, Payload, Transport } from '@nestjs/microservices';
 import { TCP_PATTERNS, unwrapRpcPayload, type RpcEnvelope } from '@libs/transports';
 import { RequirePermission } from '@libs/auth/require-permission.decorator';
 import { Public } from '@libs/auth/public.decorator';
@@ -14,6 +14,11 @@ interface WebhookPayload {
   signature: string;
 }
 
+/**
+ * Every pattern here names Transport.TCP. payment runs two microservice servers (TCP and the Kafka
+ * consumer), and Nest binds a pattern with no transport to *every* server -- the Kafka server would
+ * then try to subscribe to these pattern strings as topics, which don't exist, and fail to start.
+ */
 @Controller()
 export class PaymentRpcController {
   constructor(private readonly paymentService: PaymentService) {}
@@ -22,7 +27,7 @@ export class PaymentRpcController {
   // session is, from the caller's point of view, an action against one specific invoice, the same
   // defense-in-depth reasoning media's upload handler already documents.
   @RequirePermission('invoice:write')
-  @MessagePattern(TCP_PATTERNS.PAYMENT.INITIATE)
+  @MessagePattern(TCP_PATTERNS.PAYMENT.INITIATE, Transport.TCP)
   async initiate(@Payload() payload: RpcEnvelope<CreateCheckoutSessionPayload> | CreateCheckoutSessionPayload) {
     const data = unwrapRpcPayload(payload);
     return this.paymentService.createCheckoutSession(data.invoiceId);
@@ -35,7 +40,7 @@ export class PaymentRpcController {
   // boundary here is Stripe's signature, verified inside PaymentProvider.parseWebhookEvent --
   // never this guard.
   @Public()
-  @MessagePattern(TCP_PATTERNS.PAYMENT.WEBHOOK)
+  @MessagePattern(TCP_PATTERNS.PAYMENT.WEBHOOK, Transport.TCP)
   async webhook(@Payload() payload: RpcEnvelope<WebhookPayload> | WebhookPayload) {
     const data = unwrapRpcPayload(payload);
     await this.paymentService.handleWebhookEvent(data.rawBodyBase64, data.signature);

@@ -15,11 +15,12 @@ import {
   FindAllInvoicesCursorResponse,
   FindAllInvoicesRequest,
   FindAllInvoicesResponse,
+  InvoicePdfDownload,
   InvoiceResponse,
   SendInvoiceResponse,
   UpdateInvoiceRequest,
 } from '@libs/interfaces/gateway';
-import { GenerateInvoicePdfGatewayResponse, InvoiceClientService } from './invoice-client.service';
+import { InvoiceClientService } from './invoice-client.service';
 
 const BFF_PREFIX = 'bff';
 const CACHE_KEY_ONE = (id: string) => `${BFF_PREFIX}:invoice:one:${id}`;
@@ -158,7 +159,12 @@ export class InvoiceService {
     return result;
   }
 
-  async generatePdf(id: string): Promise<GenerateInvoicePdfGatewayResponse> {
+  // Never cached: each call is a fresh, short-lived presigned URL.
+  async getPdfDownloadUrl(id: string): Promise<InvoicePdfDownload> {
+    return this.invoiceClient.getPdfDownloadUrl(id);
+  }
+
+  async generatePdf(id: string): Promise<InvoicePdfDownload> {
     const result = await this.invoiceClient.generatePdf(id);
     await this.delCacheKey(CACHE_KEY_ONE(id));
     return result;

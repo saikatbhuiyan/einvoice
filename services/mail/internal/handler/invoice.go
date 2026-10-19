@@ -1,16 +1,24 @@
 // Package handler contains the per-message business logic the Kafka consumer loop delegates to.
+//
+// Error contract with the consumer: return nil when the message is done with (handled, a
+// duplicate, or not ours); wrap failures retrying can never fix in failure.Permanent (the message is
+// dead-lettered); return anything else to have it retried.
 package handler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"time"
 
+	"einvoice/mail/internal/dedupe"
 	"einvoice/mail/internal/events"
+	"einvoice/mail/internal/failure"
 	"einvoice/mail/internal/mail"
+	"einvoice/mail/internal/storage"
 	"einvoice/mail/internal/template"
 )
 
@@ -18,12 +26,17 @@ const httpFetchTimeout = 30 * time.Second
 
 type InvoiceHandler struct {
 	sender mail.Sender
+	pdfs   storage.PDFStore
+	dedupe dedupe.Store
+	// Only for legacy invoice.sent messages that carry a public pdfUrl instead of a pdfKey.
 	client *http.Client
 }
 
-func NewInvoiceHandler(sender mail.Sender) *InvoiceHandler {
+func NewInvoiceHandler(sender mail.Sender, pdfs storage.PDFStore, dedupe dedupe.Store) *InvoiceHandler {
 	return &InvoiceHandler{
 		sender: sender,
+		pdfs:   pdfs,
+		dedupe: dedupe,
 		client: &http.Client{Timeout: httpFetchTimeout},
 	}
 }
@@ -32,11 +45,11 @@ func NewInvoiceHandler(sender mail.Sender) *InvoiceHandler {
 func (h *InvoiceHandler) Handle(ctx context.Context, _ []byte, value []byte) error {
 	event, meta, ok, err := events.Decode(value)
 	if err != nil {
-		return fmt.Errorf("decode invoice event: %w", err)
+		// Bytes that don't decode today won't decode tomorrow.
+		return failure.Permanent(fmt.Errorf("decode invoice event: %w", err))
 	}
 	if !ok {
-		// A type this handler doesn't recognize -- not an error, just nothing to do. The topic
-		// may grow more event types later that this version of the service has no handler for.
+		// A type this service doesn't handle (e.g. invoice.cancelled, for payment) -- nothing to do.
 		return nil
 	}
 
@@ -52,11 +65,25 @@ func (h *InvoiceHandler) Handle(ctx context.Context, _ []byte, value []byte) err
 }
 
 func (h *InvoiceHandler) handleSent(ctx context.Context, e events.SentEvent, meta events.Meta) error {
-	slog.Info("sending invoice email", "invoiceId", e.InvoiceID, "invoiceNumber", e.InvoiceNumber, "correlationId", meta.CorrelationID)
+	log := slog.With("invoiceId", e.InvoiceID, "invoiceNumber", e.InvoiceNumber, "eventId", e.EventID, "correlationId", meta.CorrelationID)
 
-	pdfBytes, err := h.fetchPDF(ctx, e.PdfURL)
+	if e.EventID != "" {
+		seen, err := h.dedupe.Seen(ctx, e.EventID)
+		if err != nil {
+			// Unknown whether it was already sent: don't risk a duplicate, retry once Redis answers.
+			return err
+		}
+		if seen {
+			log.Info("duplicate invoice.sent event, email already sent; skipping")
+			return nil
+		}
+	}
+
+	log.Info("sending invoice email")
+
+	pdfBytes, err := h.loadPDF(ctx, e)
 	if err != nil {
-		return fmt.Errorf("fetch PDF from %q: %w", e.PdfURL, err)
+		return err
 	}
 
 	html, err := template.RenderInvoiceEmail(template.InvoiceEmailData{
@@ -68,7 +95,7 @@ func (h *InvoiceHandler) handleSent(ctx context.Context, e events.SentEvent, met
 		DueDate:       e.DueDate,
 	})
 	if err != nil {
-		return fmt.Errorf("render email template: %w", err)
+		return failure.Permanent(fmt.Errorf("render email template: %w", err))
 	}
 
 	msg := mail.Message{
@@ -84,24 +111,50 @@ func (h *InvoiceHandler) handleSent(ctx context.Context, e events.SentEvent, met
 		return fmt.Errorf("send invoice email: %w", err)
 	}
 
-	slog.Info("invoice email sent", "invoiceId", e.InvoiceID, "to", e.ClientEmail)
+	if e.EventID != "" {
+		// Not returned: the email is already out, and a retry would send it again. The cost of a
+		// lost mark is a possible duplicate if this exact event is redelivered.
+		if err := h.dedupe.Mark(ctx, e.EventID); err != nil {
+			log.Warn("invoice email sent but not recorded for dedupe", "error", err)
+		}
+	}
+
+	log.Info("invoice email sent", "to", e.ClientEmail)
 	return nil
 }
 
-func (h *InvoiceHandler) fetchPDF(ctx context.Context, url string) ([]byte, error) {
+func (h *InvoiceHandler) loadPDF(ctx context.Context, e events.SentEvent) ([]byte, error) {
+	switch {
+	case e.PdfKey != "":
+		return h.pdfs.Get(ctx, e.PdfKey)
+	case e.PdfURL != "":
+		return h.fetchLegacyPDF(ctx, e.PdfURL)
+	default:
+		return nil, failure.Permanent(errors.New("invoice.sent event has neither pdfKey nor pdfUrl"))
+	}
+}
+
+func (h *InvoiceHandler) fetchLegacyPDF(ctx context.Context, url string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return nil, err
+		return nil, failure.Permanent(fmt.Errorf("fetch PDF from %q: %w", url, err))
 	}
 
 	resp, err := h.client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("fetch PDF from %q: %w", url, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected status %d", resp.StatusCode)
+		err := fmt.Errorf("fetch PDF from %q: unexpected status %d", url, resp.StatusCode)
+		// A 4xx (the object is gone, or the URL is no longer public) won't change on retry; a 5xx,
+		// a timeout (408) or throttling (429) might.
+		if resp.StatusCode >= 400 && resp.StatusCode < 500 &&
+			resp.StatusCode != http.StatusRequestTimeout && resp.StatusCode != http.StatusTooManyRequests {
+			return nil, failure.Permanent(err)
+		}
+		return nil, err
 	}
 
 	return io.ReadAll(resp.Body)

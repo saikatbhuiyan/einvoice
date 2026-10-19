@@ -1,11 +1,12 @@
 {
   "data": {
     "type": "invoice.sent",
+    "eventId": "6710000000000000000000e3",
     "invoiceId": "6700000000000000000000a2",
     "invoiceNumber": "INV-2026-002",
     "clientName": "Globex",
     "clientEmail": "ap@globex.test",
-    "pdfUrl": "https://einvoice-media.s3.eu-west-1.amazonaws.com/invoices/1760605200000-invoice-INV-2026-002.pdf",
+    "pdfKey": "invoices/7c1d9a40-5e2f-4b8a-8f63-3a9e0b1d2c45/invoice-INV-2026-002.pdf",
     "fileName": "invoice-INV-2026-002.pdf",
     "currency": "USD",
     "total": 10,

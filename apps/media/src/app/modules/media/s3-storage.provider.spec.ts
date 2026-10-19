@@ -1,4 +1,5 @@
-import { HeadBucketCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { NotFoundException } from '@nestjs/common';
+import { HeadBucketCommand, HeadObjectCommand, NotFound, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 
 const s3Config = {
   S3_BUCKET: 'einvoice-media',
@@ -7,7 +8,7 @@ const s3Config = {
   S3_ACCESS_KEY_ID: undefined as string | undefined,
   S3_SECRET_ACCESS_KEY: undefined as string | undefined,
   S3_FORCE_PATH_STYLE: false,
-  S3_PUBLIC_BASE_URL: undefined as string | undefined,
+  S3_PUBLIC_ENDPOINT: undefined as string | undefined,
 };
 
 // The real CONFIGURATION validates eagerly at import time against process.env; the provider only
@@ -28,14 +29,15 @@ jest.mock('@aws-sdk/client-s3', () => {
   return { ...actual, S3Client: RecordingS3Client };
 });
 
-import { S3StorageProvider } from './s3-storage.provider';
+import { S3StorageProvider, contentDisposition } from './s3-storage.provider';
 
 describe('S3StorageProvider', () => {
   let send: jest.SpyInstance;
 
   beforeEach(() => {
     Object.assign(s3Config, {
-      S3_PUBLIC_BASE_URL: undefined,
+      S3_ENDPOINT: undefined,
+      S3_PUBLIC_ENDPOINT: undefined,
       S3_ACCESS_KEY_ID: undefined,
       S3_SECRET_ACCESS_KEY: undefined,
     });
@@ -59,47 +61,98 @@ describe('S3StorageProvider', () => {
     });
   });
 
-  it('returns a virtual-hosted AWS URL when no public base URL is configured', async () => {
+  it('returns only the key -- no permanent URL to a private object', async () => {
     const result = await new S3StorageProvider().upload({
-      key: 'invoices/1-a.pdf',
+      key: 'invoices/u/a.pdf',
       body: Buffer.alloc(0),
       contentType: 'x',
     });
 
-    expect(result).toEqual({
-      key: 'invoices/1-a.pdf',
-      url: 'https://einvoice-media.s3.eu-west-1.amazonaws.com/invoices/1-a.pdf',
+    expect(result).toEqual({ key: 'invoices/u/a.pdf' });
+  });
+
+  describe('getDownloadUrl', () => {
+    beforeEach(() => {
+      // Presigning is offline, but needs credentials to sign with.
+      Object.assign(s3Config, {
+        S3_ACCESS_KEY_ID: 'AKIA-TEST',
+        S3_SECRET_ACCESS_KEY: 'secret',
+        S3_ENDPOINT: 'http://s3mock:9090',
+        S3_PUBLIC_ENDPOINT: 'http://localhost:9090',
+        S3_FORCE_PATH_STYLE: true,
+      });
+    });
+
+    // The service reaches S3 at an in-network host; the browser can't. The signature covers the host,
+    // so the URL must be *signed* for the public one, not rewritten after the fact.
+    it('checks the object exists via the internal endpoint, then signs for the public endpoint', async () => {
+      jest.useFakeTimers({ now: new Date('2026-10-19T10:00:00.000Z') });
+      try {
+        const { url, expiresAt } = await new S3StorageProvider().getDownloadUrl({
+          key: 'invoices/u/invoice-INV-1.pdf',
+          fileName: 'invoice-INV-1.pdf',
+          expiresInSeconds: 300,
+        });
+
+        const head = send.mock.calls[0][0] as HeadObjectCommand;
+        expect(head).toBeInstanceOf(HeadObjectCommand);
+        expect(head.input).toEqual({ Bucket: 'einvoice-media', Key: 'invoices/u/invoice-INV-1.pdf' });
+
+        const parsed = new URL(url);
+        expect(parsed.origin).toBe('http://localhost:9090');
+        expect(parsed.pathname).toBe('/einvoice-media/invoices/u/invoice-INV-1.pdf');
+        expect(parsed.searchParams.get('X-Amz-Expires')).toBe('300');
+        expect(parsed.searchParams.get('X-Amz-Signature')).toMatch(/^[0-9a-f]{64}$/);
+        expect(parsed.searchParams.get('X-Amz-SignedHeaders')).toBe('host');
+        expect(parsed.searchParams.get('response-content-disposition')).toBe(contentDisposition('invoice-INV-1.pdf'));
+        expect(expiresAt).toEqual(new Date('2026-10-19T10:05:00.000Z'));
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('signs for the regular endpoint when no public endpoint is configured (AWS)', async () => {
+      Object.assign(s3Config, { S3_ENDPOINT: undefined, S3_PUBLIC_ENDPOINT: undefined, S3_FORCE_PATH_STYLE: false });
+
+      const { url } = await new S3StorageProvider().getDownloadUrl({
+        key: 'k.pdf',
+        fileName: 'k.pdf',
+        expiresInSeconds: 60,
+      });
+
+      expect(new URL(url).host).toBe('einvoice-media.s3.eu-west-1.amazonaws.com');
+    });
+
+    it('throws NotFoundException instead of handing out a link to a missing object', async () => {
+      send.mockRejectedValue(new NotFound({ message: 'Not Found', $metadata: {} }));
+
+      await expect(
+        new S3StorageProvider().getDownloadUrl({ key: 'gone.pdf', fileName: 'gone.pdf', expiresInSeconds: 60 }),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('propagates any other S3 failure', async () => {
+      send.mockRejectedValue(new Error('AccessDenied'));
+
+      await expect(
+        new S3StorageProvider().getDownloadUrl({ key: 'k.pdf', fileName: 'k.pdf', expiresInSeconds: 60 }),
+      ).rejects.toThrow('AccessDenied');
     });
   });
 
-  it('uses S3_PUBLIC_BASE_URL when set, tolerating a trailing slash', async () => {
-    s3Config.S3_PUBLIC_BASE_URL = 'http://localhost:9090/einvoice-media/';
-
-    const { url } = await new S3StorageProvider().upload({
-      key: 'invoices/1-a.pdf',
-      body: Buffer.alloc(0),
-      contentType: 'x',
+  // The file name derives from the user-supplied invoice number.
+  describe('contentDisposition', () => {
+    it('keeps a plain name as-is', () => {
+      expect(contentDisposition('invoice-INV-1.pdf')).toBe(
+        `attachment; filename="invoice-INV-1.pdf"; filename*=UTF-8''invoice-INV-1.pdf`,
+      );
     });
 
-    expect(url).toBe('http://localhost:9090/einvoice-media/invoices/1-a.pdf');
-  });
-
-  // The key embeds the invoice number, which is only length-validated — "INV #42" is legal. This
-  // URL is stored on the invoice and emailed to the customer, so it must survive URL parsing.
-  it('percent-encodes key segments so characters like "#", "?" and spaces cannot truncate the URL', async () => {
-    const key = 'invoices/1-invoice-INV #42?draft=1.pdf';
-
-    const { url, key: returnedKey } = await new S3StorageProvider().upload({
-      key,
-      body: Buffer.alloc(0),
-      contentType: 'x',
+    it('cannot be broken out of by quotes or backslashes, and carries non-ASCII names exactly in filename*', () => {
+      expect(contentDisposition('INV "x"\\ é.pdf')).toBe(
+        `attachment; filename="INV _x__ _.pdf"; filename*=UTF-8''INV%20%22x%22%5C%20%C3%A9.pdf`,
+      );
     });
-
-    expect(returnedKey).toBe(key);
-    expect(url).toBe(
-      'https://einvoice-media.s3.eu-west-1.amazonaws.com/invoices/1-invoice-INV%20%2342%3Fdraft%3D1.pdf',
-    );
-    expect(new URL(url).pathname).toBe('/invoices/1-invoice-INV%20%2342%3Fdraft%3D1.pdf');
   });
 
   it('checks health with HeadBucket against the configured bucket', async () => {

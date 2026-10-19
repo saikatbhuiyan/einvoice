@@ -62,6 +62,12 @@ export class InvoiceRpcController {
     return this.invoiceService.generatePdf(data.id);
   }
 
+  @MessagePattern(TCP_PATTERNS.INVOICE.GET_PDF_URL)
+  @RequirePermission('invoice:read')
+  getPdfUrlByMessage(@Payload() payload: RpcEnvelope<InvoiceIdPayload> | InvoiceIdPayload) {
+    return this.invoiceService.getPdfDownloadUrl(unwrapRpcPayload(payload).id);
+  }
+
   @MessagePattern(TCP_PATTERNS.INVOICE.ISSUE)
   @RequirePermission('invoice:write')
   issueByMessage(@Payload() payload: RpcEnvelope<InvoiceIdPayload> | InvoiceIdPayload) {
