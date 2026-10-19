@@ -7,8 +7,11 @@ type MockCache = { get: jest.Mock; set: jest.Mock; del: jest.Mock };
 type MockRedis = { get: jest.Mock; incr: jest.Mock };
 type MockAuditLog = { record: jest.Mock };
 type MockPdfGeneratorClient = { generateInvoicePdf: jest.Mock };
-type MockMediaClient = { uploadFile: jest.Mock };
-type MockEventsProducer = { emitDemo: jest.Mock; emitSent: jest.Mock };
+type MockMediaClient = { uploadFile: jest.Mock; getDownloadUrl: jest.Mock };
+type MockEventsProducer = { enqueueDemo: jest.Mock; enqueueSent: jest.Mock; enqueueCancelled: jest.Mock };
+
+// Stands in for the transaction's ClientSession: events must be enqueued with exactly this object.
+const SESSION = { id: 'txn-session' };
 
 const buildInvoiceDoc = (overrides: Record<string, unknown> = {}) => {
   const base = {
@@ -65,8 +68,12 @@ describe('InvoiceService', () => {
     redis = { get: jest.fn().mockResolvedValue(null), incr: jest.fn().mockResolvedValue(1) };
     auditLog = { record: jest.fn().mockResolvedValue(undefined) };
     pdfGeneratorClient = { generateInvoicePdf: jest.fn() };
-    mediaClient = { uploadFile: jest.fn() };
-    eventsProducer = { emitDemo: jest.fn(), emitSent: jest.fn() };
+    mediaClient = { uploadFile: jest.fn(), getDownloadUrl: jest.fn() };
+    eventsProducer = {
+      enqueueDemo: jest.fn().mockResolvedValue('evt'),
+      enqueueSent: jest.fn().mockResolvedValue('evt'),
+      enqueueCancelled: jest.fn().mockResolvedValue('evt'),
+    };
 
     service = new InvoiceService(
       repository,
@@ -91,6 +98,18 @@ describe('InvoiceService', () => {
       expect(auditLog.record).toHaveBeenCalledWith(
         expect.objectContaining({ action: 'CREATE', entityType: 'invoice', entityId: 'invoice-1' }),
       );
+    });
+
+    it("enqueues invoice.demo inside the insert's transaction (via the repository hook)", async () => {
+      const created = buildInvoiceDoc({ id: 'invoice-1' });
+      repository.create.mockImplementation(async (_dto, inTransaction) => {
+        await inTransaction?.(created, SESSION as never);
+        return created;
+      });
+
+      await service.create({ invoiceNumber: 'INV-0001' } as never);
+
+      expect(eventsProducer.enqueueDemo).toHaveBeenCalledWith(SESSION, 'invoice-1');
     });
 
     it('maps a duplicate invoiceNumber error to ConflictException', async () => {
@@ -284,7 +303,7 @@ describe('InvoiceService', () => {
 
       const result = await service.issue(ID);
 
-      expect(repository.transitionStatus).toHaveBeenCalledWith(ID, ['draft'], 'issued');
+      expect(repository.transitionStatus).toHaveBeenCalledWith(ID, ['draft'], 'issued', undefined);
       expect(result).toEqual(issued.toJSON());
       expect(cacheManager.del).toHaveBeenCalled();
       expect(redis.incr).toHaveBeenCalled();
@@ -305,7 +324,42 @@ describe('InvoiceService', () => {
 
       await service.cancel(ID);
 
-      expect(repository.transitionStatus).toHaveBeenCalledWith(ID, ['issued', 'overdue'], 'cancelled');
+      expect(repository.transitionStatus).toHaveBeenCalledWith(
+        ID,
+        ['issued', 'overdue'],
+        'cancelled',
+        expect.any(Function),
+      );
+    });
+
+    // payment expires the invoice's open checkout session when it sees this event.
+    it("enqueues invoice.cancelled inside the cancellation's transaction", async () => {
+      jest.useFakeTimers({ now: new Date('2026-10-19T10:00:00.000Z') });
+      try {
+        const cancelled = buildFullInvoiceDoc('cancelled');
+        repository.transitionStatus.mockImplementation(async (_id, _from, _to, inTransaction) => {
+          await inTransaction?.(cancelled, SESSION as never);
+          return { outcome: 'transitioned', invoice: cancelled, from: 'issued' };
+        });
+
+        await service.cancel(ID);
+
+        expect(eventsProducer.enqueueCancelled).toHaveBeenCalledWith(SESSION, {
+          invoiceId: ID,
+          invoiceNumber: 'INV-0001',
+          cancelledAt: '2026-10-19T10:00:00.000Z',
+        });
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('enqueues no event when cancelling an already-cancelled invoice (idempotent no-op)', async () => {
+      repository.transitionStatus.mockResolvedValue({ outcome: 'rejected', invoice: buildFullInvoiceDoc('cancelled') });
+
+      await service.cancel(ID);
+
+      expect(eventsProducer.enqueueCancelled).not.toHaveBeenCalled();
     });
 
     it('refuses an illegal transition with a 409 naming the current status', async () => {
@@ -334,32 +388,68 @@ describe('InvoiceService', () => {
     });
   });
 
-  describe('generatePdf and send', () => {
+  describe('PDFs: generate, download, send', () => {
+    const KEY = 'invoices/0b1c/invoice-INV-0001.pdf';
+    const DOWNLOAD = {
+      url: 'https://s3.test/signed?X-Amz-Signature=abc',
+      expiresAt: '2026-10-19T10:05:00.000Z',
+      fileName: 'invoice-INV-0001.pdf',
+    };
+
     beforeEach(() => {
       pdfGeneratorClient.generateInvoicePdf.mockResolvedValue({
         base64: 'JVBERg==',
         contentType: 'application/pdf',
         fileName: 'invoice-INV-0001.pdf',
       });
-      mediaClient.uploadFile.mockResolvedValue({ url: 'https://s3.test/invoice-INV-0001.pdf' });
+      mediaClient.uploadFile.mockResolvedValue({ key: KEY });
+      mediaClient.getDownloadUrl.mockResolvedValue(DOWNLOAD);
+      // Like the real repository: stores the key, then runs the hook in the same transaction.
+      repository.setPdfMetadata.mockImplementation(async (_id, pdfKey, _at, inTransaction) => {
+        const stored = { ...buildFullInvoiceDoc('issued'), pdfKey } as never;
+        await inTransaction?.(stored, SESSION as never);
+        return stored;
+      });
     });
 
-    it('generatePdf renders and stores the PDF but never emails the client', async () => {
+    it('generatePdf stores the PDF privately, returns a short-lived link, and never emails the client', async () => {
       repository.findOne.mockResolvedValue(buildFullInvoiceDoc('draft'));
 
       const result = await service.generatePdf(ID);
 
-      expect(result).toEqual({ url: 'https://s3.test/invoice-INV-0001.pdf', fileName: 'invoice-INV-0001.pdf' });
-      expect(repository.setPdfMetadata).toHaveBeenCalledWith(
-        ID,
-        'https://s3.test/invoice-INV-0001.pdf',
-        expect.any(Date),
-      );
-      expect(eventsProducer.emitSent).not.toHaveBeenCalled();
+      expect(repository.setPdfMetadata).toHaveBeenCalledWith(ID, KEY, expect.any(Date), undefined);
+      expect(mediaClient.getDownloadUrl).toHaveBeenCalledWith({ key: KEY, fileName: 'invoice-INV-0001.pdf' });
+      expect(result).toEqual(DOWNLOAD);
+      expect(eventsProducer.enqueueSent).not.toHaveBeenCalled();
       expect(auditLog.record).toHaveBeenCalledWith(expect.objectContaining({ action: 'GENERATE_PDF' }));
     });
 
-    it('send issues a draft first, so the PDF and the email show it as issued', async () => {
+    describe('getPdfDownloadUrl', () => {
+      it('signs a fresh link for the stored key, named after its file', async () => {
+        repository.findOne.mockResolvedValue({ ...buildFullInvoiceDoc('issued'), pdfKey: KEY } as never);
+
+        await expect(service.getPdfDownloadUrl(ID)).resolves.toEqual(DOWNLOAD);
+
+        expect(mediaClient.getDownloadUrl).toHaveBeenCalledWith({ key: KEY, fileName: 'invoice-INV-0001.pdf' });
+      });
+
+      it('is a 404 when no PDF has been generated yet', async () => {
+        repository.findOne.mockResolvedValue(buildFullInvoiceDoc('draft'));
+
+        await expect(service.getPdfDownloadUrl(ID)).rejects.toThrow(
+          new NotFoundException(`No PDF has been generated for invoice "${ID}" yet.`),
+        );
+        expect(mediaClient.getDownloadUrl).not.toHaveBeenCalled();
+      });
+
+      it('is a 404 for a missing invoice', async () => {
+        repository.findOne.mockResolvedValue(null);
+
+        await expect(service.getPdfDownloadUrl(ID)).rejects.toBeInstanceOf(NotFoundException);
+      });
+    });
+
+    it("send issues a draft, then enqueues invoice.sent (with the key, never a URL) in the PDF's transaction", async () => {
       repository.findOne.mockResolvedValue(buildFullInvoiceDoc('draft'));
       repository.transitionStatus.mockResolvedValue({
         outcome: 'transitioned',
@@ -369,26 +459,32 @@ describe('InvoiceService', () => {
 
       const result = await service.send(ID);
 
-      expect(repository.transitionStatus).toHaveBeenCalledWith(ID, ['draft'], 'issued');
+      expect(repository.transitionStatus).toHaveBeenCalledWith(ID, ['draft'], 'issued', undefined);
       expect(pdfGeneratorClient.generateInvoicePdf).toHaveBeenCalledWith(expect.objectContaining({ status: 'issued' }));
-      expect(eventsProducer.emitSent).toHaveBeenCalledWith({
+      expect(repository.setPdfMetadata).toHaveBeenCalledWith(ID, KEY, expect.any(Date), expect.any(Function));
+      expect(eventsProducer.enqueueSent).toHaveBeenCalledWith(SESSION, {
         invoiceId: ID,
         invoiceNumber: 'INV-0001',
         clientName: 'Acme Corp',
         clientEmail: 'billing@acme.test',
-        pdfUrl: 'https://s3.test/invoice-INV-0001.pdf',
+        pdfKey: KEY,
         fileName: 'invoice-INV-0001.pdf',
         currency: 'EUR',
         total: 120,
         issueDate: '2026-10-01T00:00:00.000Z',
         dueDate: undefined,
       });
-      expect(result).toEqual({
-        invoice: expect.objectContaining({ status: 'issued' }),
-        pdfUrl: 'https://s3.test/invoice-INV-0001.pdf',
-        fileName: 'invoice-INV-0001.pdf',
-      });
+      expect(result).toEqual({ invoice: expect.objectContaining({ status: 'issued' }), pdf: DOWNLOAD });
       expect(auditLog.record).toHaveBeenCalledWith(expect.objectContaining({ action: 'SEND' }));
+    });
+
+    // The point of the outbox: no event without the commit, no commit without the event.
+    it('fails the send when the event cannot be enqueued (the transaction rolls back)', async () => {
+      repository.findOne.mockResolvedValue(buildFullInvoiceDoc('issued'));
+      eventsProducer.enqueueSent.mockRejectedValue(new Error('outbox write failed'));
+
+      await expect(service.send(ID)).rejects.toThrow('outbox write failed');
+      expect(auditLog.record).not.toHaveBeenCalledWith(expect.objectContaining({ action: 'SEND' }));
     });
 
     it('re-sends an overdue invoice (a reminder) without changing its status', async () => {
@@ -397,7 +493,7 @@ describe('InvoiceService', () => {
       await service.send(ID);
 
       expect(repository.transitionStatus).not.toHaveBeenCalled();
-      expect(eventsProducer.emitSent).toHaveBeenCalled();
+      expect(eventsProducer.enqueueSent).toHaveBeenCalled();
     });
 
     it.each(['paid', 'cancelled'])('refuses to send a %s invoice, before rendering anything', async (status) => {
@@ -407,7 +503,7 @@ describe('InvoiceService', () => {
         new ConflictException(`Cannot send an invoice that is ${status}.`),
       );
       expect(pdfGeneratorClient.generateInvoicePdf).not.toHaveBeenCalled();
-      expect(eventsProducer.emitSent).not.toHaveBeenCalled();
+      expect(eventsProducer.enqueueSent).not.toHaveBeenCalled();
     });
 
     it('does not email the client if rendering fails', async () => {
@@ -415,7 +511,7 @@ describe('InvoiceService', () => {
       pdfGeneratorClient.generateInvoicePdf.mockRejectedValue(new Error('chromium crashed'));
 
       await expect(service.send(ID)).rejects.toThrow('chromium crashed');
-      expect(eventsProducer.emitSent).not.toHaveBeenCalled();
+      expect(eventsProducer.enqueueSent).not.toHaveBeenCalled();
     });
   });
 

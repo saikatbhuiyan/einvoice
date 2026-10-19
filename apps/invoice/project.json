@@ -76,6 +76,13 @@
         "jestConfig": "{projectRoot}/jest.integration.config.cts",
         "runInBand": true
       }
+    },
+    "backfill-pdf-keys": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "TS_NODE_PROJECT=apps/invoice/tsconfig.app.json TS_NODE_TRANSPILE_ONLY=true node -r ts-node/register apps/invoice/src/database/scripts/backfill-pdf-keys.ts",
+        "cwd": "{workspaceRoot}"
+      }
     }
   }
 }

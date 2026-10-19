@@ -124,9 +124,19 @@ export interface DeleteInvoiceResponse {
   deleted: true;
 }
 
+/**
+ * A short-lived link to an invoice's PDF. The bucket is private; ask for a new link
+ * (GET /invoices/:id/pdf) rather than storing this one.
+ */
+export interface InvoicePdfDownload {
+  url: string;
+  /** ISO-8601 instant after which `url` stops working. */
+  expiresAt: string;
+  fileName: string;
+}
+
 export interface SendInvoiceResponse {
   /** The invoice as sent — issued, if it was still a draft. */
   invoice: InvoiceResponse;
-  pdfUrl: string;
-  fileName: string;
+  pdf: InvoicePdfDownload;
 }

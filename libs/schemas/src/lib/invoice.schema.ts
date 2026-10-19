@@ -90,12 +90,15 @@ export class Invoice extends BaseSchema {
   deletedAt?: Date | null;
 
   /**
-   * Informational cache of the last PDF generated for this invoice (see InvoiceService.generatePdf).
-   * Always overwritten on the next explicit generate call, never read for correctness — no
-   * invalidation logic needed beyond that overwrite.
+   * S3 key of the last PDF rendered for this invoice (see InvoiceService.generatePdf/send). The
+   * bucket is private: this is never a URL -- downloads go through short-lived presigned URLs
+   * (InvoiceService.getPdfDownloadUrl). Overwritten by the next render.
+   *
+   * Replaced `pdfUrl` (a permanent public object URL); documents written before that change are
+   * converted by apps/invoice/src/database/scripts/backfill-pdf-keys.ts.
    */
   @Prop()
-  pdfUrl?: string;
+  pdfKey?: string;
 
   @Prop()
   pdfGeneratedAt?: Date;

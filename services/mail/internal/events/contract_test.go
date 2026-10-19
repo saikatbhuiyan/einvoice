@@ -49,70 +49,95 @@ func TestContractDemoEvent(t *testing.T) {
 	if !isDemo {
 		t.Fatalf("event type = %T, want DemoEvent", event)
 	}
-	if demo.InvoiceID != "6700000000000000000000a1" || demo.Message != "Invoice 6700000000000000000000a1 was created." {
+	if demo.InvoiceID != "6700000000000000000000a1" || demo.Message != "Invoice 6700000000000000000000a1 was created." ||
+		demo.EventID != "6710000000000000000000e1" {
 		t.Fatalf("demo = %+v", demo)
 	}
 	wantMeta(t, meta)
 }
 
-func wantSentEvent(t *testing.T, got SentEvent, wantType string) {
-	t.Helper()
-	want := SentEvent{
-		Type:          wantType,
+// The fields every invoice.sent fixture shares; each test adds what differs (eventId, pdfKey/pdfUrl).
+func baseSentEvent(eventType string) SentEvent {
+	return SentEvent{
+		Type:          eventType,
 		InvoiceID:     "6700000000000000000000a1",
 		InvoiceNumber: "INV-2026-001",
 		ClientName:    "Acme Corp",
 		ClientEmail:   "billing@acme.test",
-		PdfURL:        "https://einvoice-media.s3.eu-west-1.amazonaws.com/invoices/1760605200000-invoice-INV-2026-001.pdf",
 		FileName:      "invoice-INV-2026-001.pdf",
 		Currency:      "EUR",
 		Total:         129.9,
 		IssueDate:     "2026-10-01T00:00:00.000Z",
 		DueDate:       "2026-10-31T00:00:00.000Z",
 	}
-	if got != want {
-		t.Fatalf("event =\n %+v\nwant\n %+v", got, want)
-	}
 }
 
-func TestContractSentEvent(t *testing.T) {
-	event, meta, ok, err := Decode(readFixture(t, "invoice.sent.json"))
+func decodeSent(t *testing.T, name string) (SentEvent, Meta) {
+	t.Helper()
+	event, meta, ok, err := Decode(readFixture(t, name))
 	if err != nil || !ok {
-		t.Fatalf("Decode: ok=%v err=%v", ok, err)
+		t.Fatalf("Decode(%s): ok=%v err=%v", name, ok, err)
 	}
-
 	got, isSent := event.(SentEvent)
 	if !isSent {
 		t.Fatalf("event type = %T, want SentEvent", event)
 	}
-	wantSentEvent(t, got, TypeSent)
+	return got, meta
+}
+
+func TestContractSentEvent(t *testing.T) {
+	got, meta := decodeSent(t, "invoice.sent.json")
+
+	want := baseSentEvent(TypeSent)
+	want.EventID = "6710000000000000000000e2"
+	want.PdfKey = "invoices/2b6f0c2e-1c3a-4e3b-9a51-0d2f7b6c9e10/invoice-INV-2026-001.pdf"
+	if got != want {
+		t.Fatalf("event =\n %+v\nwant\n %+v", got, want)
+	}
 	wantMeta(t, meta)
 }
 
 // The producer drops dueDate entirely (JSON.stringify omits undefined); it must decode as empty.
 func TestContractSentWithoutDueDate(t *testing.T) {
-	event, _, ok, err := Decode(readFixture(t, "invoice.sent.no-due-date.json"))
-	if err != nil || !ok {
-		t.Fatalf("Decode: ok=%v err=%v", ok, err)
-	}
+	got, _ := decodeSent(t, "invoice.sent.no-due-date.json")
 
-	got := event.(SentEvent)
-	if got.DueDate != "" || got.Total != 10 || got.Currency != "USD" {
+	if got.DueDate != "" || got.Total != 10 || got.Currency != "USD" || got.EventID != "6710000000000000000000e3" ||
+		got.PdfKey != "invoices/7c1d9a40-5e2f-4b8a-8f63-3a9e0b1d2c45/invoice-INV-2026-002.pdf" {
 		t.Fatalf("event = %+v", got)
 	}
 }
 
-// Messages produced before the rename can still be on the topic: they must still be emailed.
-func TestContractLegacyPdfGeneratedDecodesAsSent(t *testing.T) {
-	event, meta, ok, err := Decode(readFixture(t, "invoice.pdf.generated.legacy.json"))
-	if err != nil || !ok {
-		t.Fatalf("Decode: ok=%v err=%v", ok, err)
-	}
+// Messages produced before PDFs became private: a public pdfUrl, no pdfKey, no eventId.
+func TestContractLegacySentWithPdfUrlStillDecodes(t *testing.T) {
+	got, meta := decodeSent(t, "invoice.sent.pdf-url.legacy.json")
 
-	got, isSent := event.(SentEvent)
-	if !isSent {
-		t.Fatalf("event type = %T, want SentEvent", event)
+	want := baseSentEvent(TypeSent)
+	want.PdfURL = "https://einvoice-media.s3.eu-west-1.amazonaws.com/invoices/1760605200000-invoice-INV-2026-001.pdf"
+	if got != want {
+		t.Fatalf("event =\n %+v\nwant\n %+v", got, want)
 	}
-	wantSentEvent(t, got, TypePdfGeneratedLegacy)
+	wantMeta(t, meta)
+}
+
+// Messages produced before the invoice.sent rename can still be on the topic: they must still be emailed.
+func TestContractLegacyPdfGeneratedDecodesAsSent(t *testing.T) {
+	got, meta := decodeSent(t, "invoice.pdf.generated.legacy.json")
+
+	want := baseSentEvent(TypePdfGeneratedLegacy)
+	want.PdfURL = "https://einvoice-media.s3.eu-west-1.amazonaws.com/invoices/1760605200000-invoice-INV-2026-001.pdf"
+	if got != want {
+		t.Fatalf("event =\n %+v\nwant\n %+v", got, want)
+	}
+	wantMeta(t, meta)
+}
+
+// invoice.cancelled is payment's event: this service decodes the envelope (for logging) and reports
+// it as not its own, which the handler acknowledges without acting.
+func TestContractCancelledIsNotThisServicesEvent(t *testing.T) {
+	event, meta, ok, err := Decode(readFixture(t, "invoice.cancelled.json"))
+
+	if err != nil || ok || event != nil {
+		t.Fatalf("Decode: event=%v ok=%v err=%v, want ignored", event, ok, err)
+	}
 	wantMeta(t, meta)
 }

@@ -397,7 +397,8 @@ services:
       S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-test}
       S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-test}
       S3_FORCE_PATH_STYLE: "true"
-      S3_PUBLIC_BASE_URL: http://localhost:${S3MOCK_PORT:-9090}/${S3_BUCKET:-einvoice-dev}
+      # Presigned download URLs are signed for this host -- the one a browser on the host reaches.
+      S3_PUBLIC_ENDPOINT: http://localhost:${S3MOCK_PORT:-9090}
       CHOKIDAR_USEPOLLING: "true"
       WATCHPACK_POLLING: "true"
     depends_on:
@@ -446,6 +447,8 @@ services:
       PAYMENT_SERVICE_HOST: 0.0.0.0
       PAYMENT_SERVICE_PORT: ${PAYMENT_SERVICE_PORT:-3004}
       INVOICE_SERVICE_HOST: invoice
+      # invoice.events consumer (InvoiceEventsController).
+      KAFKA_BROKERS: kafka:9092
       INVOICE_SERVICE_PORT: ${INVOICE_SERVICE_PORT:-3301}
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
@@ -463,6 +466,8 @@ services:
         condition: service_healthy
       invoice:
         condition: service_started
+      kafka:
+        condition: service_healthy
     ports:
       - "${PAYMENT_HTTP_PORT:-3314}:${PAYMENT_HTTP_PORT:-3314}"
       - "${PAYMENT_SERVICE_PORT:-3004}:${PAYMENT_SERVICE_PORT:-3004}"
@@ -493,7 +498,7 @@ services:
   # changes, only this service block. `initialBuckets` pre-creates the dev bucket on boot --
   # equivalent to minio-init's `mc mb`/LocalStack's init-hook script, with no sidecar needed.
   s3mock:
-    image: adobe/s3mock:latest
+    image: adobe/s3mock:5.2.3
     restart: unless-stopped
     ports:
       - "${S3MOCK_PORT:-9090}:9090"
@@ -540,7 +545,7 @@ services:
   # __consumer_offsets topic fail to initialize on a 1-broker cluster, which surfaces to every
   # consumer as an opaque "Group Coordinator Not Available" error until fixed.
   kafka:
-    image: apache/kafka:latest
+    image: apache/kafka:4.3.1
     restart: unless-stopped
     environment:
       KAFKA_NODE_ID: 1
@@ -581,6 +586,20 @@ services:
       KAFKA_BROKERS: kafka:9092
       KAFKA_TOPIC_INVOICE_EVENTS: invoice.events
       KAFKA_CONSUMER_GROUP: mail-service
+      # Messages that can never be processed (malformed, PDF missing) land here with the error in
+      # their headers, instead of blocking the partition or being dropped.
+      KAFKA_TOPIC_INVOICE_EVENTS_DLQ: invoice.events.dlq
+      # Dedupe store: which events already produced an email (delivery is at-least-once).
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-dev-redis-password}
+      # The private bucket media writes invoice PDFs to; the event carries the key, not a URL.
+      S3_BUCKET: ${S3_BUCKET:-einvoice-dev}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      S3_ENDPOINT: http://s3mock:9090
+      S3_FORCE_PATH_STYLE: "true"
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-test}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-test}
       MAIL_PROVIDER: ${MAIL_PROVIDER:-smtp}
       SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
       SMTP_PORT: ${SMTP_PORT:-587}
@@ -592,6 +611,10 @@ services:
     depends_on:
       kafka:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+      s3mock-init:
+        condition: service_completed_successfully
     networks:
       - backend
 
@@ -710,6 +733,14 @@ services:
     networks:
       - backend
 
+  # Single-node replica set, not standalone: invoice's transactional outbox needs multi-document
+  # transactions, which MongoDB only offers on a replica set (as every managed production MongoDB
+  # is). Auth + --replSet requires a keyFile for member-to-member auth; with one member nothing
+  # else ever presents it, so a fresh one is generated at each start instead of being stored.
+  # The healthcheck initiates the set on first boot (idempotent) and reports healthy only once this
+  # node is a writable primary. An existing standalone volume converts in place.
+  # Clients outside the compose network can't resolve the member host "mongodb", so host-run apps
+  # connect with MONGODB_DIRECT_CONNECTION=true (see .env.dev.example).
   mongodb:
     image: mongo:7
     restart: unless-stopped
@@ -720,6 +751,13 @@ services:
       MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:-einvoice_dev_root}
       MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-dev-mongo-password}
       MONGO_INITDB_DATABASE: ${MONGO_DB:-einvoice_dev}
+    entrypoint:
+      - bash
+      - -c
+      - |
+        head -c 756 /dev/urandom | base64 > /tmp/mongo-keyfile
+        chmod 400 /tmp/mongo-keyfile && chown 999:999 /tmp/mongo-keyfile
+        exec docker-entrypoint.sh mongod --replSet rs0 --keyFile /tmp/mongo-keyfile --bind_ip_all
     ports:
       - "${MONGODB_PORT:-27017}:27017"
     volumes:
@@ -728,7 +766,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "mongosh --quiet --username ${MONGO_ROOT_USERNAME:-einvoice_dev_root} --password ${MONGO_ROOT_PASSWORD:-dev-mongo-password} --authenticationDatabase admin --eval \"db.adminCommand({ ping: 1 }).ok\" | grep 1",
+          "mongosh --quiet --username ${MONGO_ROOT_USERNAME:-einvoice_dev_root} --password ${MONGO_ROOT_PASSWORD:-dev-mongo-password} --authenticationDatabase admin --eval \"try { rs.status() } catch (e) { rs.initiate({ _id: 'rs0', members: [{ _id: 0, host: 'mongodb:27017' }] }) } db.hello().isWritablePrimary ? 1 : 0\" | grep 1",
         ]
       interval: 15s
       timeout: 10s

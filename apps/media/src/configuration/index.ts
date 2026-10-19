@@ -34,8 +34,14 @@ class S3Configuration {
   /** MinIO/s3mock need path-style URLs (bucket in the path); real AWS S3 defaults to virtual-hosted style. */
   S3_FORCE_PATH_STYLE: boolean;
 
-  /** Base URL returned to callers for an uploaded object — s3mock's own host in dev, a CDN/public bucket URL in prod. */
-  S3_PUBLIC_BASE_URL?: string;
+  /**
+   * Endpoint presigned download URLs are signed for -- whatever the *downloader* (a browser) can
+   * reach. In dev that's s3mock's host-published port, since S3_ENDPOINT ("http://s3mock:9090")
+   * only resolves inside the compose network. Unset in AWS, where the regional endpoint serves both.
+   */
+  @IsOptional()
+  @IsString()
+  S3_PUBLIC_ENDPOINT?: string;
 
   constructor() {
     this.S3_BUCKET = process.env['S3_BUCKET'] ?? '';
@@ -44,7 +50,7 @@ class S3Configuration {
     this.S3_ACCESS_KEY_ID = process.env['S3_ACCESS_KEY_ID'] || undefined;
     this.S3_SECRET_ACCESS_KEY = process.env['S3_SECRET_ACCESS_KEY'] || undefined;
     this.S3_FORCE_PATH_STYLE = process.env['S3_FORCE_PATH_STYLE'] === 'true';
-    this.S3_PUBLIC_BASE_URL = process.env['S3_PUBLIC_BASE_URL'];
+    this.S3_PUBLIC_ENDPOINT = process.env['S3_PUBLIC_ENDPOINT'] || undefined;
   }
 }
 

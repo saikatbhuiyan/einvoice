@@ -1,18 +1,33 @@
-import { Injectable } from '@nestjs/common';
-import { HeadBucketCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  GetObjectCommand,
+  HeadBucketCommand,
+  HeadObjectCommand,
+  NotFound,
+  PutObjectCommand,
+  S3Client,
+  type S3ClientConfig,
+} from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { CONFIGURATION } from '../../../configuration';
-import { StorageProvider, UploadedObject } from './storage-provider.interface';
+import { DownloadUrl, StorageProvider, UploadedObject } from './storage-provider.interface';
 
 @Injectable()
 export class S3StorageProvider implements StorageProvider {
   private readonly client: S3Client;
+  /**
+   * Signs download URLs only (never sends a request). A presigned URL embeds the host it was signed
+   * for, and the signature covers it, so it must be signed for the endpoint the *downloader* reaches
+   * -- in dev that's s3mock's host-published port, not the in-network "s3mock:9090" the service
+   * talks to. In AWS both are the regional endpoint, and S3_PUBLIC_ENDPOINT is left unset.
+   */
+  private readonly presigner: S3Client;
 
   constructor() {
     const config = CONFIGURATION.S3_CONFIG;
 
-    this.client = new S3Client({
+    const base: S3ClientConfig = {
       region: config.S3_REGION,
-      endpoint: config.S3_ENDPOINT,
       forcePathStyle: config.S3_FORCE_PATH_STYLE,
       // Omitting `credentials` entirely (not passing it as `undefined` keys on an object -- the
       // SDK checks for the property's presence, not just a truthy value) lets the client fall
@@ -26,7 +41,10 @@ export class S3StorageProvider implements StorageProvider {
             },
           }
         : {}),
-    });
+    };
+
+    this.client = new S3Client({ ...base, endpoint: config.S3_ENDPOINT });
+    this.presigner = new S3Client({ ...base, endpoint: config.S3_PUBLIC_ENDPOINT ?? config.S3_ENDPOINT });
   }
 
   async upload({
@@ -38,18 +56,49 @@ export class S3StorageProvider implements StorageProvider {
     body: Buffer;
     contentType: string;
   }): Promise<UploadedObject> {
-    const config = CONFIGURATION.S3_CONFIG;
-
     await this.client.send(
       new PutObjectCommand({
-        Bucket: config.S3_BUCKET,
+        Bucket: CONFIGURATION.S3_CONFIG.S3_BUCKET,
         Key: key,
         Body: body,
         ContentType: contentType,
       }),
     );
 
-    return { key, url: this.resolveUrl(key) };
+    return { key };
+  }
+
+  async getDownloadUrl({
+    key,
+    fileName,
+    expiresInSeconds,
+  }: {
+    key: string;
+    fileName: string;
+    expiresInSeconds: number;
+  }): Promise<DownloadUrl> {
+    const bucket = CONFIGURATION.S3_CONFIG.S3_BUCKET;
+
+    try {
+      await this.client.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
+    } catch (error) {
+      if (error instanceof NotFound) {
+        throw new NotFoundException(`Stored file "${key}" does not exist.`);
+      }
+      throw error;
+    }
+
+    const url = await getSignedUrl(
+      this.presigner,
+      new GetObjectCommand({
+        Bucket: bucket,
+        Key: key,
+        ResponseContentDisposition: contentDisposition(fileName),
+      }),
+      { expiresIn: expiresInSeconds },
+    );
+
+    return { url, expiresAt: new Date(Date.now() + expiresInSeconds * 1000) };
   }
 
   // HeadBucket checks both that the endpoint is reachable and that this service's credentials can
@@ -57,19 +106,14 @@ export class S3StorageProvider implements StorageProvider {
   async checkHealth(): Promise<void> {
     await this.client.send(new HeadBucketCommand({ Bucket: CONFIGURATION.S3_CONFIG.S3_BUCKET }));
   }
+}
 
-  // S3_PUBLIC_BASE_URL is required in dev (MinIO has no public virtual-hosted DNS to fall back
-  // to); real AWS S3 can omit it and fall back to the standard virtual-hosted-style URL.
-  private resolveUrl(key: string): string {
-    const config = CONFIGURATION.S3_CONFIG;
-    // Keys embed the user-supplied invoice number, so "#", "?" or a space would otherwise truncate
-    // or corrupt the emailed link. Encode per segment so the "/" separators stay literal.
-    const path = key.split('/').map(encodeURIComponent).join('/');
-
-    if (config.S3_PUBLIC_BASE_URL) {
-      return `${config.S3_PUBLIC_BASE_URL.replace(/\/$/, '')}/${path}`;
-    }
-
-    return `https://${config.S3_BUCKET}.s3.${config.S3_REGION}.amazonaws.com/${path}`;
-  }
+/**
+ * RFC 6266 attachment header. The file name comes from the user-supplied invoice number, so the
+ * quoted `filename` is reduced to safe ASCII (no quotes or backslashes to break out of it), and the
+ * exact name travels in `filename*` for clients that support it.
+ */
+export function contentDisposition(fileName: string): string {
+  const ascii = fileName.replace(/[^\x20-\x7e]|["\\]/g, '_');
+  return `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(fileName)}`;
 }

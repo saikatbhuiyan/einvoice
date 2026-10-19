@@ -13,6 +13,7 @@ type MockClient = jest.Mocked<
     | 'updateInvoice'
     | 'removeInvoice'
     | 'issueInvoice'
+    | 'getPdfDownloadUrl'
     | 'cancelInvoice'
     | 'sendInvoice'
   >
@@ -34,6 +35,7 @@ describe('BFF InvoiceService', () => {
       updateInvoice: jest.fn(),
       removeInvoice: jest.fn(),
       issueInvoice: jest.fn(),
+      getPdfDownloadUrl: jest.fn(),
       cancelInvoice: jest.fn(),
       sendInvoice: jest.fn(),
     };
@@ -141,6 +143,21 @@ describe('BFF InvoiceService', () => {
 
       expect(cacheManager.del).toHaveBeenCalled();
       expect(redis.incr).toHaveBeenCalled();
+    });
+  });
+
+  // A presigned link expires: serving one from cache would hand out a dead link.
+  describe('getPdfDownloadUrl', () => {
+    it('always asks for a fresh link and never reads or writes the cache', async () => {
+      const link = { url: 'https://s3.test/signed', expiresAt: '2026-10-19T10:05:00.000Z', fileName: 'invoice.pdf' };
+      client.getPdfDownloadUrl.mockResolvedValue(link);
+
+      await expect(service.getPdfDownloadUrl('invoice-1')).resolves.toEqual(link);
+      await service.getPdfDownloadUrl('invoice-1');
+
+      expect(client.getPdfDownloadUrl).toHaveBeenCalledTimes(2);
+      expect(cacheManager.get).not.toHaveBeenCalled();
+      expect(cacheManager.set).not.toHaveBeenCalled();
     });
   });
 });
