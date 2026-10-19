@@ -1,10 +1,19 @@
-import { killPort } from '@nx/node/utils';
-/* eslint-disable */
+import { once } from 'events';
 
+// Stops exactly the invoice process global-setup.ts started — never "whatever listens on a port"
+// (the scaffold's killPort defaulted to 3000, where the observability overlay publishes Grafana).
 module.exports = async function () {
-  // Put clean up logic here (e.g. stopping services, docker-compose, etc.).
-  // Hint: `globalThis` is shared between setup and teardown.
-  const port = process.env.PORT ? Number(process.env.PORT) : 3000;
-  await killPort(port);
-  console.log(globalThis.__TEARDOWN_MESSAGE__);
+  const app = globalThis.__INVOICE_E2E_APP__;
+  if (!app || app.exitCode !== null) return;
+
+  const exited = once(app, 'exit');
+  app.kill('SIGTERM');
+  const graceful = await Promise.race([
+    exited.then(() => true),
+    new Promise((resolve) => setTimeout(() => resolve(false), 10_000)),
+  ]);
+  if (!graceful) {
+    app.kill('SIGKILL');
+    await exited;
+  }
 };

@@ -12,11 +12,11 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { INVOICE_CONSTRAINTS, INVOICE_STATUSES, SUPPORTED_CURRENCIES } from '@libs/shared/types';
+import { INVOICE_CONSTRAINTS, SUPPORTED_CURRENCIES } from '@libs/shared/types';
 import { Sanitize } from '@libs/decorators';
 import type { CreateInvoiceRequest } from './invoice.types';
 import { ClientSnapshotDto, InvoiceItemDto } from './invoice-fields.dto';
-import type { InvoiceStatus, SupportedCurrency } from './invoice.types';
+import type { SupportedCurrency } from './invoice.types';
 
 const constraints = INVOICE_CONSTRAINTS;
 
@@ -61,16 +61,6 @@ export class CreateInvoiceDto implements CreateInvoiceRequest {
   })
   @IsEnum(SUPPORTED_CURRENCIES)
   currency!: SupportedCurrency;
-
-  @ApiPropertyOptional({
-    enum: INVOICE_STATUSES,
-    enumName: 'InvoiceStatus',
-    example: 'issued',
-    description: 'Lifecycle status. Omit to let the invoice service apply its default.',
-  })
-  @IsOptional()
-  @IsEnum(INVOICE_STATUSES)
-  status?: InvoiceStatus;
 
   @ApiPropertyOptional({
     example: '2026-04-28',

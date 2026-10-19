@@ -12,6 +12,8 @@ export interface CorrelationContext {
   userId?: string;
   roles?: string[];
   permissions?: string[];
+  /** The calling service, when this context was established from an incoming RPC (RpcMeta). */
+  sourceService?: string;
 }
 
 const correlationStorage = new AsyncLocalStorage<CorrelationContext>();

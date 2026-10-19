@@ -1,7 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import { AuditLogDocument, AuditLogModelName } from '@libs/schemas';
+import { AuditAction, AuditLogDocument, AuditLogModelName } from '@libs/schemas';
+import { getCurrentCorrelationContext } from '@libs/logging/correlation-context';
 
 @Injectable()
 export class AuditLogService {
@@ -12,8 +13,13 @@ export class AuditLogService {
     private readonly auditLogModel: Model<AuditLogDocument>,
   ) {}
 
+  /**
+   * `actor` defaults to whoever the current request is acting for — the end user's id, or
+   * `service:<name>` for a service-to-service call with no user behind it (e.g. payment marking an
+   * invoice paid from a Stripe webhook) — so no call site can forget to attribute an entry.
+   */
   async record(params: {
-    action: 'CREATE' | 'UPDATE' | 'DELETE' | 'GENERATE_PDF';
+    action: AuditAction;
     entityType: string;
     entityId: string;
     actor?: string;
@@ -22,10 +28,10 @@ export class AuditLogService {
   }): Promise<void> {
     try {
       await this.auditLogModel.create({
-        action: params.actor ? `${params.action}` : params.action,
+        action: params.action,
         entityType: params.entityType,
         entityId: params.entityId,
-        actor: params.actor,
+        actor: params.actor ?? this.currentActor(),
         diff: params.diff,
         previous: params.previous,
       });
@@ -34,5 +40,11 @@ export class AuditLogService {
         `Failed to record audit log for ${params.entityType}:${params.entityId}: ${(error as Error).message}`,
       );
     }
+  }
+
+  private currentActor(): string | undefined {
+    const context = getCurrentCorrelationContext();
+    if (context?.userId) return context.userId;
+    return context?.sourceService ? `service:${context.sourceService}` : undefined;
   }
 }

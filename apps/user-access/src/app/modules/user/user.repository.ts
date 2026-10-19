@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { containsPattern } from '@libs/shared/utils';
 import { DEFAULT_LIMIT, DEFAULT_PAGE } from '@libs/constants';
 import { CreateUserRequest, FindAllUsersRequest, UpdateUserRequest } from '@libs/interfaces/gateway';
 import { UserEntity } from '../../../database/entities/user.entity';
@@ -38,7 +39,7 @@ export class UserRepository implements IUserRepository {
     }
 
     if (query.search) {
-      qb.andWhere('(user.name ILIKE :search OR user.email ILIKE :search)', { search: `%${query.search}%` });
+      qb.andWhere('(user.name ILIKE :search OR user.email ILIKE :search)', { search: containsPattern(query.search) });
     }
 
     qb.orderBy('user.createdAt', 'DESC')

@@ -11,7 +11,6 @@ export const INVOICE_ID_EXAMPLE = '662f9d38f2ab7c001f52c901';
 export const CREATE_INVOICE_EXAMPLE: CreateInvoiceDto = {
   invoiceNumber: 'INV-2026-0001',
   currency: 'BDT',
-  status: 'issued',
   issueDate: '2026-04-28',
   dueDate: '2026-05-28',
   notes: 'Payment due within 30 days.',
@@ -32,8 +31,7 @@ export const CREATE_INVOICE_EXAMPLE: CreateInvoiceDto = {
 };
 
 export const UPDATE_INVOICE_EXAMPLE: UpdateInvoiceDto = {
-  status: 'paid',
-  notes: 'Paid by bank transfer.',
+  notes: 'Payment due within 14 days.',
 };
 
 export const INVOICE_RESPONSE_EXAMPLE: InvoiceResponseDto = {

@@ -5,7 +5,7 @@ import {
   INVOICE_EVENTS_TOPIC,
   kafkaClientToken,
   type InvoiceDemoEvent,
-  type InvoicePdfGeneratedEvent,
+  type InvoiceSentEvent,
 } from '@libs/transports';
 
 const KAFKA_CLIENT_ID = 'invoice';
@@ -31,8 +31,8 @@ export class InvoiceEventsProducerService extends BaseKafkaProducer {
     this.emit(INVOICE_EVENTS_TOPIC, event, invoiceId);
   }
 
-  emitPdfGenerated(payload: Omit<InvoicePdfGeneratedEvent, 'type'>): void {
-    const event: InvoicePdfGeneratedEvent = { type: 'invoice.pdf.generated', ...payload };
+  emitSent(payload: Omit<InvoiceSentEvent, 'type'>): void {
+    const event: InvoiceSentEvent = { type: 'invoice.sent', ...payload };
     this.emit(INVOICE_EVENTS_TOPIC, event, payload.invoiceId);
   }
 }

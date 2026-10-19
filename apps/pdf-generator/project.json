@@ -71,6 +71,14 @@
       "options": {
         "command": "tsc -p {projectRoot}/tsconfig.app.json --noEmit"
       }
+    },
+    "integration": {
+      "executor": "@nx/jest:jest",
+      "cache": false,
+      "options": {
+        "jestConfig": "{projectRoot}/jest.integration.config.cts",
+        "runInBand": true
+      }
     }
   }
 }
