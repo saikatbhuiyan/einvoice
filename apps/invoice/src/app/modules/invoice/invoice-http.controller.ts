@@ -45,6 +45,11 @@ export class InvoiceHttpController {
     return this.invoiceService.remove(id, isNaN(version as number) ? undefined : version);
   }
 
+  @Get(':id/pdf')
+  getPdfDownloadUrl(@Param('id') id: string) {
+    return this.invoiceService.getPdfDownloadUrl(id);
+  }
+
   @Post(':id/pdf')
   generatePdf(@Param('id') id: string) {
     return this.invoiceService.generatePdf(id);

@@ -18,13 +18,19 @@ describe('InvoiceRepository', () => {
   let writeModel: jest.Mocked<Pick<InvoiceModel, 'findOne' | 'create' | 'exists' | 'findOneAndUpdate'>>;
   let readModel: jest.Mocked<Pick<InvoiceModel, 'findOne' | 'find' | 'countDocuments'>>;
   let repository: InvoiceRepository;
+  // Stands in for a ClientSession: transactional writes must carry exactly this object.
+  const session = { id: 'session-1' };
+  let transaction: jest.Mock;
 
   beforeEach(() => {
+    // Runs the work once, as a committed transaction would (retries are the driver's business).
+    transaction = jest.fn((work: (s: unknown) => Promise<unknown>) => work(session));
     writeModel = {
       findOne: jest.fn(),
       create: jest.fn(),
       exists: jest.fn(),
       findOneAndUpdate: jest.fn(),
+      db: { transaction },
     } as never;
     readModel = {
       findOne: jest.fn(),
@@ -48,12 +54,49 @@ describe('InvoiceRepository', () => {
 
     it('creates a new document when no idempotency key is supplied', async () => {
       const created = { _id: objectId() };
-      writeModel.create.mockResolvedValue(created as never);
+      writeModel.create.mockResolvedValue([created] as never);
 
       const result = await repository.create({ invoiceNumber: 'INV-0001' } as never);
 
       expect(result).toBe(created);
       expect(writeModel.findOne).not.toHaveBeenCalled();
+    });
+
+    // The outbox event for a new invoice is written in the insert's transaction.
+    it('inserts inside a transaction and runs the hook with the same session', async () => {
+      const created = { _id: objectId() };
+      writeModel.create.mockResolvedValue([created] as never);
+      const hook = jest.fn().mockResolvedValue(undefined);
+
+      await repository.create({ invoiceNumber: 'INV-0001' } as never, hook);
+
+      expect(transaction).toHaveBeenCalledTimes(1);
+      expect(writeModel.create).toHaveBeenCalledWith([expect.objectContaining({ invoiceNumber: 'INV-0001' })], {
+        session,
+      });
+      expect(hook).toHaveBeenCalledWith(created, session);
+    });
+
+    it('fails the create if the hook fails, so neither the invoice nor its event commits', async () => {
+      writeModel.create.mockResolvedValue([{ _id: objectId() }] as never);
+
+      await expect(
+        repository.create(
+          { invoiceNumber: 'INV-0001' } as never,
+          jest.fn().mockRejectedValue(new Error('outbox down')),
+        ),
+      ).rejects.toThrow('outbox down');
+    });
+
+    // An idempotent replay returns the original invoice, whose events were written when it was created.
+    it('runs no hook for an idempotent replay', async () => {
+      writeModel.findOne.mockReturnValue({ exec: jest.fn().mockResolvedValue({ _id: objectId() }) } as never);
+      const hook = jest.fn();
+
+      await repository.create({ idempotencyKey: 'key-1' } as never, hook);
+
+      expect(hook).not.toHaveBeenCalled();
+      expect(transaction).not.toHaveBeenCalled();
     });
   });
 
@@ -119,7 +162,8 @@ describe('InvoiceRepository', () => {
   // missed conditional write re-reads the document to explain why).
   const query = (result: unknown) => {
     const exec = jest.fn().mockResolvedValue(result);
-    return { exec, select: jest.fn(() => ({ exec })) };
+    const chain = { exec, select: jest.fn(() => chain), session: jest.fn(() => chain) };
+    return chain;
   };
 
   describe('update', () => {
@@ -230,31 +274,64 @@ describe('InvoiceRepository', () => {
     });
   });
 
+  describe('setPdfMetadata', () => {
+    it('records the key in a transaction and runs the hook with the stored invoice and session', async () => {
+      const id = objectId();
+      const stored = { _id: id, pdfKey: 'invoices/u/x.pdf' };
+      writeModel.findOneAndUpdate.mockReturnValue(query(stored) as never);
+      const hook = jest.fn().mockResolvedValue(undefined);
+      const at = new Date('2026-10-19T10:00:00.000Z');
+
+      const result = await repository.setPdfMetadata(id, 'invoices/u/x.pdf', at, hook);
+
+      expect(writeModel.findOneAndUpdate).toHaveBeenCalledWith(
+        { _id: id, deletedAt: null },
+        { $set: { pdfKey: 'invoices/u/x.pdf', pdfGeneratedAt: at } },
+        { returnDocument: 'after', session },
+      );
+      expect(hook).toHaveBeenCalledWith(stored, session);
+      expect(result).toBe(stored);
+    });
+
+    it('runs no hook when the invoice is gone', async () => {
+      writeModel.findOneAndUpdate.mockReturnValue(query(null) as never);
+      const hook = jest.fn();
+
+      await expect(repository.setPdfMetadata(objectId(), 'k', new Date(), hook)).resolves.toBeNull();
+      expect(hook).not.toHaveBeenCalled();
+    });
+  });
+
   describe('transitionStatus', () => {
     it('changes status only from an allowed status, bumps version, and reports where it came from', async () => {
       const id = objectId();
       const after = { _id: id, status: 'paid' };
       writeModel.findOneAndUpdate.mockReturnValue(query({ _id: id, status: 'overdue' }) as never);
       writeModel.findOne.mockReturnValue(query(after) as never);
+      const hook = jest.fn().mockResolvedValue(undefined);
 
-      const result = await repository.transitionStatus(id, ['issued', 'overdue'], 'paid');
+      const result = await repository.transitionStatus(id, ['issued', 'overdue'], 'paid', hook);
 
       expect(writeModel.findOneAndUpdate).toHaveBeenCalledWith(
         { _id: id, deletedAt: null, status: { $in: ['issued', 'overdue'] } },
         { $set: { status: 'paid' }, $inc: { version: 1 } },
-        { returnDocument: 'before' },
+        { returnDocument: 'before', session },
       );
       expect(result).toEqual({ outcome: 'transitioned', invoice: after, from: 'overdue' });
+      // e.g. invoice.cancelled is enqueued in the same transaction as the status change.
+      expect(hook).toHaveBeenCalledWith(after, session);
     });
 
-    it('rejects, returning the current state, when the invoice is not in an allowed status', async () => {
+    it('rejects, returning the current state, when the invoice is not in an allowed status -- and runs no hook', async () => {
       const current = { status: 'cancelled' };
       writeModel.findOneAndUpdate.mockReturnValue(query(null) as never);
       writeModel.findOne.mockReturnValue(query(current) as never);
+      const hook = jest.fn();
 
-      const result = await repository.transitionStatus(objectId(), ['issued', 'overdue'], 'paid');
+      const result = await repository.transitionStatus(objectId(), ['issued', 'overdue'], 'paid', hook);
 
       expect(result).toEqual({ outcome: 'rejected', invoice: current });
+      expect(hook).not.toHaveBeenCalled();
     });
 
     it('reports not_found for a missing invoice or a malformed id', async () => {

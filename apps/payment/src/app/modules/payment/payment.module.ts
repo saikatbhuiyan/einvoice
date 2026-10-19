@@ -4,6 +4,7 @@ import { ServiceName, TcpClientModule } from '@libs/transports';
 import { PaymentEntity } from '../../../database/entities/payment.entity';
 import { PaymentHttpController } from './payment-http.controller';
 import { PaymentRpcController } from './payment-rpc.controller';
+import { InvoiceEventsController } from './invoice-events.controller';
 import { PaymentService } from './payment.service';
 import { PaymentRepository } from './payment.repository';
 import { PAYMENT_REPOSITORY } from './payment.repository.interface';
@@ -13,7 +14,7 @@ import { InvoiceClientService } from './invoice-client.service';
 
 @Module({
   imports: [TypeOrmModule.forFeature([PaymentEntity]), TcpClientModule.forServices([ServiceName.INVOICE])],
-  controllers: [PaymentHttpController, PaymentRpcController],
+  controllers: [PaymentHttpController, PaymentRpcController, InvoiceEventsController],
   providers: [
     PaymentService,
     InvoiceClientService,

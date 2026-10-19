@@ -1,0 +1,18 @@
+{
+  "data": {
+    "type": "invoice.cancelled",
+    "eventId": "6710000000000000000000e4",
+    "invoiceId": "6700000000000000000000a1",
+    "invoiceNumber": "INV-2026-001",
+    "cancelledAt": "2026-10-16T09:00:00.000Z"
+  },
+  "meta": {
+    "correlationId": "corr-contract-1",
+    "traceId": "trace-contract-1",
+    "userId": "user-1",
+    "roles": ["accountant"],
+    "permissions": ["invoice:write"],
+    "sourceService": "invoice",
+    "timestamp": "2026-10-16T09:00:00.000Z"
+  }
+}

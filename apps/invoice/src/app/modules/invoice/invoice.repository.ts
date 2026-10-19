@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, Inject, Injectable } from '@nestjs/common';
-import { Error as MongooseError, Types, isValidObjectId } from 'mongoose';
+import { Error as MongooseError, Types, isValidObjectId, type ClientSession } from 'mongoose';
 import { DEFAULT_LIMIT, DEFAULT_PAGE } from '@libs/constants';
 import { InvoiceDocument, InvoiceModel } from '@libs/schemas';
 import { CreateInvoiceRequest, FindAllInvoicesRequest, UpdateInvoiceRequest } from '@libs/interfaces/gateway';
@@ -9,6 +9,7 @@ import {
   IInvoiceRepository,
   INVOICE_READ_MODEL,
   INVOICE_WRITE_MODEL,
+  InTransaction,
   PaginatedResult,
   StatusTransitionResult,
 } from './invoice.repository.interface';
@@ -29,16 +30,24 @@ export class InvoiceRepository implements IInvoiceRepository {
     @Inject(INVOICE_READ_MODEL) private readonly readModel: InvoiceModel,
   ) {}
 
-  async create(data: CreateInvoiceRequest): Promise<InvoiceDocument> {
+  async create(data: CreateInvoiceRequest, inTransaction?: InTransaction): Promise<InvoiceDocument> {
     const idempotencyKey = data.idempotencyKey?.trim();
 
     if (idempotencyKey) {
+      // An idempotent replay returns the original invoice and runs no hook: its events were
+      // written when it was first created.
       const existing = await this.findByIdempotencyKey(idempotencyKey);
       if (existing) return existing;
     }
 
     try {
-      return await this.writeModel.create({ ...this.toContentPayload(data), idempotencyKey });
+      return await this.transaction(async (session) => {
+        const [invoice] = await this.writeModel.create([{ ...this.toContentPayload(data), idempotencyKey }], {
+          session,
+        });
+        await inTransaction?.(invoice, session);
+        return invoice;
+      });
     } catch (error) {
       // Concurrent retries with the same key can all pass the lookup above; a unique index lets
       // exactly one insert win. A retry carries the identical payload, so Mongo may report the
@@ -105,42 +114,67 @@ export class InvoiceRepository implements IInvoiceRepository {
     return result ?? this.explainEditMiss(id, version, 'deleted');
   }
 
-  async setPdfMetadata(id: string, pdfUrl: string, pdfGeneratedAt: Date): Promise<InvoiceDocument | null> {
+  async setPdfMetadata(
+    id: string,
+    pdfKey: string,
+    pdfGeneratedAt: Date,
+    inTransaction?: InTransaction,
+  ): Promise<InvoiceDocument | null> {
     if (!isValidObjectId(id)) return null;
 
-    return this.writeModel
-      .findOneAndUpdate(this.activeFilter(id), { pdfUrl, pdfGeneratedAt }, { returnDocument: 'after' })
-      .exec();
+    return this.transaction(async (session) => {
+      const invoice = await this.writeModel
+        .findOneAndUpdate(
+          this.activeFilter(id),
+          { $set: { pdfKey, pdfGeneratedAt } },
+          { returnDocument: 'after', session },
+        )
+        .exec();
+      if (invoice) await inTransaction?.(invoice, session);
+      return invoice;
+    });
   }
 
   async transitionStatus(
     id: string,
     from: readonly InvoiceStatus[],
     to: InvoiceStatus,
+    inTransaction?: InTransaction,
   ): Promise<StatusTransitionResult> {
     if (!isValidObjectId(id)) return { outcome: 'not_found' };
 
-    // returnDocument 'before' is the only way to learn which of `from` the invoice was actually in
-    // (for the audit diff) from the same atomic operation that changed it.
-    const before = await this.writeModel
-      .findOneAndUpdate(
-        { ...this.activeFilter(id), status: { $in: from } },
-        { $set: { status: to }, $inc: { version: 1 } },
-        { returnDocument: 'before' },
-      )
-      .exec();
+    return this.transaction(async (session): Promise<StatusTransitionResult> => {
+      // returnDocument 'before' is the only way to learn which of `from` the invoice was actually in
+      // (for the audit diff) from the same atomic operation that changed it.
+      const before = await this.writeModel
+        .findOneAndUpdate(
+          { ...this.activeFilter(id), status: { $in: from } },
+          { $set: { status: to }, $inc: { version: 1 } },
+          { returnDocument: 'before', session },
+        )
+        .exec();
 
-    if (!before) {
-      const current = await this.writeModel.findOne(this.activeFilter(id)).exec();
-      return current ? { outcome: 'rejected', invoice: current } : { outcome: 'not_found' };
-    }
+      if (!before) {
+        const current = await this.writeModel.findOne(this.activeFilter(id)).session(session).exec();
+        return current ? { outcome: 'rejected', invoice: current } : { outcome: 'not_found' };
+      }
 
-    const invoice = await this.writeModel.findOne(this.activeFilter(id)).exec();
-    // Only a concurrent soft-delete could remove it in between, and only drafts can be deleted —
-    // a transitioned invoice is never a draft. Treat it as gone rather than assert.
-    if (!invoice) return { outcome: 'not_found' };
+      const invoice = await this.writeModel.findOne(this.activeFilter(id)).session(session).exec();
+      // Read inside the same transaction as the update, so it can't have been deleted in between.
+      if (!invoice) throw new Error(`Invoice ${id} vanished inside its own status transition.`);
 
-    return { outcome: 'transitioned', invoice, from: before.status };
+      await inTransaction?.(invoice, session);
+      return { outcome: 'transitioned', invoice, from: before.status };
+    });
+  }
+
+  /**
+   * Runs `work` in a MongoDB transaction (requires a replica set). Mongoose retries the whole callback
+   * on transient transaction errors, so `work` must be safe to re-run -- every write in it goes
+   * through `session` and is discarded on abort.
+   */
+  private transaction<T>(work: (session: ClientSession) => Promise<T>): Promise<T> {
+    return this.writeModel.db.transaction(work);
   }
 
   /**

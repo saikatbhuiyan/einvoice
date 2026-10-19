@@ -43,6 +43,7 @@ describe('invoice lifecycle over TCP (transport)', () => {
   let seenContext: CorrelationContext | undefined;
 
   const invoiceService = {
+    getPdfDownloadUrl: jest.fn(),
     issue: jest.fn(),
     cancel: jest.fn(),
     send: jest.fn(),
@@ -111,6 +112,16 @@ describe('invoice lifecycle over TCP (transport)', () => {
       expect(invoiceService.send).not.toHaveBeenCalled();
     },
   );
+
+  it('GET_PDF_URL needs only invoice:read, and is refused without it', async () => {
+    const link = { url: 'https://s3.test/signed', expiresAt: '2026-10-19T10:05:00.000Z', fileName: 'invoice.pdf' };
+    invoiceService.getPdfDownloadUrl.mockResolvedValue(link);
+
+    await expect(as(READER, () => fromBff.call(TCP_PATTERNS.INVOICE.GET_PDF_URL, ID))).resolves.toEqual(link);
+    await expect(
+      as({ userId: 'kc-user-3', permissions: [] }, () => fromBff.call(TCP_PATTERNS.INVOICE.GET_PDF_URL, ID)),
+    ).rejects.toMatchObject({ status: 403 });
+  });
 
   // payment's webhook path has no end user; the context the handler runs in still names the caller,
   // which is what attributes the audit entry to `service:payment`.

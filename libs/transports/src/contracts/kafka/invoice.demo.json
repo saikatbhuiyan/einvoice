@@ -1,6 +1,7 @@
 {
   "data": {
     "type": "invoice.demo",
+    "eventId": "6710000000000000000000e1",
     "invoiceId": "6700000000000000000000a1",
     "message": "Invoice 6700000000000000000000a1 was created."
   },

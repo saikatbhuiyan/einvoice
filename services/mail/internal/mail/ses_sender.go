@@ -2,12 +2,15 @@ package mail
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/sesv2"
 	"github.com/aws/aws-sdk-go-v2/service/sesv2/types"
+
+	"einvoice/mail/internal/failure"
 )
 
 type SESSender struct {
@@ -33,7 +36,7 @@ func (s *SESSender) Send(ctx context.Context, msg Message) error {
 	// that does, so both providers end up building the same raw MIME message either way.
 	raw, err := buildRaw(s.from, msg)
 	if err != nil {
-		return err
+		return failure.Permanent(err)
 	}
 
 	_, err = s.client.SendEmail(ctx, &sesv2.SendEmailInput{
@@ -44,7 +47,20 @@ func (s *SESSender) Send(ctx context.Context, msg Message) error {
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("send via SES: %w", err)
+		err = fmt.Errorf("send via SES: %w", err)
+		if isPermanentSESError(err) {
+			return failure.Permanent(err)
+		}
+		return err
 	}
 	return nil
+}
+
+// isPermanentSESError: SES refused *this* message (its content or recipient). Account-wide refusals
+// -- unverified sending domain, suspended or paused account, throttling -- are left transient: every
+// message would fail, so delivery should pause until they're fixed rather than dead-letter them all.
+func isPermanentSESError(err error) bool {
+	var rejected *types.MessageRejected
+	var badRequest *types.BadRequestException
+	return errors.As(err, &rejected) || errors.As(err, &badRequest)
 }

@@ -34,6 +34,8 @@ type typeOnly struct {
 const (
 	TypeDemo = "invoice.demo"
 	TypeSent = "invoice.sent"
+	// TypeCancelled is consumed by apps/payment, not this service; Decode reports it as not ours.
+	TypeCancelled = "invoice.cancelled"
 	// TypePdfGeneratedLegacy is what the producer emitted before invoice.sent replaced it (same
 	// payload). Nothing produces it any more, but messages of this type can still be on the topic
 	// within its retention window, so it decodes as a SentEvent. Remove once retention has passed,
@@ -43,18 +45,25 @@ const (
 
 type DemoEvent struct {
 	Type      string `json:"type"`
+	EventID   string `json:"eventId,omitempty"`
 	InvoiceID string `json:"invoiceId"`
 	Message   string `json:"message"`
 }
 
 // SentEvent means the invoice was sent to the client: email ClientEmail with the PDF attached.
+//
+// EventID (the producer's outbox row id) is what duplicates are recognised by. PdfKey is the S3 key
+// of the PDF in the private bucket. Messages produced before PDFs became private carry PdfURL (a
+// public object URL) instead, and no EventID -- still handled, just without dedupe.
 type SentEvent struct {
 	Type          string  `json:"type"`
+	EventID       string  `json:"eventId,omitempty"`
 	InvoiceID     string  `json:"invoiceId"`
 	InvoiceNumber string  `json:"invoiceNumber"`
 	ClientName    string  `json:"clientName"`
 	ClientEmail   string  `json:"clientEmail"`
-	PdfURL        string  `json:"pdfUrl"`
+	PdfKey        string  `json:"pdfKey,omitempty"`
+	PdfURL        string  `json:"pdfUrl,omitempty"`
 	FileName      string  `json:"fileName"`
 	Currency      string  `json:"currency"`
 	Total         float64 `json:"total"`

@@ -2,7 +2,11 @@ export const STORAGE_PROVIDER = Symbol('STORAGE_PROVIDER');
 
 export interface UploadedObject {
   key: string;
+}
+
+export interface DownloadUrl {
   url: string;
+  expiresAt: Date;
 }
 
 /**
@@ -14,6 +18,12 @@ export interface UploadedObject {
  */
 export interface StorageProvider {
   upload(params: { key: string; body: Buffer; contentType: string }): Promise<UploadedObject>;
+
+  /**
+   * A short-lived URL that downloads the object directly from the store, saved as `fileName`.
+   * Throws NotFoundException if the object doesn't exist, rather than handing out a dead link.
+   */
+  getDownloadUrl(params: { key: string; fileName: string; expiresInSeconds: number }): Promise<DownloadUrl>;
 
   /** Throws if the backing store isn't reachable/usable. Drives media's readiness endpoint. */
   checkHealth(): Promise<void>;

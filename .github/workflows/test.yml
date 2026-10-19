@@ -48,7 +48,7 @@ jobs:
   # (fixtures under libs/transports/src/contracts/kafka).
   go:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: services/mail
@@ -59,8 +59,12 @@ jobs:
           go-version-file: services/mail/go.mod
           cache-dependency-path: services/mail/go.sum
       - run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
-      - run: go vet ./...
+      - run: go vet -tags=integration ./...
       - run: go test -race ./...
+      # Real Kafka, Redis and s3mock via testcontainers-go (Docker is preinstalled on the runner):
+      # commit-after-success and redelivery, dedupe, and reading PDFs from the bucket.
+      - name: integration
+        run: go test -tags=integration -race ./...
 
 # E2E (apps/bff-e2e) and load (load-tests/) need the full compose stack plus Keycloak and stay
 # manual: `pnpm e2e`, `pnpm load:bff`.

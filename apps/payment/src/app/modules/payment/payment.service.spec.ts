@@ -183,6 +183,39 @@ describe('PaymentService', () => {
     });
   });
 
+  describe('expireOpenSessionForInvoice (invoice.cancelled)', () => {
+    it('expires the open session at Stripe, then marks it failed', async () => {
+      paymentRepository.findOpenByInvoiceId.mockResolvedValue(buildPayment({ providerSessionId: 'cs_open' }));
+
+      await expect(service.expireOpenSessionForInvoice('invoice-1')).resolves.toBe(true);
+
+      expect(paymentProvider.expireCheckoutSession).toHaveBeenCalledWith('cs_open');
+      expect(paymentRepository.updateStatus).toHaveBeenCalledWith('payment-1', 'failed');
+      expect(paymentProvider.expireCheckoutSession.mock.invocationCallOrder[0]).toBeLessThan(
+        paymentRepository.updateStatus.mock.invocationCallOrder[0],
+      );
+    });
+
+    // Redelivery of the same event (at-least-once) must be harmless.
+    it('does nothing when there is no open session', async () => {
+      paymentRepository.findOpenByInvoiceId.mockResolvedValue(null);
+
+      await expect(service.expireOpenSessionForInvoice('invoice-1')).resolves.toBe(false);
+
+      expect(paymentProvider.expireCheckoutSession).not.toHaveBeenCalled();
+      expect(paymentRepository.updateStatus).not.toHaveBeenCalled();
+    });
+
+    it('leaves the session open (and the row pending) if Stripe fails, so the redelivered event retries', async () => {
+      paymentRepository.findOpenByInvoiceId.mockResolvedValue(buildPayment());
+      paymentProvider.expireCheckoutSession.mockRejectedValue(new Error('Stripe 503'));
+
+      await expect(service.expireOpenSessionForInvoice('invoice-1')).rejects.toThrow('Stripe 503');
+
+      expect(paymentRepository.updateStatus).not.toHaveBeenCalled();
+    });
+  });
+
   describe('handleWebhookEvent', () => {
     it('marks the payment and the invoice paid on a successful payment event', async () => {
       paymentProvider.parseWebhookEvent.mockReturnValue({
