@@ -26,14 +26,24 @@ export interface OrganizationResponse {
   name: string;
   slug: string;
   invoicePrefix: string;
+  /** Payment reminders: days after an invoice's due date. Empty = no reminders. */
+  reminderOffsetsDays: number[];
   isActive: boolean;
   createdAt: string | Date;
   updatedAt: string | Date;
 }
 
-/** What invoice needs to number an organization's invoices -- and nothing else about the tenant. */
+/** An organization's admin changing its own settings (PATCH /organization). */
+export interface UpdateCurrentOrganizationRequest {
+  name?: string;
+  invoicePrefix?: string;
+  reminderOffsetsDays?: number[];
+}
+
+/** What invoice needs to number and chase an organization's invoices -- nothing else about the tenant. */
 export interface OrganizationInvoiceSettings {
   invoicePrefix: string;
+  reminderOffsetsDays: number[];
 }
 
 export interface FindAllOrganizationsResponse {

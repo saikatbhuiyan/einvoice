@@ -9,6 +9,12 @@ import { INVOICE_COUNTER_MODEL_DEFINITION } from '@libs/schemas';
 import { CustomerModule } from '../customer/customer.module';
 import { InvoiceNumberingService } from './invoice-numbering.service';
 import { OrganizationClientService } from './clients/organization-client.service';
+import { OrganizationSettingsService } from './organization-settings.service';
+import {
+  OVERDUE_SCHEDULER_OPTIONS,
+  OverdueScheduler,
+  overdueSchedulerOptionsFromEnv,
+} from './overdue-scheduler.service';
 import { OutboxModule } from '../outbox/outbox.module';
 import { InvoiceHttpController } from './invoice-http.controller';
 import { InvoiceRpcController } from './invoice-rpc.controller';
@@ -30,7 +36,7 @@ export class InvoiceModule {
       module: InvoiceModule,
       imports: [
         CacheModule.forRoot('svc'),
-        // USER: user-access, for the organization's invoice-number prefix.
+        // USER: user-access, for the organization's invoicing settings (prefix, reminder schedule).
         TcpClientModule.forServices([ServiceName.PDF_GENERATOR, ServiceName.MEDIA, ServiceName.USER]),
         MongooseModule.forFeature([INVOICE_COUNTER_MODEL_DEFINITION]),
         CustomerModule,
@@ -45,6 +51,10 @@ export class InvoiceModule {
         InvoiceEventsProducerService,
         InvoiceNumberingService,
         OrganizationClientService,
+        OrganizationSettingsService,
+        // Marks invoices overdue and sends payment reminders (one leader across instances).
+        OverdueScheduler,
+        { provide: OVERDUE_SCHEDULER_OPTIONS, useFactory: () => overdueSchedulerOptionsFromEnv() },
         {
           provide: INVOICE_REPOSITORY,
           useClass: InvoiceRepository,

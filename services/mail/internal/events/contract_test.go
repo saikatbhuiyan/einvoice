@@ -144,3 +144,38 @@ func TestContractCancelledIsNotThisServicesEvent(t *testing.T) {
 	}
 	wantMeta(t, meta, contractOrganization)
 }
+
+// invoice.reminder is written by invoice's overdue scheduler: the system acted, so meta names the
+// job (SystemActor) and carries no user.
+func TestContractReminderEvent(t *testing.T) {
+	event, meta, ok, err := Decode(readFixture(t, "invoice.reminder.json"))
+	if err != nil || !ok {
+		t.Fatalf("Decode: ok=%v err=%v", ok, err)
+	}
+
+	got, isReminder := event.(ReminderEvent)
+	if !isReminder {
+		t.Fatalf("event type = %T, want ReminderEvent", event)
+	}
+	want := ReminderEvent{
+		Type:           TypeReminder,
+		EventID:        "6710000000000000000000e5",
+		InvoiceID:      "6700000000000000000000a1",
+		InvoiceNumber:  "INV-2026-001",
+		ClientName:     "Acme Corp",
+		ClientEmail:    "billing@acme.test",
+		PdfKey:         "invoices/2b6f0c2e-1c3a-4e3b-9a51-0d2f7b6c9e10/invoice-INV-2026-001.pdf",
+		FileName:       "invoice-INV-2026-001.pdf",
+		Currency:       "EUR",
+		Total:          129.9,
+		DueDate:        "2026-10-09T00:00:00.000Z",
+		DaysOverdue:    7,
+		ReminderNumber: 2,
+	}
+	if got != want {
+		t.Fatalf("event =\n %+v\nwant\n %+v", got, want)
+	}
+	if meta.SystemActor != "overdue-job" || meta.UserID != "" || meta.OrganizationID != contractOrganization {
+		t.Fatalf("meta = %+v, want the overdue job acting in %s with no user", meta, contractOrganization)
+	}
+}

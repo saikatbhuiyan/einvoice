@@ -9,7 +9,12 @@ type MockRedis = { get: jest.Mock; incr: jest.Mock };
 type MockAuditLog = { record: jest.Mock };
 type MockPdfGeneratorClient = { generateInvoicePdf: jest.Mock };
 type MockMediaClient = { uploadFile: jest.Mock; getDownloadUrl: jest.Mock };
-type MockEventsProducer = { enqueueDemo: jest.Mock; enqueueSent: jest.Mock; enqueueCancelled: jest.Mock };
+type MockEventsProducer = {
+  enqueueDemo: jest.Mock;
+  enqueueSent: jest.Mock;
+  enqueueCancelled: jest.Mock;
+  enqueueReminder: jest.Mock;
+};
 type MockCustomers = { snapshotOf: jest.Mock };
 type MockNumbering = { prepare: jest.Mock; next: jest.Mock };
 
@@ -59,6 +64,7 @@ describe('InvoiceService', () => {
   let eventsProducer: MockEventsProducer;
   let customers: MockCustomers;
   let numbering: MockNumbering;
+  let settings: { current: jest.Mock };
   let service: InvoiceService;
 
   beforeEach(() => {
@@ -70,6 +76,9 @@ describe('InvoiceService', () => {
       remove: jest.fn(),
       setPdfMetadata: jest.fn(),
       transitionStatus: jest.fn(),
+      findPastDueIssued: jest.fn(),
+      findDueReminders: jest.fn(),
+      advanceReminder: jest.fn(),
     };
     cacheManager = { get: jest.fn(), set: jest.fn(), del: jest.fn() };
     redis = { get: jest.fn().mockResolvedValue(null), incr: jest.fn().mockResolvedValue(1) };
@@ -80,7 +89,9 @@ describe('InvoiceService', () => {
       enqueueDemo: jest.fn().mockResolvedValue('evt'),
       enqueueSent: jest.fn().mockResolvedValue('evt'),
       enqueueCancelled: jest.fn().mockResolvedValue('evt'),
+      enqueueReminder: jest.fn().mockResolvedValue('evt'),
     };
+    settings = { current: jest.fn().mockResolvedValue({ invoicePrefix: 'ACME', reminderOffsetsDays: [1, 7, 14] }) };
     customers = { snapshotOf: jest.fn() };
     numbering = {
       prepare: jest.fn().mockResolvedValue(PREPARED),
@@ -97,6 +108,7 @@ describe('InvoiceService', () => {
       eventsProducer as never,
       customers as never,
       numbering as never,
+      settings as never,
     );
   });
 
@@ -633,6 +645,154 @@ describe('InvoiceService', () => {
       repository.remove.mockResolvedValue(null);
 
       await expect(service.remove('507f1f77bcf86cd799439011')).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
+  describe('overdue scheduler work', () => {
+    const DUE = new Date('2026-10-10T00:00:00.000Z');
+    const NOW = new Date('2026-10-11T00:05:00.000Z'); // first overdue day
+    const DAY1 = new Date('2026-10-11T00:00:00.000Z');
+    const DAY7 = new Date('2026-10-17T00:00:00.000Z');
+    const KEY = 'orgs/o/invoices/u/invoice-INV-0001.pdf';
+    const overdue = (overrides: Record<string, unknown> = {}) =>
+      ({
+        ...buildFullInvoiceDoc('overdue'),
+        dueDate: DUE,
+        nextReminderAt: DAY1,
+        remindersSent: 0,
+        pdfKey: KEY,
+        ...overrides,
+      }) as never;
+
+    describe('markOverdue', () => {
+      it('moves issued -> overdue, scheduling the first reminder from the organization schedule', async () => {
+        repository.transitionStatus.mockImplementation(async (_id, _from, _to, options) => {
+          const extra = await options?.prepare?.({ dueDate: DUE } as never, SESSION as never);
+          expect(extra).toEqual({ nextReminderAt: DAY1 });
+          return { outcome: 'transitioned', invoice: overdue(), from: 'issued' };
+        });
+
+        await expect(service.markOverdue(ID, NOW)).resolves.toBe(true);
+
+        expect(repository.transitionStatus).toHaveBeenCalledWith(ID, ['issued'], 'overdue', expect.anything());
+        expect(auditLog.record).toHaveBeenCalledWith(
+          expect.objectContaining({ action: 'STATUS_CHANGE', diff: { status: { from: 'issued', to: 'overdue' } } }),
+        );
+      });
+
+      it('schedules no reminder when the organization turned reminders off', async () => {
+        settings.current.mockResolvedValue({ invoicePrefix: 'ACME', reminderOffsetsDays: [] });
+        repository.transitionStatus.mockImplementation(async (_id, _from, _to, options) => {
+          expect(await options?.prepare?.({ dueDate: DUE } as never, SESSION as never)).toEqual({
+            nextReminderAt: null,
+          });
+          return { outcome: 'transitioned', invoice: overdue(), from: 'issued' };
+        });
+
+        await service.markOverdue(ID, NOW);
+      });
+
+      // A payment or cancellation that landed first simply wins.
+      it('does nothing, without error or audit, when the invoice is no longer issued', async () => {
+        repository.transitionStatus.mockResolvedValue({ outcome: 'rejected', invoice: buildFullInvoiceDoc('paid') });
+
+        await expect(service.markOverdue(ID, NOW)).resolves.toBe(false);
+        expect(auditLog.record).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('sendDueReminder', () => {
+      it('emails the due reminder in the transaction that records it, and schedules the next', async () => {
+        repository.findOne.mockResolvedValue(overdue());
+        repository.advanceReminder.mockImplementation(async (_id, _at, _next, sent) => {
+          const stored = overdue({ remindersSent: 1 });
+          await sent?.inTransaction?.(stored, SESSION as never);
+          return stored;
+        });
+
+        await expect(service.sendDueReminder(ID, NOW)).resolves.toBe('sent');
+
+        expect(repository.advanceReminder).toHaveBeenCalledWith(ID, DAY1, DAY7, expect.objectContaining({ at: NOW }));
+        expect(eventsProducer.enqueueReminder).toHaveBeenCalledWith(SESSION, {
+          invoiceId: ID,
+          invoiceNumber: 'INV-0001',
+          clientName: 'Acme Corp',
+          clientEmail: 'billing@acme.test',
+          pdfKey: KEY,
+          fileName: 'invoice-INV-0001.pdf',
+          currency: 'EUR',
+          total: 120,
+          dueDate: DUE.toISOString(),
+          daysOverdue: 1,
+          reminderNumber: 1,
+        });
+        expect(auditLog.record).toHaveBeenCalledWith(
+          expect.objectContaining({ action: 'REMINDER', diff: { remindersSent: { from: 0, to: 1 } } }),
+        );
+        expect(pdfGeneratorClient.generateInvoicePdf).not.toHaveBeenCalled();
+      });
+
+      // nextReminderAt edited to just before an offset that was already used: no immediate repeat.
+      it('schedules the next reminder after the moment it sends one, whatever nextReminderAt held', async () => {
+        const oddlyEarly = new Date('2026-10-10T23:59:00.000Z'); // before the day-1 slot
+        repository.findOne.mockResolvedValue(overdue({ nextReminderAt: oddlyEarly }));
+        repository.advanceReminder.mockResolvedValue(overdue({ remindersSent: 1 }));
+
+        await service.sendDueReminder(ID, NOW);
+
+        expect(repository.advanceReminder).toHaveBeenCalledWith(ID, oddlyEarly, DAY7, expect.anything());
+      });
+
+      it('skips a reminder missed by more than a day instead of sending it late', async () => {
+        const late = new Date('2026-10-13T09:00:00.000Z');
+        repository.findOne.mockResolvedValue(overdue());
+        repository.advanceReminder.mockResolvedValue(overdue({ nextReminderAt: DAY7 }));
+
+        await expect(service.sendDueReminder(ID, late)).resolves.toBe('skipped');
+
+        expect(repository.advanceReminder).toHaveBeenCalledWith(ID, DAY1, DAY7, null);
+        expect(eventsProducer.enqueueReminder).not.toHaveBeenCalled();
+      });
+
+      it('renders the PDF first when the invoice was issued without one', async () => {
+        repository.findOne.mockResolvedValue(overdue({ pdfKey: undefined }));
+        pdfGeneratorClient.generateInvoicePdf.mockResolvedValue({
+          base64: 'JVBERg==',
+          contentType: 'application/pdf',
+          fileName: 'invoice-INV-0001.pdf',
+        });
+        mediaClient.uploadFile.mockResolvedValue({ key: KEY });
+        repository.setPdfMetadata.mockResolvedValue(overdue());
+        repository.advanceReminder.mockImplementation(async (_id, _at, _next, sent) => {
+          await sent?.inTransaction?.(overdue({ remindersSent: 1 }), SESSION as never);
+          return overdue({ remindersSent: 1 });
+        });
+
+        await service.sendDueReminder(ID, NOW);
+
+        expect(pdfGeneratorClient.generateInvoicePdf).toHaveBeenCalled();
+        expect(eventsProducer.enqueueReminder).toHaveBeenCalledWith(SESSION, expect.objectContaining({ pdfKey: KEY }));
+      });
+
+      it.each([
+        ['not due yet', overdue({ nextReminderAt: DAY7 })],
+        ['no reminder scheduled', overdue({ nextReminderAt: null })],
+        ['no longer overdue (paid)', overdue({ status: 'paid' })],
+      ])('does nothing when %s', async (_label, invoice) => {
+        repository.findOne.mockResolvedValue(invoice as never);
+
+        await expect(service.sendDueReminder(ID, NOW)).resolves.toBe('none');
+        expect(repository.advanceReminder).not.toHaveBeenCalled();
+      });
+
+      // Another pass (or replica) handled this reminder between our read and our write.
+      it('does not audit or count a reminder another pass already handled', async () => {
+        repository.findOne.mockResolvedValue(overdue());
+        repository.advanceReminder.mockResolvedValue(null);
+
+        await expect(service.sendDueReminder(ID, NOW)).resolves.toBe('none');
+        expect(auditLog.record).not.toHaveBeenCalled();
+      });
     });
   });
 });

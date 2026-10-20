@@ -64,7 +64,7 @@ describe('InvoiceEventsController (payment consuming invoice.events)', () => {
     expect(organizationId).toBe(DEFAULT_ORGANIZATION_ID);
   });
 
-  it.each(['invoice.demo.json', 'invoice.sent.json'])('ignores %s', async (name) => {
+  it.each(['invoice.demo.json', 'invoice.sent.json', 'invoice.reminder.json'])('ignores %s', async (name) => {
     await controller.handle(fixture(name));
 
     expect(expireOpenSessionForInvoice).not.toHaveBeenCalled();

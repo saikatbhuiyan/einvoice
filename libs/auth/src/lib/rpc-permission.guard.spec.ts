@@ -3,7 +3,7 @@ import { Reflector } from '@nestjs/core';
 import { ExecutionContextHost } from '@nestjs/core/helpers/execution-context-host';
 import { GrpcMethod, MessagePattern, RpcException } from '@nestjs/microservices';
 import { GrpcStatus } from '@libs/interceptors';
-import { runWithCorrelationContext } from '@libs/logging';
+import { runAsSystem, runWithCorrelationContext } from '@libs/logging';
 import { createRpcEnvelope } from '@libs/transports';
 import { Public } from './public.decorator';
 import { RequirePermission } from './require-permission.decorator';
@@ -100,8 +100,41 @@ function rpcError(fn: () => unknown): Record<string, unknown> {
   throw new Error('expected the guard to throw');
 }
 
+// A background job's call: built the way the job's code builds it, inside runAsSystem.
+function systemEnvelope(permissions: string[], organizationId = 'org-1') {
+  const built = runAsSystem({ actor: 'overdue-job', organizationId, permissions }, () =>
+    createRpcEnvelope({ id: 'x' }, 'invoice'),
+  );
+  return JSON.parse(JSON.stringify(built)) as unknown;
+}
+
 describe('RpcPermissionGuard', () => {
   const guard = new RpcPermissionGuard(new Reflector());
+
+  describe('system actor (background jobs)', () => {
+    it('accepts the system in place of a user, with the permissions it was granted', () => {
+      expect(
+        guard.canActivate(rpcContext(TcpHandlers, 'readWrite', systemEnvelope(['invoice:read', 'invoice:write']))),
+      ).toBe(true);
+    });
+
+    // Least privilege is real: the system is checked exactly like a user.
+    it('refuses the system a permission it was not granted', () => {
+      const error = rpcError(() =>
+        guard.canActivate(rpcContext(TcpHandlers, 'readWrite', systemEnvelope(['invoice:read']))),
+      );
+
+      expect(error).toMatchObject({ status: 403, message: 'Missing required permission(s): invoice:write.' });
+    });
+
+    it('still needs an organization for tenant permissions', () => {
+      const error = rpcError(() =>
+        guard.canActivate(rpcContext(TcpHandlers, 'read', systemEnvelope(['invoice:read'], ''))),
+      );
+
+      expect(error).toMatchObject({ status: 403, message: 'This call requires an active organization.' });
+    });
+  });
 
   it('ignores non-RPC contexts entirely', () => {
     expect(guard.canActivate(rpcContext(TcpHandlers, 'read', undefined, 'http'))).toBe(true);

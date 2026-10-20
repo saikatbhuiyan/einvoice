@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Reminder: invoice {{.InvoiceNumber}}</title>
+</head>
+<!-- Same constraints as invoice_email.html.tmpl: table layout, inline styles only (email clients). -->
+<body style="margin:0; padding:0; background-color:#f4f4f7; font-family:Helvetica Neue, Arial, sans-serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f4f7; padding:32px 0;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="background-color:#ffffff; border-radius:8px; overflow:hidden;">
+          <tr>
+            <td style="background-color:#7a2e1a; padding:24px 32px;">
+              <span style="color:#ffffff; font-size:20px; font-weight:bold; letter-spacing:1px;">PAYMENT REMINDER</span>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:32px;">
+              <p style="margin:0 0 16px; font-size:15px; color:#1a1a2e;">Hi {{.ClientName}},</p>
+              <p style="margin:0 0 24px; font-size:15px; color:#1a1a2e; line-height:1.5;">
+                This is a friendly reminder that invoice <strong>{{.InvoiceNumber}}</strong> was due on
+                {{.DueDate}} and is now {{.DaysOverdue}} {{if eq .DaysOverdue 1}}day{{else}}days{{end}} overdue.
+                A copy is attached to this email as a PDF.
+              </p>
+
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f9f9fb; border-radius:6px; margin-bottom:24px;">
+                <tr>
+                  <td style="padding:16px 20px; font-size:13px; color:#666666;">Due</td>
+                  <td style="padding:16px 20px; font-size:13px; color:#1a1a2e; text-align:right;">{{.DueDate}}</td>
+                </tr>
+                <tr>
+                  <td style="padding:0 20px 16px; font-size:15px; font-weight:bold; color:#1a1a2e; border-top:1px solid #e5e5ea; padding-top:16px;">Amount due</td>
+                  <td style="padding:0 20px 16px; font-size:15px; font-weight:bold; color:#1a1a2e; text-align:right; border-top:1px solid #e5e5ea; padding-top:16px;">{{.Total}} {{.Currency}}</td>
+                </tr>
+              </table>
+
+              <p style="margin:0; font-size:13px; color:#888888; line-height:1.5;">
+                If you've already paid, thank you, and please ignore this reminder. If you have any
+                questions about this invoice, just reply to this email.
+              </p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:20px 32px; background-color:#f9f9fb; font-size:11px; color:#aaaaaa; text-align:center;">
+              Reminder {{.ReminderNumber}} for this invoice. This is an automated notification.
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

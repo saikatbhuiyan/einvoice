@@ -30,6 +30,7 @@ export function createRpcEnvelope<T>(data: T, sourceService: string): RpcEnvelop
       roles: context?.roles,
       permissions: context?.permissions,
       organizationId: context?.organizationId,
+      systemActor: context?.systemActor,
       sourceService,
       timestamp: new Date().toISOString(),
       ...injectTraceContext(),
