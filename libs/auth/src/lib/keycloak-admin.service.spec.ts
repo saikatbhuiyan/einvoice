@@ -103,6 +103,36 @@ describe('KeycloakAdminService', () => {
     });
   });
 
+  describe('findUserIdByUsername', () => {
+    beforeEach(() => http.post.mockImplementationOnce(() => tokenResponse()));
+
+    it('looks the user up by exact username and returns their id', async () => {
+      http.get.mockReturnValueOnce(of({ data: [{ id: 'kc-1', username: 'dev.admin' }] }));
+
+      await expect(service.findUserIdByUsername('dev.admin')).resolves.toBe('kc-1');
+
+      const [url, options] = http.get.mock.calls[0];
+      expect(url).toBe(`${ADMIN}/users`);
+      expect(options.params).toEqual({ username: 'dev.admin', exact: true });
+      expect(options.headers.Authorization).toBe('Bearer admin-token');
+    });
+
+    // Keycloak stores usernames lower-cased; an email typed with capitals must still match.
+    it('matches case-insensitively the way Keycloak stores usernames, and returns null when absent', async () => {
+      http.get.mockReturnValueOnce(of({ data: [{ id: 'kc-2', username: 'jane@acme.test' }] }));
+      await expect(service.findUserIdByUsername('Jane@Acme.test')).resolves.toBe('kc-2');
+
+      http.get.mockReturnValueOnce(of({ data: [] }));
+      await expect(service.findUserIdByUsername('nobody')).resolves.toBeNull();
+    });
+
+    it('maps an upstream failure to a generic 500', async () => {
+      http.get.mockReturnValueOnce(throwError(() => new Error('503')));
+
+      await expect(service.findUserIdByUsername('jane')).rejects.toBeInstanceOf(InternalServerErrorException);
+    });
+  });
+
   describe('realm roles', () => {
     const role = { id: 'role-uuid', name: 'accountant' };
 

@@ -5,16 +5,20 @@ import { InvoiceDocument, InvoiceModel } from '@libs/schemas';
 import { CreateInvoiceRequest, FindAllInvoicesRequest, UpdateInvoiceRequest } from '@libs/interfaces/gateway';
 import { EDITABLE_INVOICE_STATUSES, buildPaginationMeta, type InvoiceStatus } from '@libs/shared/types';
 import { escapeRegExp } from '@libs/shared/utils';
+import { requireOrganizationId } from '@libs/logging/correlation-context';
 import {
   IInvoiceRepository,
   INVOICE_READ_MODEL,
   INVOICE_WRITE_MODEL,
   InTransaction,
+  NewInvoice,
   PaginatedResult,
   StatusTransitionResult,
+  TransitionOptions,
 } from './invoice.repository.interface';
 
-const CONTENT_FIELDS = ['invoiceNumber', 'client', 'items', 'currency', 'notes'] as const;
+// invoiceNumber is not content: the server assigns it on issue (transitionStatus' prepare hook).
+const CONTENT_FIELDS = ['reference', 'client', 'items', 'currency', 'notes'] as const;
 
 const CONCURRENT_MODIFICATION_MESSAGE = 'Invoice was modified by another user. Please refresh and retry.';
 
@@ -30,7 +34,7 @@ export class InvoiceRepository implements IInvoiceRepository {
     @Inject(INVOICE_READ_MODEL) private readonly readModel: InvoiceModel,
   ) {}
 
-  async create(data: CreateInvoiceRequest, inTransaction?: InTransaction): Promise<InvoiceDocument> {
+  async create(data: NewInvoice, inTransaction?: InTransaction): Promise<InvoiceDocument> {
     const idempotencyKey = data.idempotencyKey?.trim();
 
     if (idempotencyKey) {
@@ -42,17 +46,24 @@ export class InvoiceRepository implements IInvoiceRepository {
 
     try {
       return await this.transaction(async (session) => {
-        const [invoice] = await this.writeModel.create([{ ...this.toContentPayload(data), idempotencyKey }], {
-          session,
-        });
+        const [invoice] = await this.writeModel.create(
+          [
+            {
+              ...this.toContentPayload(data),
+              organizationId: requireOrganizationId(),
+              customerId: data.customerId ?? null,
+              idempotencyKey,
+            },
+          ],
+          { session },
+        );
         await inTransaction?.(invoice, session);
         return invoice;
       });
     } catch (error) {
-      // Concurrent retries with the same key can all pass the lookup above; a unique index lets
-      // exactly one insert win. A retry carries the identical payload, so Mongo may report the
-      // duplicate on invoiceNumber rather than idempotencyKey — whichever index it hits first.
-      // Idempotency means the losers get the winner's invoice, not an error.
+      // Concurrent retries with the same key can all pass the lookup above; the (organization,
+      // idempotencyKey) unique index lets exactly one insert win. Idempotency means the losers get
+      // the winner's invoice, not an error.
       if (idempotencyKey && isDuplicateKey(error)) {
         const winner = await this.findByIdempotencyKey(idempotencyKey);
         if (winner) return winner;
@@ -139,32 +150,32 @@ export class InvoiceRepository implements IInvoiceRepository {
     id: string,
     from: readonly InvoiceStatus[],
     to: InvoiceStatus,
-    inTransaction?: InTransaction,
+    options: TransitionOptions = {},
   ): Promise<StatusTransitionResult> {
     if (!isValidObjectId(id)) return { outcome: 'not_found' };
 
     return this.transaction(async (session): Promise<StatusTransitionResult> => {
-      // returnDocument 'before' is the only way to learn which of `from` the invoice was actually in
-      // (for the audit diff) from the same atomic operation that changed it.
-      const before = await this.writeModel
+      // Read first, inside the transaction: a wrong status must be known *before* `prepare` runs,
+      // or issuing a non-draft would still consume an invoice number.
+      const current = await this.writeModel.findOne(this.activeFilter(id)).session(session).exec();
+      if (!current) return { outcome: 'not_found' };
+      if (!from.includes(current.status)) return { outcome: 'rejected', invoice: current };
+
+      const extra = options.prepare ? await options.prepare(current, session) : {};
+
+      // Guarded on the version just read: within the transaction a concurrent writer surfaces as a
+      // write conflict (retried by Mongoose), so this matching nothing would be a real anomaly.
+      const invoice = await this.writeModel
         .findOneAndUpdate(
-          { ...this.activeFilter(id), status: { $in: from } },
-          { $set: { status: to }, $inc: { version: 1 } },
-          { returnDocument: 'before', session },
+          { ...this.activeFilter(id), status: current.status, version: current.version },
+          { $set: { ...extra, status: to }, $inc: { version: 1 } },
+          { returnDocument: 'after', session },
         )
         .exec();
+      if (!invoice) throw new ConflictException(CONCURRENT_MODIFICATION_MESSAGE);
 
-      if (!before) {
-        const current = await this.writeModel.findOne(this.activeFilter(id)).session(session).exec();
-        return current ? { outcome: 'rejected', invoice: current } : { outcome: 'not_found' };
-      }
-
-      const invoice = await this.writeModel.findOne(this.activeFilter(id)).session(session).exec();
-      // Read inside the same transaction as the update, so it can't have been deleted in between.
-      if (!invoice) throw new Error(`Invoice ${id} vanished inside its own status transition.`);
-
-      await inTransaction?.(invoice, session);
-      return { outcome: 'transitioned', invoice, from: before.status };
+      await options.inTransaction?.(invoice, session);
+      return { outcome: 'transitioned', invoice, from: current.status };
     });
   }
 
@@ -182,7 +193,7 @@ export class InvoiceRepository implements IInvoiceRepository {
    * rather than at each call site.
    */
   private activeFilter(id: string): Record<string, unknown> {
-    return { _id: id, deletedAt: null };
+    return { _id: id, organizationId: requireOrganizationId(), deletedAt: null };
   }
 
   private editableFilter(id: string, version?: number): Record<string, unknown> {
@@ -216,7 +227,7 @@ export class InvoiceRepository implements IInvoiceRepository {
   }
 
   private findByIdempotencyKey(idempotencyKey: string): Promise<InvoiceDocument | null> {
-    return this.writeModel.findOne({ idempotencyKey, deletedAt: null }).exec();
+    return this.writeModel.findOne({ organizationId: requireOrganizationId(), idempotencyKey, deletedAt: null }).exec();
   }
 
   // No cursor = the first cursor page (`pagination=cursor`); otherwise everything older than it.
@@ -277,7 +288,11 @@ export class InvoiceRepository implements IInvoiceRepository {
   }
 
   private buildFilter(query: FindAllInvoicesRequest): Record<string, unknown> {
-    const filter: Record<string, unknown> = { deletedAt: null };
+    const filter: Record<string, unknown> = { organizationId: requireOrganizationId(), deletedAt: null };
+
+    if (query.customerId) {
+      filter.customerId = query.customerId;
+    }
 
     if (query.status) {
       filter.status = query.status;
@@ -298,6 +313,7 @@ export class InvoiceRepository implements IInvoiceRepository {
       if (search) {
         filter.$or = [
           { invoiceNumber: { $regex: search, $options: 'i' } },
+          { reference: { $regex: search, $options: 'i' } },
           { 'client.name': { $regex: search, $options: 'i' } },
           { 'client.email': { $regex: search, $options: 'i' } },
         ];

@@ -2,6 +2,7 @@ import { PaymentEntity, PaymentStatus } from '../../../database/entities/payment
 
 export const PAYMENT_REPOSITORY = Symbol('PAYMENT_REPOSITORY');
 
+/** organizationId is not given: the repository takes it from the request context. */
 export interface CreatePaymentRecord {
   invoiceId: string;
   provider: string;
@@ -16,6 +17,11 @@ export interface CreatePaymentRecord {
 export interface IPaymentRepository {
   create(data: CreatePaymentRecord): Promise<PaymentEntity>;
 
+  /**
+   * Unscoped, deliberately -- the one lookup that is: the Stripe webhook that needs it carries no
+   * organization (the payment it finds says which one), and a provider session id is globally
+   * unique and unguessable.
+   */
   findByProviderSessionId(providerSessionId: string): Promise<PaymentEntity | null>;
 
   /** The invoice's open (pending) session, if any — at most one, by unique index. */

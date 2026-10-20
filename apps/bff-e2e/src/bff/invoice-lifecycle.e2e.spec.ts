@@ -15,7 +15,7 @@ describe('Invoice lifecycle through bff (e2e)', () => {
   });
 
   const newInvoice = (overrides: Record<string, unknown> = {}) => ({
-    invoiceNumber: `E2E-BFF-${Date.now()}-${Math.floor(Math.random() * 1e6)}`,
+    reference: `E2E-BFF-${Date.now()}-${Math.floor(Math.random() * 1e6)}`,
     client: { name: 'Acme Corp', email: 'billing@acme.test', address: '1 Main St' },
     items: [{ catalogId: 'sku-1', name: 'Widget', quantity: 2, unitPrice: 50, vatRate: 10 }],
     currency: 'USD',
@@ -80,8 +80,8 @@ describe('Invoice lifecycle through bff (e2e)', () => {
   // pagination=cursor has to pass bff's forbidNonWhitelisted validation and survive the TCP hop.
   it('starts cursor pagination with pagination=cursor and follows the cursor through the gateway', async () => {
     const marker = `E2E-CURSOR-${Date.now()}`;
-    const older = await axios.post('/invoices', newInvoice({ invoiceNumber: `${marker}-1` }), auth);
-    const newer = await axios.post('/invoices', newInvoice({ invoiceNumber: `${marker}-2` }), auth);
+    const older = await axios.post('/invoices', newInvoice({ reference: `${marker}-1` }), auth);
+    const newer = await axios.post('/invoices', newInvoice({ reference: `${marker}-2` }), auth);
 
     const first = await axios.get('/invoices', { ...auth, params: { pagination: 'cursor', limit: 1, search: marker } });
     expect(first.status).toBe(200);

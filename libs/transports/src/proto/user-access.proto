@@ -10,6 +10,13 @@ service RoleQueryService {
   rpc FindAllRoles(FindAllRolesRequest) returns (FindAllRolesResponse);
 }
 
+// Authorizer resolves which organization a request acts in (and the caller's role there) from
+// these memberships. Like FindAllRoles, a service-to-service lookup on behalf of a caller bff has
+// already authenticated -- user-access serves it without an end-user envelope (@Public).
+service MembershipQueryService {
+  rpc ResolveMembership(ResolveMembershipRequest) returns (ResolveMembershipResponse);
+}
+
 message FindAllRolesRequest {}
 
 message Role {
@@ -18,8 +25,28 @@ message Role {
   string description = 3;
   repeated string permissions = 4;
   bool isActive = 5;
+  // "organization" (granted by a membership) or "platform" (granted by a Keycloak realm role).
+  string scope = 6;
 }
 
 message FindAllRolesResponse {
   repeated Role roles = 1;
+}
+
+message ResolveMembershipRequest {
+  // The Keycloak subject (JWT `sub`) bff authenticated.
+  string keycloakUserId = 1;
+}
+
+message Membership {
+  string organizationId = 1;
+  string organizationName = 2;
+  string roleName = 3;
+  repeated string permissions = 4;
+}
+
+// Every *active* membership of an active user in an active organization. Empty if the person is
+// unknown, deactivated, or belongs nowhere.
+message ResolveMembershipResponse {
+  repeated Membership memberships = 1;
 }

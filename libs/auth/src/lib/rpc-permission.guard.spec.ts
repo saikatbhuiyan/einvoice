@@ -22,6 +22,12 @@ class TcpHandlers {
     return null;
   }
 
+  @RequirePermission('platform:admin')
+  @MessagePattern('platform')
+  platform() {
+    return null;
+  }
+
   @RequirePermission('invoice:read', 'invoice:write')
   @MessagePattern('readWrite')
   readWrite() {
@@ -75,9 +81,11 @@ function rpcContext(cls: HandlerClass, method: string, payload: unknown, type: '
 
 // Builds an envelope exactly the way a real caller does — createRpcEnvelope() reads identity from
 // the active correlation context — then round-trips it through JSON the way the TCP transport does.
-function envelope(data: unknown, identity: { userId?: string; permissions?: string[] } = {}) {
-  const built = runWithCorrelationContext({ correlationId: 'corr-1', traceId: 'trace-1', ...identity }, () =>
-    createRpcEnvelope(data, 'bff'),
+// Callers act in an organization unless a test says otherwise (organizationId: undefined).
+function envelope(data: unknown, identity: { userId?: string; permissions?: string[]; organizationId?: string } = {}) {
+  const built = runWithCorrelationContext(
+    { correlationId: 'corr-1', traceId: 'trace-1', organizationId: 'org-1', ...identity },
+    () => createRpcEnvelope(data, 'bff'),
   );
   return JSON.parse(JSON.stringify(built)) as unknown;
 }
@@ -169,6 +177,34 @@ describe('RpcPermissionGuard', () => {
       const payload = envelope({}, { userId: 'u-1', permissions: ['product:write'] });
 
       expect(guard.canActivate(rpcContext(ClassGated, 'overrides', payload))).toBe(true);
+    });
+  });
+
+  describe('organization', () => {
+    // A tenant permission without an organization: there is no data the caller may touch.
+    it('denies a tenant-permission handler when the envelope carries no organization', () => {
+      const payload = envelope({}, { userId: 'u-1', permissions: ['invoice:read'], organizationId: undefined });
+
+      expect(rpcError(() => guard.canActivate(rpcContext(TcpHandlers, 'read', payload)))).toMatchObject({
+        code: GrpcStatus.PERMISSION_DENIED,
+        status: 403,
+        message: 'This call requires an active organization.',
+      });
+    });
+
+    it('allows a platform-permission handler without any organization', () => {
+      const payload = envelope({}, { userId: 'u-1', permissions: ['platform:admin'], organizationId: undefined });
+
+      expect(guard.canActivate(rpcContext(TcpHandlers, 'platform', payload))).toBe(true);
+    });
+
+    // Checked first: a caller missing the permission learns that, not that an organization is missing.
+    it('reports a missing permission before a missing organization', () => {
+      const payload = envelope({}, { userId: 'u-1', permissions: [], organizationId: undefined });
+
+      expect(rpcError(() => guard.canActivate(rpcContext(TcpHandlers, 'read', payload)))['message']).toBe(
+        'Missing required permission(s): invoice:read.',
+      );
     });
   });
 

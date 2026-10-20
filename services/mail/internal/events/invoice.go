@@ -16,8 +16,10 @@ type Meta struct {
 	UserID        string   `json:"userId,omitempty"`
 	Roles         []string `json:"roles,omitempty"`
 	Permissions   []string `json:"permissions,omitempty"`
-	SourceService string   `json:"sourceService"`
-	Timestamp     string   `json:"timestamp"`
+	// The tenant the event happened in. Empty on messages produced before tenancy.
+	OrganizationID string `json:"organizationId,omitempty"`
+	SourceService  string `json:"sourceService"`
+	Timestamp      string `json:"timestamp"`
 }
 
 // Envelope mirrors RpcEnvelope<T>. Data is decoded in two passes: first just enough to read

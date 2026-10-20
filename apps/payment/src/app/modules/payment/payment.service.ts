@@ -9,7 +9,8 @@ import {
 } from '@nestjs/common';
 import type { InvoiceStatus } from '@libs/shared/types';
 import { Saga, SagaExecutionError } from '@libs/saga';
-import { PAYMENT_PROVIDER, PaymentProvider } from './payment-provider.interface';
+import { runInOrganization } from '@libs/logging/correlation-context';
+import { PAYMENT_PROVIDER, PaymentProvider, type WebhookEventType } from './payment-provider.interface';
 import { IPaymentRepository, PAYMENT_REPOSITORY } from './payment.repository.interface';
 import { InvoiceClientService } from './invoice-client.service';
 import { PaymentEntity } from '../../../database/entities/payment.entity';
@@ -160,7 +161,13 @@ export class PaymentService {
       return;
     }
 
-    if (event.type === 'payment_succeeded') {
+    // A webhook has no caller organization: act in the one the payment was started in, which is
+    // what scopes invoice's MARK_PAID (and this service's own queries) to the right tenant.
+    await runInOrganization(payment.organizationId, () => this.applyWebhookEvent(event.type, payment));
+  }
+
+  private async applyWebhookEvent(type: WebhookEventType, payment: PaymentEntity): Promise<void> {
+    if (type === 'payment_succeeded') {
       if (await this.paymentRepository.hasOtherPaidPayment(payment.invoiceId, payment.id)) {
         // The invoice was already paid through another session (e.g. one retired as nearly expired
         // while the customer was still on it). invoice's markPaid is idempotent, so without this
@@ -175,7 +182,7 @@ export class PaymentService {
       return;
     }
 
-    if (event.type === 'payment_failed') {
+    if (type === 'payment_failed') {
       await this.paymentRepository.updateStatus(payment.id, 'failed');
     }
   }

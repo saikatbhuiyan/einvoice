@@ -89,6 +89,31 @@ export class KeycloakAdminService {
     }
   }
 
+  /**
+   * The Keycloak id of the user with exactly this username, or null. Lets user-access link a person
+   * who already has a Keycloak identity (created in the console, imported with the dev realm, or a
+   * member of another organization) instead of failing to create a duplicate.
+   */
+  async findUserIdByUsername(username: string): Promise<string | null> {
+    const token = await this.getAdminToken();
+
+    try {
+      const { data } = await firstValueFrom(
+        this.httpService.get<Array<{ id: string; username: string }>>(`${this.config.adminApiBaseUrl}/users`, {
+          params: { username, exact: true },
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+      );
+      return data.find((user) => user.username === username.toLowerCase())?.id ?? null;
+    } catch (error) {
+      this.logger.error(
+        `Failed to look up Keycloak user "${username}"`,
+        error instanceof Error ? error.stack : String(error),
+      );
+      throw new InternalServerErrorException('Failed to look up the identity for this user.');
+    }
+  }
+
   async assignRealmRole(keycloakUserId: string, roleName: string): Promise<void> {
     const token = await this.getAdminToken();
 

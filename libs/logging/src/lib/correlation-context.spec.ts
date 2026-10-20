@@ -1,7 +1,14 @@
 import { context, trace } from '@opentelemetry/api';
 import { installOtelTestHarness, type OtelTestHarness } from '@libs/telemetry/otel-test-harness';
 import { createPinoHttpOptions } from './logging.module';
-import { extractTraceIdFromTraceparent, resolveCorrelationContext } from './correlation-context';
+import {
+  extractTraceIdFromTraceparent,
+  getCurrentCorrelationContext,
+  requireOrganizationId,
+  resolveCorrelationContext,
+  runInOrganization,
+  runWithCorrelationContext,
+} from './correlation-context';
 
 describe('correlation context', () => {
   let otel: OtelTestHarness;
@@ -63,5 +70,26 @@ describe('correlation context', () => {
     expect(headers['x-correlation-id']).toBe('request-789');
     expect(res.setHeader).toHaveBeenCalledWith('x-correlation-id', 'request-789');
     expect(JSON.stringify(options.redact)).toContain('authorization');
+  });
+
+  describe('runInOrganization', () => {
+    it('keeps the surrounding ids and caller, sets the organization, and leaves the outer context alone', () => {
+      runWithCorrelationContext({ correlationId: 'c-1', traceId: 't-1', sourceService: 'bff' }, () => {
+        const inner = runInOrganization('org-a', () => getCurrentCorrelationContext());
+
+        expect(inner).toEqual({ correlationId: 'c-1', traceId: 't-1', sourceService: 'bff', organizationId: 'org-a' });
+        expect(() => requireOrganizationId()).toThrow();
+      });
+    });
+
+    it('starts a context of its own when there is none', () => {
+      const inner = runInOrganization('org-a', () => getCurrentCorrelationContext());
+
+      expect(inner).toMatchObject({
+        organizationId: 'org-a',
+        correlationId: expect.any(String),
+        traceId: expect.any(String),
+      });
+    });
   });
 });

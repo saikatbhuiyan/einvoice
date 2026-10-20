@@ -20,4 +20,8 @@ PDFs became private carry a public `pdfUrl` (and no `eventId`) instead of `pdfKe
 fetches those by URL and can't dedupe them. Delete it together with that fallback once retention has
 passed.
 
-Every current event carries `eventId` (the producer's outbox row id); consumers dedupe on it.
+Every current event carries `eventId` (the producer's outbox row id); consumers dedupe on it, and
+`meta.organizationId` (the tenant the event happened in). The two legacy fixtures have neither:
+they predate both. A consumer that acts on an event without an organization treats it as the
+default organization's -- the only one that existed before tenancy (see payment's
+InvoiceEventsController).

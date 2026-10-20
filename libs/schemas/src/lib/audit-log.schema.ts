@@ -6,8 +6,13 @@ export type AuditAction = 'CREATE' | 'UPDATE' | 'DELETE' | 'STATUS_CHANGE' | 'GE
 
 @Schema({ ...BASE_SCHEMA_OPTIONS, collection: 'audit_logs' })
 export class AuditLog extends BaseSchema {
-  @Prop({ required: true, index: true })
+  // Explicit type: a string-literal union's emitted design:type is compiler-dependent.
+  @Prop({ type: String, required: true, index: true })
   action!: AuditAction;
+
+  /** The organization the change happened in (absent for platform-level actions). */
+  @Prop({ index: true })
+  organizationId?: string;
 
   @Prop({ required: true, index: true })
   entityType!: string;

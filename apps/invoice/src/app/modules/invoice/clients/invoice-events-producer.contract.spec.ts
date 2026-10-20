@@ -33,6 +33,8 @@ const IDENTITY = {
   userId: 'user-1',
   roles: ['accountant'],
   permissions: ['invoice:write'],
+  // Consumers act on behalf of the organization the event happened in.
+  organizationId: '0d5c2b9e-7a41-4c8e-9f12-3b6a8e4d7c10',
 };
 
 interface StoredRow {

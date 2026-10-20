@@ -5,6 +5,7 @@ import { RoleEntity } from '../entities/role.entity';
 
 interface RoleSeed {
   name: string;
+  scope: 'organization' | 'platform';
   description: string;
   permissions: string[];
 }
@@ -19,7 +20,12 @@ async function seedRoles(): Promise<void> {
   // Upsert by name so re-running the seed (e.g. after editing roles.seed.json) is safe:
   // existing roles get their description/permissions refreshed, nothing is duplicated.
   await repository.upsert(
-    roles.map((role) => ({ name: role.name, description: role.description, permissions: role.permissions })),
+    roles.map((role) => ({
+      name: role.name,
+      scope: role.scope,
+      description: role.description,
+      permissions: role.permissions,
+    })),
     ['name'],
   );
 

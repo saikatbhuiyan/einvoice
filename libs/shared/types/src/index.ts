@@ -6,3 +6,4 @@ export { CurrencyCode, UserRole } from './lib/enums';
 export * from './lib/http-message.enum';
 export * from './lib/invoice.types';
 export * from './lib/http-request.types';
+export * from './lib/tenancy.types';

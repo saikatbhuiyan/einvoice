@@ -13,6 +13,15 @@ export const INVOICE_PATTERNS = {
   MARK_PAID: 'invoice.markPaid',
 } as const;
 
+// Served by invoice (customers share its database: an invoice snapshots its customer locally).
+export const CUSTOMER_PATTERNS = {
+  CREATE: 'customer.create',
+  FIND_ALL: 'customer.findAll',
+  FIND_ONE: 'customer.findOne',
+  UPDATE: 'customer.update',
+  DELETE: 'customer.delete',
+} as const;
+
 export const PRODUCT_PATTERNS = {
   CREATE: 'product.create',
   FIND_ALL: 'product.findAll',
@@ -25,6 +34,19 @@ export const USER_PATTERNS = {
   FIND_BY_EMAIL: 'user.findByEmail',
   UPDATE: 'user.update',
   DELETE: 'user.delete',
+} as const;
+
+// Served by user-access, over the same TCP port as USER_PATTERNS. Platform-scoped (platform:admin):
+// they act across organizations, so the caller needs no active organization.
+export const ORGANIZATION_PATTERNS = {
+  CREATE: 'organization.create',
+  FIND_ALL: 'organization.findAll',
+  FIND_ONE: 'organization.findOne',
+  /**
+   * Service-to-service (invoice): the invoice-numbering settings of the organization the call
+   * carries. Public -- numbering happens with or without an end user behind it.
+   */
+  INVOICE_SETTINGS: 'organization.invoiceSettings',
 } as const;
 
 export const ROLE_PATTERNS = {
@@ -55,9 +77,11 @@ export const MEDIA_PATTERNS = {
 
 export const TCP_PATTERNS = {
   INVOICE: INVOICE_PATTERNS,
+  CUSTOMER: CUSTOMER_PATTERNS,
   PRODUCT: PRODUCT_PATTERNS,
   USER: USER_PATTERNS,
   ROLE: ROLE_PATTERNS,
+  ORGANIZATION: ORGANIZATION_PATTERNS,
   NOTIFICATION: NOTIFICATION_PATTERNS,
   PAYMENT: PAYMENT_PATTERNS,
   PDF_GENERATOR: PDF_GENERATOR_PATTERNS,

@@ -8,7 +8,6 @@ export interface CreateUserRequest {
 }
 
 export interface UpdateUserRequest {
-  email?: string;
   name?: string;
   roleId?: string;
   isActive?: boolean;

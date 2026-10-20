@@ -1,21 +1,31 @@
-import { UserEntity } from '../../../database/entities/user.entity';
-import { CreateUserRequest, FindAllUsersRequest, UpdateUserRequest } from '@libs/interfaces/gateway';
+import { FindAllUsersRequest } from '@libs/interfaces/gateway';
+import { MembershipEntity } from '../../../database/entities/membership.entity';
 
 export const USER_REPOSITORY = Symbol('USER_REPOSITORY');
 
-export interface PaginatedResult<T = UserEntity> {
+export interface PaginatedResult<T = MembershipEntity> {
   items: T[];
   total: number;
 }
 
+export interface MemberChanges {
+  /** The person's name (shared by all their organizations). */
+  name?: string;
+  /** The member's role in this organization. */
+  roleId?: string;
+  /** Whether the membership is active. */
+  isActive?: boolean;
+}
+
+/**
+ * The members of the *current* organization (requireOrganizationId()): a person appears here only
+ * through their membership in it. Every method is scoped -- a member of another organization is
+ * "not found", never readable or writable.
+ */
 export interface IUserRepository {
-  create(data: CreateUserRequest & { keycloakUserId: string }): Promise<UserEntity>;
+  findMembers(query: FindAllUsersRequest): Promise<PaginatedResult>;
 
-  findAll(query: FindAllUsersRequest): Promise<PaginatedResult>;
+  findMember(userId: string): Promise<MembershipEntity | null>;
 
-  findById(id: string): Promise<UserEntity | null>;
-
-  update(id: string, data: UpdateUserRequest): Promise<UserEntity | null>;
-
-  deactivate(id: string): Promise<UserEntity | null>;
+  updateMember(userId: string, changes: MemberChanges): Promise<MembershipEntity | null>;
 }

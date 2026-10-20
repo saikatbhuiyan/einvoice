@@ -3,6 +3,10 @@ import { ClientProxy } from '@nestjs/microservices';
 import { CIRCUIT_BREAKER_FACTORY } from '@libs/circuit-breaker';
 import type { CircuitBreakerFactory } from '@libs/circuit-breaker';
 import {
+  CreateOrganizationRequest,
+  FindAllOrganizationsRequest,
+  FindAllOrganizationsResponse,
+  OrganizationResponse,
   CreateUserRequest,
   DeactivateUserResponse,
   FindAllRolesResponse,
@@ -49,5 +53,21 @@ export class UserClientService extends BaseTcpClient {
 
   async findAllRoles(): Promise<FindAllRolesResponse> {
     return this.send<FindAllRolesResponse, undefined>(TCP_PATTERNS.ROLE.FIND_ALL, undefined);
+  }
+
+  // Platform operations (platform:admin), served by user-access over the same TCP client.
+  async createOrganization(data: CreateOrganizationRequest): Promise<OrganizationResponse> {
+    return this.send<OrganizationResponse, CreateOrganizationRequest>(TCP_PATTERNS.ORGANIZATION.CREATE, data);
+  }
+
+  async findAllOrganizations(query: FindAllOrganizationsRequest): Promise<FindAllOrganizationsResponse> {
+    return this.send<FindAllOrganizationsResponse, FindAllOrganizationsRequest>(
+      TCP_PATTERNS.ORGANIZATION.FIND_ALL,
+      query,
+    );
+  }
+
+  async findOneOrganization(id: string): Promise<OrganizationResponse> {
+    return this.send<OrganizationResponse, { id: string }>(TCP_PATTERNS.ORGANIZATION.FIND_ONE, { id });
   }
 }

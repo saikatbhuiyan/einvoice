@@ -5,6 +5,7 @@ import { CacheModule } from '@libs/cache';
 import { PERMISSION_RESOLVER, PermissionGuard } from '@libs/auth';
 import { createGrpcClientConfig, GrpcServiceName } from '@libs/transports';
 import { AuthController } from './auth.controller';
+import { MeController } from './me.controller';
 import { AuthService } from './auth.service';
 import { AuthorizerPermissionResolver } from './authorizer-permission.resolver';
 
@@ -23,7 +24,7 @@ import { AuthorizerPermissionResolver } from './authorizer-permission.resolver';
     CacheModule.forRoot('bff'),
     ClientsModule.register([createGrpcClientConfig(GrpcServiceName.AUTHORIZER)]),
   ],
-  controllers: [AuthController],
+  controllers: [AuthController, MeController],
   providers: [
     AuthService,
     PermissionGuard,

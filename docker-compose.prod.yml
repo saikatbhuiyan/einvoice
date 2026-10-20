@@ -94,6 +94,9 @@ services:
       PDF_GENERATOR_SERVICE_PORT: ${PDF_GENERATOR_SERVICE_PORT:-3310}
       MEDIA_SERVICE_HOST: media
       MEDIA_SERVICE_PORT: ${MEDIA_SERVICE_PORT:-3312}
+      # The organization's invoice prefix, read when an invoice is numbered.
+      USER_SERVICE_HOST: user-access
+      USER_SERVICE_PORT: ${USER_SERVICE_PORT:-3306}
       KAFKA_BROKERS: kafka:9092
       REDIS_HOST: redis
       REDIS_PORT: 6379
@@ -110,9 +113,13 @@ services:
         condition: service_healthy
       kafka:
         condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
       pdf-generator:
         condition: service_started
       media:
+        condition: service_started
+      user-access:
         condition: service_started
     expose:
       - "${INVOICE_SERVICE_PORT:-3301}"
@@ -370,6 +377,8 @@ services:
         condition: service_started
       kafka:
         condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
     expose:
       - "${PAYMENT_HTTP_PORT:-3314}"
       - "${PAYMENT_SERVICE_PORT:-3004}"
@@ -407,6 +416,13 @@ services:
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      # Topics exist only if infra/kafka/topics.conf lists them (kafka-init creates them): with
+      # auto-creation, the first consumer on a fresh broker raced the creation and payment failed to start.
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      # The volume's path. Unset, the image's env-based config writes to /tmp/kafka-logs -- the
+      # container's own layer -- so every recreate silently dropped all topics, unconsumed events and
+      # consumer-group offsets while the mounted volume stayed empty.
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
     volumes:
       - kafka_prod_data:/var/lib/kafka/data
     expose:
@@ -417,6 +433,24 @@ services:
       timeout: 10s
       retries: 10
       start_period: 30s
+    networks:
+      - backend
+
+  # One-shot: creates every topic in infra/kafka/topics.conf that doesn't exist yet, then exits.
+  # invoice, payment and mail-service start only after it completed successfully.
+  kafka-init:
+    image: apache/kafka:4.3.1
+    entrypoint: ["/bin/bash", "/topics/create-topics.sh"]
+    environment:
+      KAFKA_BOOTSTRAP_SERVER: kafka:9092
+      # Single broker: replication factor 1. With a real cluster, raise it (3) here.
+      TOPIC_REPLICATION_FACTOR: 1
+    volumes:
+      - ./infra/kafka:/topics:ro
+    depends_on:
+      kafka:
+        condition: service_healthy
+    restart: "no"
     networks:
       - backend
 
@@ -453,6 +487,8 @@ services:
     depends_on:
       kafka:
         condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
     networks:
@@ -482,6 +518,8 @@ services:
       - backend
 
   postgres:
+    # Same major as dev and the integration tests (Testcontainers) -- migrations are verified on it.
+    image: postgres:16-alpine
     restart: unless-stopped
     env_file:
       - .env

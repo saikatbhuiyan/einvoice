@@ -5,3 +5,5 @@ export * from './lib/invoice-item.schema';
 export * from './lib/invoice.schema';
 export * from './lib/audit-log.schema';
 export * from './lib/outbox-event.schema';
+export * from './lib/invoice-counter.schema';
+export * from './lib/customer.schema';

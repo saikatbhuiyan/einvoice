@@ -1,7 +1,7 @@
 import { Injectable, NestMiddleware } from '@nestjs/common';
 import { NextFunction, Response } from 'express';
 import { CorrelatedRequest } from '@libs/shared/types';
-import { resolveCorrelationContext, runWithCorrelationContext } from '@libs/logging';
+import { resolveCorrelationContext, runWithCorrelationContext, type CorrelationContext } from '@libs/logging';
 
 @Injectable()
 export class CorrelationIdMiddleware implements NestMiddleware {
@@ -15,6 +15,9 @@ export class CorrelationIdMiddleware implements NestMiddleware {
 
     res.setHeader('x-correlation-id', correlationId);
     res.setHeader('x-trace-id', traceId);
-    runWithCorrelationContext({ correlationId, traceId }, next);
+    runWithCorrelationContext({ correlationId, traceId, ...this.callerContext?.(req) }, next);
   }
+
+  /** Extra context a subclass contributes from the request (see InternalCallerContextMiddleware). */
+  protected callerContext?(req: CorrelatedRequest): Partial<CorrelationContext>;
 }

@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'child_process';
 import { openSync, readFileSync } from 'fs';
-import { createServer } from 'net';
+import { connect, createServer } from 'net';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
@@ -13,13 +13,29 @@ import { join } from 'path';
  * readiness check was then answered by that stale process — possibly running old code — while
  * the run's own app couldn't bind the port, and tests intermittently hung.
  *
- * Mongo + Redis must already be up: `docker compose -f docker-compose.dev.yml up -d redis mongodb`.
+ * Mongo + Redis must already be up, and user-access (issuing reads the organization's invoice
+ * prefix from it; compose starts its Postgres and Keycloak with it):
+ * `docker compose -f docker-compose.dev.yml up -d redis mongodb user-access`.
  */
 const WORKSPACE_ROOT = join(__dirname, '../../../..');
 export const APP_LOG = join(tmpdir(), 'invoice-e2e-app.log');
 
 declare global {
   var __INVOICE_E2E_APP__: ChildProcess | undefined;
+}
+
+function assertPortOpen(port: number, what: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const socket = connect(port, '127.0.0.1');
+    socket.setTimeout(2_000);
+    const fail = () => {
+      socket.destroy();
+      reject(new Error(`${what} is not reachable on localhost:${port}. Start it first (see global-setup.ts).`));
+    };
+    socket.once('connect', () => socket.end(() => resolve()));
+    socket.once('error', fail);
+    socket.once('timeout', fail);
+  });
 }
 
 function assertPortFree(port: number): Promise<void> {
@@ -43,6 +59,8 @@ module.exports = async function () {
   // workspace-root .env into every task, and that sets PORT=3300 (bff's port).
   const port = Number(process.env['INVOICE_HTTP_PORT'] ?? 3302);
   await assertPortFree(port);
+  // Fail fast with the reason, rather than as a 502 on the first issue.
+  await assertPortOpen(Number(process.env['USER_SERVICE_PORT'] ?? 3306), 'user-access (TCP)');
 
   const log = openSync(APP_LOG, 'w');
   const app = spawn(process.execPath, [join(WORKSPACE_ROOT, 'dist/apps/invoice/main.js')], {

@@ -4,6 +4,7 @@ import { RpcException } from '@nestjs/microservices';
 import { GrpcStatus } from '@libs/interceptors';
 import { getRpcMeta } from '@libs/transports';
 import { IS_PUBLIC_KEY } from './public.decorator';
+import { isPlatformPermission } from '@libs/shared/types';
 import { REQUIRED_PERMISSIONS_KEY } from './require-permission.decorator';
 
 /**
@@ -71,6 +72,18 @@ export class RpcPermissionGuard implements CanActivate {
         status: HttpStatus.FORBIDDEN,
         error: 'Forbidden',
         message: `Missing required permission(s): ${missing.join(', ')}.`,
+      });
+    }
+
+    // A tenant permission only means something inside an organization: without one, there is no
+    // data this caller may touch. (bff never sends tenant permissions without an organization;
+    // this stops a hand-built envelope from reaching an unscoped handler.)
+    if (!meta.organizationId && required.some((permission) => !isPlatformPermission(permission))) {
+      throw new RpcException({
+        code: GrpcStatus.PERMISSION_DENIED,
+        status: HttpStatus.FORBIDDEN,
+        error: 'Forbidden',
+        message: 'This call requires an active organization.',
       });
     }
 

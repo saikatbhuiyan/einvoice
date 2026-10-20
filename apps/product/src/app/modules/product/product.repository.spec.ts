@@ -1,3 +1,5 @@
+import { MissingOrganizationContextError } from '@libs/logging/correlation-context';
+import { itInOrganization as it, TEST_ORGANIZATION_ID as ORG } from '@libs/logging/testing';
 import { ProductRepository } from './product.repository';
 
 describe('ProductRepository', () => {
@@ -37,11 +39,35 @@ describe('ProductRepository', () => {
 
       expect(typeormRepo.create).toHaveBeenCalledWith(expect.objectContaining({ isActive: false }));
     });
+
+    // RPC payloads skip DTO validation: a product can't be planted in another organization.
+    it("creates in the caller's organization, keeping only product fields", async () => {
+      await repository.create({
+        sku: 'SKU-1',
+        name: 'Widget',
+        unitPrice: 100,
+        currency: 'USD',
+        vatRate: 10,
+        organizationId: 'org-other',
+        id: 'chosen-id',
+      } as never);
+
+      const [[stored]] = typeormRepo.create.mock.calls;
+      expect(stored).toMatchObject({ organizationId: ORG });
+      expect(stored).not.toHaveProperty('id');
+    });
+
+    test('refuses outside an organization context', async () => {
+      await expect(
+        repository.create({ sku: 'SKU-1', name: 'W', unitPrice: 1, currency: 'USD', vatRate: 0 }),
+      ).rejects.toBeInstanceOf(MissingOrganizationContextError);
+    });
   });
 
   describe('findAll', () => {
     const buildQueryBuilder = (result: [unknown[], number]) => {
       const qb: Record<string, jest.Mock> = {};
+      qb['where'] = jest.fn(() => qb);
       qb['andWhere'] = jest.fn(() => qb);
       qb['orderBy'] = jest.fn(() => qb);
       qb['skip'] = jest.fn(() => qb);
@@ -56,6 +82,7 @@ describe('ProductRepository', () => {
 
       const result = await repository.findAll({ page: 2, limit: 10, isActive: true, search: 'widget' });
 
+      expect(qb['where']).toHaveBeenCalledWith('product.organizationId = :organizationId', { organizationId: ORG });
       expect(qb['andWhere']).toHaveBeenCalledWith('product.isActive = :isActive', { isActive: true });
       expect(qb['andWhere']).toHaveBeenCalledWith(expect.stringContaining('ILIKE'), { search: '%widget%' });
       expect(qb['skip']).toHaveBeenCalledWith(10);
@@ -63,12 +90,13 @@ describe('ProductRepository', () => {
       expect(result).toEqual({ items: [{ id: 'product-1' }], total: 1 });
     });
 
-    it('applies no filters when none are given', async () => {
+    it('applies only the organization scope when no filters are given', async () => {
       const qb = buildQueryBuilder([[], 0]);
       typeormRepo.createQueryBuilder.mockReturnValue(qb);
 
       await repository.findAll({});
 
+      expect(qb['where']).toHaveBeenCalledTimes(1);
       expect(qb['andWhere']).not.toHaveBeenCalled();
     });
   });

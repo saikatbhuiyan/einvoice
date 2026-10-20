@@ -1,6 +1,8 @@
 import { ServiceUnavailableException } from '@nestjs/common';
 import { InvoiceService } from './invoice.service';
 import { InvoiceClientService } from './invoice-client.service';
+// Tenant cache keys need an organization in context, as every real request has.
+import { itInOrganization as it, TEST_ORGANIZATION_ID } from '@libs/logging/testing';
 
 type MockCache = { get: jest.Mock; set: jest.Mock; del: jest.Mock };
 type MockRedis = { get: jest.Mock; incr: jest.Mock };
@@ -123,7 +125,8 @@ describe('BFF InvoiceService', () => {
       await service[method]('invoice-1');
 
       expect(client[clientMethod]).toHaveBeenCalledWith('invoice-1');
-      expect(cacheManager.del).toHaveBeenCalledWith('bff:invoice:one:invoice-1');
+      // Scoped to the caller's organization: another tenant's cache entry for the same id is untouched.
+      expect(cacheManager.del).toHaveBeenCalledWith(`bff:org:${TEST_ORGANIZATION_ID}:invoice:one:invoice-1`);
       expect(redis.incr).toHaveBeenCalled();
     });
 

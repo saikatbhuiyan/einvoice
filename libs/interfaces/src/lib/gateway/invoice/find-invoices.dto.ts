@@ -9,6 +9,7 @@ import {
   ValidationArguments,
   ValidatorConstraint,
   ValidatorConstraintInterface,
+  IsMongoId,
 } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { INVOICE_STATUSES, PaginationQueryDto, SUPPORTED_CURRENCIES } from '@libs/shared/types';
@@ -76,9 +77,14 @@ export class FindAllInvoicesDto extends PaginationQueryDto implements FindAllInv
   @IsEmail()
   clientEmail?: string;
 
+  @ApiPropertyOptional({ example: '662f9d38f2ab7c001f52c9aa', description: "Only this customer's invoices." })
+  @IsOptional()
+  @IsMongoId()
+  customerId?: string;
+
   @ApiPropertyOptional({
     example: 'subscription',
-    description: 'Free-text search term applied by the invoice service.',
+    description: 'Case-insensitive substring match on invoice number, reference, client name and client email.',
   })
   @IsOptional()
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))

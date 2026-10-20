@@ -13,9 +13,10 @@ import {
   type InvoiceModel,
   type OutboxEventModel,
 } from '@libs/schemas';
-import type { CreateInvoiceRequest } from '@libs/interfaces/gateway';
 import { INVOICE_EVENTS_TOPIC } from '@libs/transports';
+import { itInOrganization as it, TEST_ORGANIZATION_ID as ORG } from '@libs/logging/testing';
 import { InvoiceRepository } from '../invoice/invoice.repository';
+import type { NewInvoice } from '../invoice/invoice.repository.interface';
 import { InvoiceEventsProducerService } from '../invoice/clients/invoice-events-producer.service';
 import { OutboxRepository } from './outbox.repository';
 import { KafkaOutboxPublisher } from './outbox-publisher';
@@ -119,13 +120,16 @@ describe('transactional outbox (real Mongo replica set, Kafka, Redis)', () => {
     await Promise.all([invoiceModel.deleteMany({}), outboxModel.deleteMany({}), redis.flushall()]);
   });
 
-  const payload = (): CreateInvoiceRequest =>
+  const payload = (): NewInvoice =>
     ({
-      invoiceNumber: `OBX-${++counter}`,
+      reference: `OBX-${++counter}`,
       client: { name: 'Acme Corp', email: 'billing@acme.test', address: '1 Main St' },
       items: [{ catalogId: 'sku-1', name: 'Widget', quantity: 1, unitPrice: 100, vatRate: 0 }],
       currency: 'USD',
-    }) as CreateInvoiceRequest;
+    }) as NewInvoice;
+
+  const issue = (id: string) =>
+    repository.transitionStatus(id, ['draft'], 'issued', { prepare: async () => ({ invoiceNumber: `OBX-${id}` }) });
 
   const newRelay = (brokers: string[]) => {
     const publisher = new KafkaOutboxPublisher(brokers);
@@ -184,6 +188,8 @@ describe('transactional outbox (real Mongo replica set, Kafka, Redis)', () => {
       expect(rows[0]).toMatchObject({ topic: INVOICE_EVENTS_TOPIC, key: invoice.id, publishedAt: null, attempts: 0 });
       expect(rows[0].value).toMatchObject({
         data: { type: 'invoice.demo', invoiceId: invoice.id, eventId: String(rows[0]._id) },
+        // Consumers act on behalf of the organization the event happened in.
+        meta: { organizationId: ORG },
       });
     });
 
@@ -201,16 +207,18 @@ describe('transactional outbox (real Mongo replica set, Kafka, Redis)', () => {
 
     it('rolls a status change back with its event (no cancelled invoice without invoice.cancelled)', async () => {
       const invoice = await repository.create(payload());
-      await repository.transitionStatus(invoice.id, ['draft'], 'issued');
+      await issue(invoice.id);
 
       await expect(
-        repository.transitionStatus(invoice.id, ['issued', 'overdue'], 'cancelled', async (cancelled, session) => {
-          await events.enqueueCancelled(session, {
-            invoiceId: cancelled.id,
-            invoiceNumber: cancelled.invoiceNumber,
-            cancelledAt: new Date().toISOString(),
-          });
-          throw new Error('fail after the outbox write');
+        repository.transitionStatus(invoice.id, ['issued', 'overdue'], 'cancelled', {
+          inTransaction: async (cancelled, session) => {
+            await events.enqueueCancelled(session, {
+              invoiceId: cancelled.id,
+              invoiceNumber: cancelled.invoiceNumber as string,
+              cancelledAt: new Date().toISOString(),
+            });
+            throw new Error('fail after the outbox write');
+          },
         }),
       ).rejects.toThrow('fail after the outbox write');
 
@@ -224,16 +232,17 @@ describe('transactional outbox (real Mongo replica set, Kafka, Redis)', () => {
       const invoice = await repository.create(payload(), (created, session) =>
         events.enqueueDemo(session, created._id.toString()).then(() => undefined),
       );
-      await repository.transitionStatus(invoice.id, ['draft'], 'issued');
-      await repository.transitionStatus(invoice.id, ['issued', 'overdue'], 'cancelled', (cancelled, session) =>
-        events
-          .enqueueCancelled(session, {
-            invoiceId: cancelled.id,
-            invoiceNumber: cancelled.invoiceNumber,
-            cancelledAt: '2026-10-19T10:00:00.000Z',
-          })
-          .then(() => undefined),
-      );
+      await issue(invoice.id);
+      await repository.transitionStatus(invoice.id, ['issued', 'overdue'], 'cancelled', {
+        inTransaction: (cancelled, session) =>
+          events
+            .enqueueCancelled(session, {
+              invoiceId: cancelled.id,
+              invoiceNumber: cancelled.invoiceNumber as string,
+              cancelledAt: '2026-10-19T10:00:00.000Z',
+            })
+            .then(() => undefined),
+      });
       const stored = await outboxModel.find().sort({ _id: 1 }).lean();
 
       await expect(newRelay([broker]).tick()).resolves.toBe(2);

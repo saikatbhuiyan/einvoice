@@ -21,7 +21,10 @@ func readFixture(t *testing.T, name string) []byte {
 	return raw
 }
 
-func wantMeta(t *testing.T, meta Meta) {
+// The organization every current fixture's event happened in; legacy fixtures predate tenancy.
+const contractOrganization = "0d5c2b9e-7a41-4c8e-9f12-3b6a8e4d7c10"
+
+func wantMeta(t *testing.T, meta Meta, organizationID string) {
 	t.Helper()
 	want := Meta{
 		CorrelationID: "corr-contract-1",
@@ -33,7 +36,7 @@ func wantMeta(t *testing.T, meta Meta) {
 		Timestamp:     "2026-10-16T09:00:00.000Z",
 	}
 	if meta.CorrelationID != want.CorrelationID || meta.TraceID != want.TraceID || meta.UserID != want.UserID ||
-		meta.SourceService != want.SourceService || meta.Timestamp != want.Timestamp ||
+		meta.SourceService != want.SourceService || meta.Timestamp != want.Timestamp || meta.OrganizationID != organizationID ||
 		len(meta.Roles) != 1 || meta.Roles[0] != "accountant" || len(meta.Permissions) != 1 || meta.Permissions[0] != "invoice:write" {
 		t.Fatalf("meta = %+v, want %+v", meta, want)
 	}
@@ -53,7 +56,7 @@ func TestContractDemoEvent(t *testing.T) {
 		demo.EventID != "6710000000000000000000e1" {
 		t.Fatalf("demo = %+v", demo)
 	}
-	wantMeta(t, meta)
+	wantMeta(t, meta, contractOrganization)
 }
 
 // The fields every invoice.sent fixture shares; each test adds what differs (eventId, pdfKey/pdfUrl).
@@ -94,7 +97,7 @@ func TestContractSentEvent(t *testing.T) {
 	if got != want {
 		t.Fatalf("event =\n %+v\nwant\n %+v", got, want)
 	}
-	wantMeta(t, meta)
+	wantMeta(t, meta, contractOrganization)
 }
 
 // The producer drops dueDate entirely (JSON.stringify omits undefined); it must decode as empty.
@@ -116,7 +119,7 @@ func TestContractLegacySentWithPdfUrlStillDecodes(t *testing.T) {
 	if got != want {
 		t.Fatalf("event =\n %+v\nwant\n %+v", got, want)
 	}
-	wantMeta(t, meta)
+	wantMeta(t, meta, "")
 }
 
 // Messages produced before the invoice.sent rename can still be on the topic: they must still be emailed.
@@ -128,7 +131,7 @@ func TestContractLegacyPdfGeneratedDecodesAsSent(t *testing.T) {
 	if got != want {
 		t.Fatalf("event =\n %+v\nwant\n %+v", got, want)
 	}
-	wantMeta(t, meta)
+	wantMeta(t, meta, "")
 }
 
 // invoice.cancelled is payment's event: this service decodes the envelope (for logging) and reports
@@ -139,5 +142,5 @@ func TestContractCancelledIsNotThisServicesEvent(t *testing.T) {
 	if err != nil || ok || event != nil {
 		t.Fatalf("Decode: event=%v ok=%v err=%v, want ignored", event, ok, err)
 	}
-	wantMeta(t, meta)
+	wantMeta(t, meta, contractOrganization)
 }
