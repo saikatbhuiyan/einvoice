@@ -6,6 +6,7 @@ import { ConfigModule } from '@nestjs/config';
 import { CorrelationIdMiddleware } from '@libs/middlewares';
 import { LoggingModule } from '@libs/logging';
 import { InvoiceModule } from './modules/invoice/invoice.module';
+import { CustomerModule } from './modules/customer/customer.module';
 import { ProductModule } from './modules/product/product.module';
 import { UserModule } from './modules/user/user.module';
 import { AuthModule } from './modules/auth/auth.module';
@@ -27,6 +28,7 @@ import { KeycloakAuthModule } from '@libs/auth';
     LoggingModule.forRoot({ serviceName: 'bff' }),
     KeycloakAuthModule.forRoot(),
     InvoiceModule,
+    CustomerModule,
     ProductModule,
     UserModule,
     AuthModule,

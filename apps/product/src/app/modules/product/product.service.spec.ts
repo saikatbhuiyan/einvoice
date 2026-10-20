@@ -1,5 +1,6 @@
 import { ConflictException } from '@nestjs/common';
 import { QueryFailedError } from 'typeorm';
+import { itInOrganization as it, TEST_ORGANIZATION_ID as ORG } from '@libs/logging/testing';
 import { ProductService } from './product.service';
 import { IProductRepository } from './product.repository.interface';
 import { ProductEntity } from '../../../database/entities/product.entity';
@@ -52,7 +53,8 @@ describe('ProductService', () => {
         vatRate: 10,
       });
 
-      expect(redis.incr).toHaveBeenCalled();
+      // Only this organization's product lists are invalidated.
+      expect(redis.incr).toHaveBeenCalledWith(`svc:org:${ORG}:product:list:version`);
       expect(result).toEqual({
         id: 'product-1',
         sku: 'SKU-1',

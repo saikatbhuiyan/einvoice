@@ -1,15 +1,20 @@
 import { Controller } from '@nestjs/common';
 import { GrpcMethod } from '@nestjs/microservices';
 import { AuthorizationService } from './authorization.service';
-import { GetPermissionsForRolesRequest, GetPermissionsForRolesResponse } from './grpc-contracts';
+import { ResolveCallerRequest, ResolveCallerResponse } from './grpc-contracts';
 
 @Controller()
 export class AuthorizationController {
   constructor(private readonly authorizationService: AuthorizationService) {}
 
-  @GrpcMethod('AuthorizerService', 'GetPermissionsForRoles')
-  async getPermissionsForRoles(data: GetPermissionsForRolesRequest): Promise<GetPermissionsForRolesResponse> {
-    const permissions = await this.authorizationService.getPermissionsForRoles(data.roles ?? []);
-    return { permissions };
+  @GrpcMethod('AuthorizerService', 'ResolveCaller')
+  resolveCaller(data: Partial<ResolveCallerRequest>): Promise<ResolveCallerResponse> {
+    // proto3 delivers absent fields as defaults ("" / []) with this repo's loader options, but be
+    // explicit: a missing field means "none", never undefined.
+    return this.authorizationService.resolveCaller({
+      userId: data.userId ?? '',
+      roles: data.roles ?? [],
+      organizationId: data.organizationId ?? '',
+    });
   }
 }

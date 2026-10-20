@@ -27,6 +27,14 @@ export class PaymentEntity {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
+  /**
+   * The organization the invoice belongs to, recorded when checkout starts. The Stripe webhook has
+   * no caller organization, so marking the invoice paid runs in this one (PaymentService).
+   */
+  @Index()
+  @Column({ type: 'uuid' })
+  organizationId!: string;
+
   @Index()
   @Column({ type: 'varchar', length: 64 })
   invoiceId!: string;

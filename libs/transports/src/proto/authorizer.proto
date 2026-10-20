@@ -2,17 +2,37 @@ syntax = "proto3";
 
 package authorizer;
 
-// bff's gRPC client to this service replaces UserPermissionResolver — same contract shape as the
-// PermissionResolver interface it implements (roles in, permissions out), just over gRPC instead
-// of an in-process TypeScript call.
+// bff's gRPC client to this service, behind its PermissionResolver interface: who is calling (the
+// Keycloak subject and realm roles bff verified) and which organization they asked to act in, in;
+// the organization they're acting in and their permissions there, out.
 service AuthorizerService {
-  rpc GetPermissionsForRoles(GetPermissionsForRolesRequest) returns (GetPermissionsForRolesResponse);
+  rpc ResolveCaller(ResolveCallerRequest) returns (ResolveCallerResponse);
 }
 
-message GetPermissionsForRolesRequest {
-  repeated string roles = 1;
+message ResolveCallerRequest {
+  string userId = 1;
+  // Keycloak realm roles. Only platform-scoped ones (e.g. platform-admin) grant anything now;
+  // organization roles come from memberships.
+  repeated string roles = 2;
+  // From the X-Organization-Id header; empty = "my only organization".
+  string organizationId = 3;
 }
 
-message GetPermissionsForRolesResponse {
-  repeated string permissions = 1;
+message OrganizationMembership {
+  string organizationId = 1;
+  string organizationName = 2;
+  string roleName = 3;
+}
+
+message ResolveCallerResponse {
+  // "resolved"   -- organizationId is set; permissions = that membership's + platform ones.
+  // "ambiguous"  -- no organization requested and the caller belongs to several.
+  // "none"       -- the caller belongs to no organization.
+  // "not_member" -- the requested organization isn't one of the caller's.
+  // Except for "resolved", permissions holds only platform permissions.
+  string status = 1;
+  string organizationId = 2;
+  string roleName = 3;
+  repeated string permissions = 4;
+  repeated OrganizationMembership memberships = 5;
 }

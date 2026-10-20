@@ -2,8 +2,10 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Not, Repository } from 'typeorm';
 import { PaymentEntity, PaymentStatus } from '../../../database/entities/payment.entity';
+import { requireOrganizationId } from '@libs/logging/correlation-context';
 import { CreatePaymentRecord, IPaymentRepository } from './payment.repository.interface';
 
+/** Scoped to the current organization (requireOrganizationId()), except findByProviderSessionId. */
 @Injectable()
 export class PaymentRepository implements IPaymentRepository {
   constructor(
@@ -12,7 +14,7 @@ export class PaymentRepository implements IPaymentRepository {
   ) {}
 
   async create(data: CreatePaymentRecord): Promise<PaymentEntity> {
-    return this.repository.save(this.repository.create(data));
+    return this.repository.save(this.repository.create({ ...data, organizationId: requireOrganizationId() }));
   }
 
   async findByProviderSessionId(providerSessionId: string): Promise<PaymentEntity | null> {
@@ -20,15 +22,20 @@ export class PaymentRepository implements IPaymentRepository {
   }
 
   async findOpenByInvoiceId(invoiceId: string): Promise<PaymentEntity | null> {
-    return this.repository.findOne({ where: { invoiceId, status: 'pending' } });
+    return this.repository.findOne({
+      where: { organizationId: requireOrganizationId(), invoiceId, status: 'pending' },
+    });
   }
 
   async hasOtherPaidPayment(invoiceId: string, excludeId: string): Promise<boolean> {
-    return this.repository.exists({ where: { invoiceId, status: 'paid', id: Not(excludeId) } });
+    return this.repository.exists({
+      where: { organizationId: requireOrganizationId(), invoiceId, status: 'paid', id: Not(excludeId) },
+    });
   }
 
   async updateStatus(id: string, status: PaymentStatus): Promise<PaymentEntity | null> {
-    await this.repository.update(id, { status });
-    return this.repository.findOne({ where: { id } });
+    const scope = { id, organizationId: requireOrganizationId() };
+    await this.repository.update(scope, { status });
+    return this.repository.findOne({ where: scope });
   }
 }

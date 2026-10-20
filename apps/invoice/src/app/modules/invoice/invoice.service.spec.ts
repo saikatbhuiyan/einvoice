@@ -1,7 +1,8 @@
 import { ConflictException, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { Error as MongooseError } from 'mongoose';
+import { itInOrganization as it, TEST_ORGANIZATION_ID as ORG } from '@libs/logging/testing';
 import { InvoiceService } from './invoice.service';
-import { IInvoiceRepository } from './invoice.repository.interface';
+import { IInvoiceRepository, TransitionOptions } from './invoice.repository.interface';
 
 type MockCache = { get: jest.Mock; set: jest.Mock; del: jest.Mock };
 type MockRedis = { get: jest.Mock; incr: jest.Mock };
@@ -9,6 +10,8 @@ type MockAuditLog = { record: jest.Mock };
 type MockPdfGeneratorClient = { generateInvoicePdf: jest.Mock };
 type MockMediaClient = { uploadFile: jest.Mock; getDownloadUrl: jest.Mock };
 type MockEventsProducer = { enqueueDemo: jest.Mock; enqueueSent: jest.Mock; enqueueCancelled: jest.Mock };
+type MockCustomers = { snapshotOf: jest.Mock };
+type MockNumbering = { prepare: jest.Mock; next: jest.Mock };
 
 // Stands in for the transaction's ClientSession: events must be enqueued with exactly this object.
 const SESSION = { id: 'txn-session' };
@@ -22,6 +25,8 @@ const buildInvoiceDoc = (overrides: Record<string, unknown> = {}) => {
 };
 
 const ID = '507f1f77bcf86cd799439011';
+const CLIENT = { name: 'Acme Corp', email: 'billing@acme.test', address: '1 Main St' };
+const PREPARED = { organizationId: ORG, prefix: 'ACME', year: 2026 };
 
 // A document with everything PDF rendering and the invoice.sent event read.
 const buildFullInvoiceDoc = (status: string) => {
@@ -52,6 +57,8 @@ describe('InvoiceService', () => {
   let pdfGeneratorClient: MockPdfGeneratorClient;
   let mediaClient: MockMediaClient;
   let eventsProducer: MockEventsProducer;
+  let customers: MockCustomers;
+  let numbering: MockNumbering;
   let service: InvoiceService;
 
   beforeEach(() => {
@@ -74,6 +81,11 @@ describe('InvoiceService', () => {
       enqueueSent: jest.fn().mockResolvedValue('evt'),
       enqueueCancelled: jest.fn().mockResolvedValue('evt'),
     };
+    customers = { snapshotOf: jest.fn() };
+    numbering = {
+      prepare: jest.fn().mockResolvedValue(PREPARED),
+      next: jest.fn().mockResolvedValue('ACME-2026-000007'),
+    };
 
     service = new InvoiceService(
       repository,
@@ -83,6 +95,8 @@ describe('InvoiceService', () => {
       pdfGeneratorClient as never,
       mediaClient as never,
       eventsProducer as never,
+      customers as never,
+      numbering as never,
     );
   });
 
@@ -91,10 +105,10 @@ describe('InvoiceService', () => {
       const created = buildInvoiceDoc({ id: 'invoice-1' });
       repository.create.mockResolvedValue(created);
 
-      const result = await service.create({ invoiceNumber: 'INV-0001' } as never);
+      const result = await service.create({ client: CLIENT } as never);
 
       expect(result).toEqual(created.toJSON());
-      expect(redis.incr).toHaveBeenCalled();
+      expect(redis.incr).toHaveBeenCalledWith(`svc:org:${ORG}:invoice:list:version`);
       expect(auditLog.record).toHaveBeenCalledWith(
         expect.objectContaining({ action: 'CREATE', entityType: 'invoice', entityId: 'invoice-1' }),
       );
@@ -107,19 +121,41 @@ describe('InvoiceService', () => {
         return created;
       });
 
-      await service.create({ invoiceNumber: 'INV-0001' } as never);
+      await service.create({ client: CLIENT } as never);
 
       expect(eventsProducer.enqueueDemo).toHaveBeenCalledWith(SESSION, 'invoice-1');
     });
 
-    it('maps a duplicate invoiceNumber error to ConflictException', async () => {
-      repository.create.mockRejectedValue({
-        code: 11000,
-        keyPattern: { invoiceNumber: 1 },
-        keyValue: { invoiceNumber: 'INV-0001' },
-      });
+    // The invoice keeps its own copy: later edits to the customer never change it.
+    it("bills a customer by snapshotting the customer's current details onto the invoice", async () => {
+      customers.snapshotOf.mockResolvedValue(CLIENT);
+      repository.create.mockResolvedValue(buildInvoiceDoc());
 
-      await expect(service.create({ invoiceNumber: 'INV-0001' } as never)).rejects.toBeInstanceOf(ConflictException);
+      await service.create({ customerId: 'cust-1', currency: 'EUR', items: [] } as never);
+
+      expect(customers.snapshotOf).toHaveBeenCalledWith('cust-1');
+      expect(repository.create).toHaveBeenCalledWith(
+        { currency: 'EUR', items: [], client: CLIENT, customerId: 'cust-1' },
+        expect.any(Function),
+      );
+    });
+
+    it("is a 404 for a customer that isn't in the caller's organization, before anything is written", async () => {
+      customers.snapshotOf.mockRejectedValue(new NotFoundException('Customer not found for id "cust-x".'));
+
+      await expect(service.create({ customerId: 'cust-x' } as never)).rejects.toBeInstanceOf(NotFoundException);
+      expect(repository.create).not.toHaveBeenCalled();
+    });
+
+    // Re-checked in the service: RPC payloads skip DTO validation.
+    it.each([
+      ['both', { customerId: 'cust-1', client: CLIENT }],
+      ['neither', {}],
+    ])('refuses %s of customerId and client with a 422', async (_label, body) => {
+      await expect(service.create(body as never)).rejects.toThrow(
+        new UnprocessableEntityException('Give either customerId or client, not both and not neither.'),
+      );
+      expect(repository.create).not.toHaveBeenCalled();
     });
 
     it('maps a Mongoose ValidationError to UnprocessableEntityException', async () => {
@@ -132,16 +168,14 @@ describe('InvoiceService', () => {
       };
       repository.create.mockRejectedValue(validationError);
 
-      await expect(service.create({ invoiceNumber: 'INV-0001' } as never)).rejects.toBeInstanceOf(
-        UnprocessableEntityException,
-      );
+      await expect(service.create({ client: CLIENT } as never)).rejects.toBeInstanceOf(UnprocessableEntityException);
     });
 
     it('rethrows unrecognized errors as-is', async () => {
       const unexpected = new Error('boom');
       repository.create.mockRejectedValue(unexpected);
 
-      await expect(service.create({ invoiceNumber: 'INV-0001' } as never)).rejects.toBe(unexpected);
+      await expect(service.create({ client: CLIENT } as never)).rejects.toBe(unexpected);
     });
   });
 
@@ -241,15 +275,17 @@ describe('InvoiceService', () => {
       await expect(service.findOne('507f1f77bcf86cd799439011')).rejects.toBeInstanceOf(NotFoundException);
     });
 
-    it('caches the response on a successful lookup', async () => {
+    // Ids are global, but a cached invoice must never be served to another organization.
+    it('caches the response under a key scoped to the organization', async () => {
       cacheManager.get.mockResolvedValue(undefined);
       const doc = buildInvoiceDoc({ id: 'invoice-1' });
       repository.findOne.mockResolvedValue(doc);
 
-      const result = await service.findOne('507f1f77bcf86cd799439011');
+      const result = await service.findOne(ID);
 
       expect(result).toEqual(doc.toJSON());
-      expect(cacheManager.set).toHaveBeenCalled();
+      expect(cacheManager.get).toHaveBeenCalledWith(`svc:org:${ORG}:invoice:one:${ID}`);
+      expect(cacheManager.set).toHaveBeenCalledWith(`svc:org:${ORG}:invoice:one:${ID}`, doc.toJSON(), 30_000);
     });
   });
 
@@ -303,7 +339,9 @@ describe('InvoiceService', () => {
 
       const result = await service.issue(ID);
 
-      expect(repository.transitionStatus).toHaveBeenCalledWith(ID, ['draft'], 'issued', undefined);
+      expect(repository.transitionStatus).toHaveBeenCalledWith(ID, ['draft'], 'issued', {
+        prepare: expect.any(Function),
+      });
       expect(result).toEqual(issued.toJSON());
       expect(cacheManager.del).toHaveBeenCalled();
       expect(redis.incr).toHaveBeenCalled();
@@ -312,6 +350,53 @@ describe('InvoiceService', () => {
         entityType: 'invoice',
         entityId: ID,
         diff: { status: { from: 'draft', to: 'issued' } },
+      });
+    });
+
+    describe('numbering on issue', () => {
+      const NOW = new Date('2026-10-19T10:00:00.000Z');
+      // Runs the transition's prepare step the way the repository does, inside the transaction.
+      const runPrepare = (draft: Record<string, unknown>) =>
+        repository.transitionStatus.mockImplementation(async (_id, _from, _to, options?: TransitionOptions) => {
+          const extra = await options?.prepare?.(draft as never, SESSION as never);
+          return {
+            outcome: 'transitioned',
+            invoice: { ...buildFullInvoiceDoc('issued'), ...extra } as never,
+            from: 'draft',
+          };
+        });
+
+      beforeEach(() => jest.useFakeTimers({ now: NOW, doNotFake: ['nextTick', 'setImmediate'] }));
+      afterEach(() => jest.useRealTimers());
+
+      it('takes the next number in the issuing transaction and dates the invoice at the moment of issue', async () => {
+        runPrepare({ status: 'draft', dueDate: new Date('2026-11-01T00:00:00.000Z') });
+
+        await service.issue(ID);
+
+        expect(numbering.prepare).toHaveBeenCalledWith(NOW);
+        expect(numbering.next).toHaveBeenCalledWith(PREPARED, SESSION);
+        const extra = await (repository.transitionStatus.mock.calls[0][3] as TransitionOptions).prepare?.(
+          { dueDate: undefined } as never,
+          SESSION as never,
+        );
+        expect(extra).toEqual({ invoiceNumber: 'ACME-2026-000007', issueDate: NOW });
+      });
+
+      it('accepts a due date of today', async () => {
+        runPrepare({ status: 'draft', dueDate: new Date('2026-10-19T00:00:00.000Z') });
+
+        await expect(service.issue(ID)).resolves.toBeDefined();
+      });
+
+      // The issue date becomes today, so an earlier due date would make an invoice due before it exists.
+      it('refuses to issue a draft whose due date has already passed, without taking a number', async () => {
+        runPrepare({ status: 'draft', dueDate: new Date('2026-10-18T00:00:00.000Z') });
+
+        await expect(service.issue(ID)).rejects.toThrow(
+          new UnprocessableEntityException('The due date (2026-10-18) is before today; change it before issuing.'),
+        );
+        expect(numbering.next).not.toHaveBeenCalled();
       });
     });
 
@@ -324,12 +409,9 @@ describe('InvoiceService', () => {
 
       await service.cancel(ID);
 
-      expect(repository.transitionStatus).toHaveBeenCalledWith(
-        ID,
-        ['issued', 'overdue'],
-        'cancelled',
-        expect.any(Function),
-      );
+      expect(repository.transitionStatus).toHaveBeenCalledWith(ID, ['issued', 'overdue'], 'cancelled', {
+        inTransaction: expect.any(Function),
+      });
     });
 
     // payment expires the invoice's open checkout session when it sees this event.
@@ -337,8 +419,8 @@ describe('InvoiceService', () => {
       jest.useFakeTimers({ now: new Date('2026-10-19T10:00:00.000Z') });
       try {
         const cancelled = buildFullInvoiceDoc('cancelled');
-        repository.transitionStatus.mockImplementation(async (_id, _from, _to, inTransaction) => {
-          await inTransaction?.(cancelled, SESSION as never);
+        repository.transitionStatus.mockImplementation(async (_id, _from, _to, options) => {
+          await options?.inTransaction?.(cancelled, SESSION as never);
           return { outcome: 'transitioned', invoice: cancelled, from: 'issued' };
         });
 
@@ -417,6 +499,9 @@ describe('InvoiceService', () => {
 
       const result = await service.generatePdf(ID);
 
+      expect(pdfGeneratorClient.generateInvoicePdf).toHaveBeenCalledWith(
+        expect.objectContaining({ invoiceNumber: 'INV-0001' }),
+      );
       expect(repository.setPdfMetadata).toHaveBeenCalledWith(ID, KEY, expect.any(Date), undefined);
       expect(mediaClient.getDownloadUrl).toHaveBeenCalledWith({ key: KEY, fileName: 'invoice-INV-0001.pdf' });
       expect(result).toEqual(DOWNLOAD);
@@ -459,7 +544,9 @@ describe('InvoiceService', () => {
 
       const result = await service.send(ID);
 
-      expect(repository.transitionStatus).toHaveBeenCalledWith(ID, ['draft'], 'issued', undefined);
+      expect(repository.transitionStatus).toHaveBeenCalledWith(ID, ['draft'], 'issued', {
+        prepare: expect.any(Function),
+      });
       expect(pdfGeneratorClient.generateInvoicePdf).toHaveBeenCalledWith(expect.objectContaining({ status: 'issued' }));
       expect(repository.setPdfMetadata).toHaveBeenCalledWith(ID, KEY, expect.any(Date), expect.any(Function));
       expect(eventsProducer.enqueueSent).toHaveBeenCalledWith(SESSION, {
@@ -496,7 +583,7 @@ describe('InvoiceService', () => {
       expect(eventsProducer.enqueueSent).toHaveBeenCalled();
     });
 
-    it.each(['paid', 'cancelled'])('refuses to send a %s invoice, before rendering anything', async (status) => {
+    it.each([['paid'], ['cancelled']])('refuses to send a %s invoice, before rendering anything', async (status) => {
       repository.findOne.mockResolvedValue(buildFullInvoiceDoc(status));
 
       await expect(service.send(ID)).rejects.toThrow(
@@ -504,6 +591,18 @@ describe('InvoiceService', () => {
       );
       expect(pdfGeneratorClient.generateInvoicePdf).not.toHaveBeenCalled();
       expect(eventsProducer.enqueueSent).not.toHaveBeenCalled();
+    });
+
+    // Drafts are unnumbered until issued; their preview must not look like a numbered legal document.
+    it('renders an unnumbered draft as DRAFT', async () => {
+      const draft = buildFullInvoiceDoc('draft');
+      repository.findOne.mockResolvedValue({ ...draft, invoiceNumber: undefined } as never);
+
+      await service.generatePdf(ID);
+
+      expect(pdfGeneratorClient.generateInvoicePdf).toHaveBeenCalledWith(
+        expect.objectContaining({ invoiceNumber: 'DRAFT', status: 'draft' }),
+      );
     });
 
     it('does not email the client if rendering fails', async () => {

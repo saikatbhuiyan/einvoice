@@ -4,6 +4,9 @@ import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testconta
 import { DataSource, type MigrationInterface } from 'typeorm';
 import { PaymentEntity } from './entities/payment.entity';
 import { PaymentRepository } from '../app/modules/payment/payment.repository';
+import { DEFAULT_ORGANIZATION_ID } from '@libs/shared/types';
+import { runInOrganization } from '@libs/logging/correlation-context';
+import { itInOrganization as it, TEST_ORGANIZATION_ID as ORG } from '@libs/logging/testing';
 
 // Every migration file on disk, in the order `payment:migration:run` applies them.
 const MIGRATIONS_DIR = join(__dirname, 'migrations');
@@ -12,6 +15,12 @@ const migrations = readdirSync(MIGRATIONS_DIR)
   .sort()
   .flatMap((file) => Object.values(require(join(MIGRATIONS_DIR, file)) as Record<string, unknown>))
   .filter((exported): exported is new () => MigrationInterface => typeof exported === 'function');
+
+const migrationNamed = (prefix: string) => {
+  const index = migrations.findIndex((Migration) => Migration.name.startsWith(prefix));
+  if (index === -1) throw new Error(`${prefix} migration not found`);
+  return index;
+};
 
 /**
  * Integration test: payment's migrations against a real Postgres. Includes a regression for the
@@ -48,11 +57,23 @@ describe('payment database (real Postgres)', () => {
     return dataSource;
   }
 
-  const insertPayment = (dataSource: DataSource, status: string, session: string, invoiceId = 'inv-1') =>
-    dataSource.query(
-      `INSERT INTO payments ("invoiceId", "providerSessionId", status, amount, currency) VALUES ($1, $2, $3, $4, $5)`,
-      [invoiceId, session, status, 129.9, 'EUR'],
-    );
+  // organizationId: null for a pre-tenancy schema (no such column yet).
+  const insertPayment = (
+    dataSource: DataSource,
+    status: string,
+    session: string,
+    invoiceId = 'inv-1',
+    organizationId: string | null = ORG,
+  ) =>
+    organizationId === null
+      ? dataSource.query(
+          `INSERT INTO payments ("invoiceId", "providerSessionId", status, amount, currency) VALUES ($1, $2, $3, $4, $5)`,
+          [invoiceId, session, status, 129.9, 'EUR'],
+        )
+      : dataSource.query(
+          `INSERT INTO payments ("organizationId", "invoiceId", "providerSessionId", status, amount, currency) VALUES ($1, $2, $3, $4, $5, $6)`,
+          [organizationId, invoiceId, session, status, 129.9, 'EUR'],
+        );
 
   it('produce exactly the schema the entity describes (no drift)', async () => {
     const dataSource = await freshDataSource('drift');
@@ -74,17 +95,18 @@ describe('payment database (real Postgres)', () => {
     const runner = dataSource.createQueryRunner();
     try {
       await new CreateTable().up(runner);
-      await insertPayment(dataSource, 'paid', 'cs_paid');
-      await insertPayment(dataSource, 'failed', 'cs_failed');
+      await insertPayment(dataSource, 'paid', 'cs_paid', 'inv-1', null);
+      await insertPayment(dataSource, 'failed', 'cs_failed', 'inv-1', null);
 
       for (const Migration of Later) await new Migration().up(runner);
 
       const rows = await dataSource.query(
-        `SELECT "providerSessionId", status, amount FROM payments ORDER BY "providerSessionId"`,
+        `SELECT "providerSessionId", status, amount, "organizationId" FROM payments ORDER BY "providerSessionId"`,
       );
+      // ...and, through the tenancy migration, into the default organization (where their invoices went).
       expect(rows).toEqual([
-        { providerSessionId: 'cs_failed', status: 'failed', amount: '129.90' },
-        { providerSessionId: 'cs_paid', status: 'paid', amount: '129.90' },
+        { providerSessionId: 'cs_failed', status: 'failed', amount: '129.90', organizationId: DEFAULT_ORGANIZATION_ID },
+        { providerSessionId: 'cs_paid', status: 'paid', amount: '129.90', organizationId: DEFAULT_ORGANIZATION_ID },
       ]);
       await expect(insertPayment(dataSource, 'reconciliation_required', 'cs_recon')).resolves.toBeDefined();
     } finally {
@@ -148,14 +170,15 @@ describe('payment database (real Postgres)', () => {
 
   // Each duplicate is a session a customer may still pay through; choosing one is a human call.
   it('refuses to add the open-session index over existing duplicates, naming the invoices, and changes nothing', async () => {
-    const before = migrations.slice(0, -1);
-    const AddOpenSessionGuard = migrations[migrations.length - 1];
+    const guardIndex = migrationNamed('AddOpenSessionGuardToPayments');
+    const before = migrations.slice(0, guardIndex);
+    const AddOpenSessionGuard = migrations[guardIndex];
     const dataSource = await freshDataSource('open_session_dupes', []);
     const runner = dataSource.createQueryRunner();
     try {
       for (const Migration of before) await new Migration().up(runner);
-      await insertPayment(dataSource, 'pending', 'cs_a', 'inv-dup');
-      await insertPayment(dataSource, 'pending', 'cs_b', 'inv-dup');
+      await insertPayment(dataSource, 'pending', 'cs_a', 'inv-dup', null);
+      await insertPayment(dataSource, 'pending', 'cs_b', 'inv-dup', null);
 
       await expect(new AddOpenSessionGuard().up(runner)).rejects.toThrow(/more than one pending payment: inv-dup\./);
       expect(await dataSource.query(`SELECT status FROM payments ORDER BY "providerSessionId"`)).toEqual([
@@ -197,6 +220,36 @@ describe('payment database (real Postgres)', () => {
       expect(await repository.hasOtherPaidPayment('inv-1', second.id)).toBe(true);
       // A payment is never "another" payment relative to itself.
       expect(await repository.hasOtherPaidPayment('inv-1', first.id)).toBe(false);
+    } finally {
+      await dataSource.destroy();
+    }
+  });
+
+  it("stamps the caller's organization, and sees nothing of another organization's payments", async () => {
+    const dataSource = await freshDataSource('tenancy');
+    try {
+      await dataSource.runMigrations();
+      const repository = new PaymentRepository(dataSource.getRepository(PaymentEntity));
+      const theirs = await runInOrganization('11111111-1111-4111-8111-111111111111', () =>
+        repository.create({
+          invoiceId: 'inv-theirs',
+          provider: 'stripe',
+          providerSessionId: 'cs_theirs',
+          status: 'pending',
+          amount: 10,
+          currency: 'EUR',
+          checkoutUrl: 'https://checkout.stripe.test/cs_theirs',
+          expiresAt: new Date('2026-10-20T12:00:00.000Z'),
+        }),
+      );
+
+      expect(await repository.findOpenByInvoiceId('inv-theirs')).toBeNull();
+      expect(await repository.updateStatus(theirs.id, 'failed')).toBeNull();
+      expect(await dataSource.query(`SELECT status FROM payments`)).toEqual([{ status: 'pending' }]);
+      // The webhook's lookup is the one that isn't scoped: it learns the organization from the row.
+      expect(await repository.findByProviderSessionId('cs_theirs')).toMatchObject({
+        organizationId: '11111111-1111-4111-8111-111111111111',
+      });
     } finally {
       await dataSource.destroy();
     }

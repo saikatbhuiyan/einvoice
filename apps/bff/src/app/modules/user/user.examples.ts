@@ -19,6 +19,7 @@ const ROLE_EXAMPLE = {
   name: 'accountant',
   description: 'Reads and writes invoices, reads the product catalog. No user management.',
   permissions: ['invoice:read', 'invoice:write', 'product:read'],
+  scope: 'organization' as const,
   isActive: true,
   createdAt: '2026-04-28T10:30:00.000Z',
   updatedAt: '2026-04-28T10:30:00.000Z',

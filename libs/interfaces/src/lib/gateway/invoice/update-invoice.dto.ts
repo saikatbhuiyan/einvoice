@@ -7,7 +7,6 @@ import {
   IsArray,
   IsOptional,
   IsString,
-  Length,
   MaxLength,
   ValidateNested,
 } from 'class-validator';
@@ -25,16 +24,16 @@ export class UpdateInvoiceItemDto extends PartialType(InvoiceItemDto) implements
 
 export class UpdateInvoiceDto implements UpdateInvoiceRequest {
   @ApiPropertyOptional({
-    example: 'INV-2026-0001',
-    minLength: constraints.invoiceNumber.minLength,
-    maxLength: constraints.invoiceNumber.maxLength,
-    description: 'External invoice number. Must be unique in the invoice service.',
+    example: 'PO-4711',
+    maxLength: constraints.reference.maxLength,
+    description:
+      "The client's own reference (e.g. a purchase-order number). The invoice number itself is assigned on issue.",
   })
   @IsOptional()
-  @Sanitize({ normalizeWhitespace: false })
+  @Sanitize()
   @IsString()
-  @Length(constraints.invoiceNumber.minLength, constraints.invoiceNumber.maxLength)
-  invoiceNumber?: string;
+  @MaxLength(constraints.reference.maxLength)
+  reference?: string;
 
   @ApiPropertyOptional({
     type: () => UpdateClientSnapshotDto,

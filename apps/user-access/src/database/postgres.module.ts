@@ -3,6 +3,8 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { CONFIGURATION } from '../configuration';
 import { RoleEntity } from './entities/role.entity';
 import { UserEntity } from './entities/user.entity';
+import { OrganizationEntity } from './entities/organization.entity';
+import { MembershipEntity } from './entities/membership.entity';
 
 @Global()
 @Module({
@@ -21,7 +23,7 @@ import { UserEntity } from './entities/user.entity';
           username: config.POSTGRES_USER,
           password: config.POSTGRES_PASSWORD,
           database: config.POSTGRES_DB,
-          entities: [RoleEntity, UserEntity],
+          entities: [RoleEntity, UserEntity, OrganizationEntity, MembershipEntity],
           // Schema is managed by migrations (see data-source.ts + user-access:migration:*
           // scripts), never by auto-sync -- run `pnpm user-access:migration:run` before
           // starting the app against a fresh database.

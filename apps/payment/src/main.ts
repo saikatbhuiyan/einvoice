@@ -10,6 +10,7 @@ import { BODY_SIZE_LIMIT, SHUTDOWN_DRAIN_TIMEOUT_MS } from '@libs/constants';
 import { createValidationPipe } from '@libs/shared/utils';
 import { createKafkaConsumerConfig, createTcpServerConfig, ServiceName } from '@libs/transports';
 import { RpcExceptionInterceptor, RpcLoggingInterceptor, RpcTracingInterceptor } from '@libs/interceptors';
+import { MissingOrganizationContextFilter } from '@libs/filters';
 import { RpcPermissionGuard } from '@libs/auth/rpc-permission.guard';
 import { AppModule } from './app/app.module';
 
@@ -34,6 +35,8 @@ async function bootstrap() {
   );
   app.useGlobalGuards(app.get(RpcPermissionGuard));
   app.useGlobalPipes(createValidationPipe());
+  // Internal HTTP: a tenant route called without X-Organization-Id is a 400, not a 500.
+  app.useGlobalFilters(new MissingOrganizationContextFilter());
   app.enableShutdownHooks();
 
   app.connectMicroservice(createTcpServerConfig(ServiceName.PAYMENT), {

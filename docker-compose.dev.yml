@@ -111,6 +111,9 @@ services:
       PDF_GENERATOR_SERVICE_PORT: ${PDF_GENERATOR_SERVICE_PORT:-3310}
       MEDIA_SERVICE_HOST: media
       MEDIA_SERVICE_PORT: ${MEDIA_SERVICE_PORT:-3312}
+      # The organization's invoice prefix, read when an invoice is numbered.
+      USER_SERVICE_HOST: user-access
+      USER_SERVICE_PORT: ${USER_SERVICE_PORT:-3306}
       KAFKA_BROKERS: kafka:9092
       REDIS_HOST: redis
       REDIS_PORT: 6379
@@ -134,6 +137,8 @@ services:
       pdf-generator:
         condition: service_started
       media:
+        condition: service_started
+      user-access:
         condition: service_started
     ports:
       - "${INVOICE_HTTP_PORT:-3302}:${INVOICE_HTTP_PORT:-3302}"

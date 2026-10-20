@@ -1,6 +1,8 @@
 import { Controller, Logger } from '@nestjs/common';
 import { EventPattern, Payload, Transport } from '@nestjs/microservices';
 import { Public } from '@libs/auth/public.decorator';
+import { getCurrentCorrelationContext, runInOrganization } from '@libs/logging/correlation-context';
+import { DEFAULT_ORGANIZATION_ID } from '@libs/shared/types';
 import { INVOICE_EVENTS_TOPIC, unwrapRpcPayload, type InvoiceEvent, type RpcEnvelope } from '@libs/transports';
 import { PaymentService } from './payment.service';
 
@@ -28,7 +30,14 @@ export class InvoiceEventsController {
     const event = unwrapRpcPayload(payload);
 
     if (event.type === 'invoice.cancelled') {
-      const expired = await this.paymentService.expireOpenSessionForInvoice(event.invoiceId);
+      // The event's organization arrives in its envelope (RpcLoggingInterceptor made it the context).
+      // Events written to the outbox before tenancy carry none; they can only be about pre-tenancy
+      // invoices, which all live in the default organization now. (Throwing instead would make
+      // Kafka redeliver the event forever.)
+      const organizationId = getCurrentCorrelationContext()?.organizationId ?? DEFAULT_ORGANIZATION_ID;
+      const expired = await runInOrganization(organizationId, () =>
+        this.paymentService.expireOpenSessionForInvoice(event.invoiceId),
+      );
       this.logger.log(
         `invoice.cancelled ${event.invoiceId} (event ${event.eventId}): ${expired ? 'expired its open checkout session' : 'no open checkout session'}`,
       );

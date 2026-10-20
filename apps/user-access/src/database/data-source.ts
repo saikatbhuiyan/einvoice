@@ -6,6 +6,8 @@ import { expand } from 'dotenv-expand';
 import { DataSource } from 'typeorm';
 import { RoleEntity } from './entities/role.entity';
 import { UserEntity } from './entities/user.entity';
+import { OrganizationEntity } from './entities/organization.entity';
+import { MembershipEntity } from './entities/membership.entity';
 
 /**
  * CLI-only DataSource for the `typeorm` migration commands and the role seed script (see
@@ -38,7 +40,7 @@ const AppDataSource = new DataSource({
   password: process.env['POSTGRES_PASSWORD'] ?? '',
   database: process.env['POSTGRES_DB'] ?? '',
   ssl: process.env['POSTGRES_SSL'] === 'true',
-  entities: [RoleEntity, UserEntity],
+  entities: [RoleEntity, UserEntity, OrganizationEntity, MembershipEntity],
   migrations: [join(__dirname, 'migrations', '*.{ts,js}')],
 });
 

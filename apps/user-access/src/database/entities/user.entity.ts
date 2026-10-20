@@ -1,15 +1,10 @@
-import {
-  Column,
-  CreateDateColumn,
-  Entity,
-  Index,
-  JoinColumn,
-  ManyToOne,
-  PrimaryGeneratedColumn,
-  UpdateDateColumn,
-} from 'typeorm';
-import { RoleEntity } from './role.entity';
+import { Column, CreateDateColumn, Entity, Index, OneToMany, PrimaryGeneratedColumn, UpdateDateColumn } from 'typeorm';
+import type { MembershipEntity } from './membership.entity';
 
+/**
+ * A person (one Keycloak identity). Not tenant-owned: what they may do, and where, comes from their
+ * memberships -- one per organization they belong to, each with its own role.
+ */
 @Entity({ name: 'users' })
 export class UserEntity {
   @PrimaryGeneratedColumn('uuid')
@@ -22,17 +17,15 @@ export class UserEntity {
   @Column({ type: 'varchar', length: 160 })
   name!: string;
 
-  @Column({ type: 'uuid' })
-  roleId!: string;
-
   // Nullable: users created before KeycloakAdminService existed (or created some other way) have
   // no matching Keycloak identity yet — this column links the two records, not requires it.
+  // Unique: the caller's memberships are resolved by it, so it must identify one person.
+  @Index({ unique: true })
   @Column({ type: 'varchar', length: 64, nullable: true })
   keycloakUserId!: string | null;
 
-  @ManyToOne(() => RoleEntity, (role) => role.users, { eager: true, onDelete: 'RESTRICT' })
-  @JoinColumn({ name: 'roleId' })
-  role!: RoleEntity;
+  @OneToMany('MembershipEntity', 'user')
+  memberships?: MembershipEntity[];
 
   @Column({ type: 'boolean', default: true })
   isActive!: boolean;

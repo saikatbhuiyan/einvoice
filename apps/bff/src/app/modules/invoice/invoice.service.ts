@@ -4,7 +4,7 @@ import type express from 'express';
 import Redis from 'ioredis';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import type { Cache } from 'cache-manager';
-import { REDIS_CLIENT } from '@libs/cache';
+import { REDIS_CLIENT, tenantCacheKey } from '@libs/cache';
 import { CIRCUIT_BREAKER_FACTORY } from '@libs/circuit-breaker';
 import type { CircuitBreakerFactory } from '@libs/circuit-breaker';
 import { ServiceName } from '@libs/transports';
@@ -23,9 +23,10 @@ import {
 import { InvoiceClientService } from './invoice-client.service';
 
 const BFF_PREFIX = 'bff';
-const CACHE_KEY_ONE = (id: string) => `${BFF_PREFIX}:invoice:one:${id}`;
-const CACHE_KEY_LIST = (version: number, hash: string) => `${BFF_PREFIX}:invoice:list:${version}:${hash}`;
-const CACHE_KEY_LIST_VERSION = `${BFF_PREFIX}:invoice:list:version`;
+// Tenant-scoped: an invoice id cached for one organization must never be served to another.
+const CACHE_KEY_ONE = (id: string) => tenantCacheKey(BFF_PREFIX, 'invoice', 'one', id);
+const CACHE_KEY_LIST = (version: number, hash: string) => tenantCacheKey(BFF_PREFIX, 'invoice', 'list', version, hash);
+const CACHE_KEY_LIST_VERSION = () => tenantCacheKey(BFF_PREFIX, 'invoice', 'list', 'version');
 
 const TTL_ONE_MS = 20_000;
 const TTL_LIST_MS = 10_000;
@@ -195,7 +196,7 @@ export class InvoiceService {
 
   private async getListVersion(): Promise<number> {
     try {
-      const version = await this.redis.get(CACHE_KEY_LIST_VERSION);
+      const version = await this.redis.get(CACHE_KEY_LIST_VERSION());
       return version ? Number(version) : 1;
     } catch {
       this.logger.warn('Failed to read list version counter, defaulting to 1');
@@ -205,7 +206,7 @@ export class InvoiceService {
 
   private async bumpListVersion(): Promise<void> {
     try {
-      await this.redis.incr(CACHE_KEY_LIST_VERSION);
+      await this.redis.incr(CACHE_KEY_LIST_VERSION());
     } catch {
       this.logger.warn('Failed to increment list version counter');
     }

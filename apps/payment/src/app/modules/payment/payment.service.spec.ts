@@ -1,4 +1,5 @@
 import { ConflictException, HttpException } from '@nestjs/common';
+import { getCurrentCorrelationContext } from '@libs/logging/correlation-context';
 import { PaymentService } from './payment.service';
 import { PaymentEntity } from '../../../database/entities/payment.entity';
 
@@ -229,6 +230,23 @@ describe('PaymentService', () => {
 
       expect(paymentRepository.updateStatus).toHaveBeenCalledWith('payment-1', 'paid');
       expect(invoiceClient.markInvoicePaid).toHaveBeenCalledWith('invoice-1');
+    });
+
+    // A webhook carries no caller organization; invoice's MARK_PAID is scoped by the one it runs in.
+    it("tells invoice in the payment's own organization", async () => {
+      paymentProvider.parseWebhookEvent.mockReturnValue({
+        type: 'payment_succeeded',
+        providerSessionId: 'cs_test_123',
+      });
+      paymentRepository.findByProviderSessionId.mockResolvedValue(buildPayment({ organizationId: 'org-of-payment' }));
+      let organizationId: string | undefined;
+      invoiceClient.markInvoicePaid.mockImplementation(async () => {
+        organizationId = getCurrentCorrelationContext()?.organizationId;
+      });
+
+      await service.handleWebhookEvent(Buffer.from('{}').toString('base64'), 'sig');
+
+      expect(organizationId).toBe('org-of-payment');
     });
 
     it('flags the payment for reconciliation if marking the invoice paid fails, rather than reverting to pending or staying silently paid', async () => {

@@ -61,6 +61,13 @@
         "jestConfig": "{projectRoot}/jest.integration.config.cts",
         "runInBand": true
       }
+    },
+    "seed-dev-memberships": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "TS_NODE_PROJECT=apps/user-access/tsconfig.app.json TS_NODE_TRANSPILE_ONLY=true node -r ts-node/register apps/user-access/src/database/seeds/seed-dev-memberships.ts",
+        "cwd": "{workspaceRoot}"
+      }
     }
   }
 }

@@ -12,8 +12,21 @@ export interface CorrelationContext {
   userId?: string;
   roles?: string[];
   permissions?: string[];
+  /**
+   * The organization the caller is acting in (resolved by bff from their memberships). Every
+   * tenant-owned query is scoped to it; read it with requireOrganizationId().
+   */
+  organizationId?: string;
   /** The calling service, when this context was established from an incoming RPC (RpcMeta). */
   sourceService?: string;
+}
+
+/** A tenant-scoped operation ran without an organization in its context -- always a bug. */
+export class MissingOrganizationContextError extends Error {
+  constructor() {
+    super('No organization in the request context; tenant-owned data cannot be accessed unscoped.');
+    this.name = 'MissingOrganizationContextError';
+  }
 }
 
 const correlationStorage = new AsyncLocalStorage<CorrelationContext>();
@@ -80,10 +93,41 @@ export function setIdentityOnCurrentContext(identity: {
   userId?: string;
   roles?: string[];
   permissions?: string[];
+  organizationId?: string;
 }): void {
   const context = correlationStorage.getStore();
   if (!context) return;
   if (identity.userId !== undefined) context.userId = identity.userId;
   if (identity.roles !== undefined) context.roles = identity.roles;
   if (identity.permissions !== undefined) context.permissions = identity.permissions;
+  if (identity.organizationId !== undefined) context.organizationId = identity.organizationId;
+}
+
+/**
+ * The active organization, for scoping tenant-owned data. Throws instead of returning undefined:
+ * an unscoped query on tenant data must be impossible, not merely unlikely.
+ */
+export function requireOrganizationId(): string {
+  const organizationId = correlationStorage.getStore()?.organizationId;
+  if (!organizationId) throw new MissingOrganizationContextError();
+  return organizationId;
+}
+
+/**
+ * Runs `work` acting in `organizationId`: a copy of the current context (correlation and trace ids,
+ * calling service) with the organization set. For work whose organization comes from stored data
+ * rather than the caller -- a Stripe webhook for a payment recorded in some organization, an event
+ * about an invoice. The surrounding context is left untouched.
+ */
+export function runInOrganization<T>(organizationId: string, work: () => T): T {
+  const current = correlationStorage.getStore();
+  return correlationStorage.run(
+    {
+      correlationId: current?.correlationId ?? randomUUID(),
+      traceId: current?.traceId ?? activeOpenTelemetryTraceId() ?? randomUUID(),
+      ...current,
+      organizationId,
+    },
+    work,
+  );
 }

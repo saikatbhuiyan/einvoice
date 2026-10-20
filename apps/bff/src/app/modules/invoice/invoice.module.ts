@@ -10,5 +10,7 @@ import { InvoiceService } from './invoice.service';
   imports: [ClientsModule.register([createTcpClientConfig(ServiceName.INVOICE)]), CacheModule.forRoot('bff')],
   controllers: [InvoiceController],
   providers: [InvoiceClientService, InvoiceService],
+  // CustomerModule lists a customer's invoices through the same cached path as GET /invoices.
+  exports: [InvoiceService],
 })
 export class InvoiceModule {}

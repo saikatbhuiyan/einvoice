@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { randomUUID } from 'crypto';
 
 /**
  * The invoice lifecycle end to end over the real HTTP surface: status only changes through the
@@ -10,7 +11,7 @@ describe('Invoice lifecycle (e2e)', () => {
 
   const createDraft = async () => {
     const res = await axios.post(basePath, {
-      invoiceNumber: `LC-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      reference: `LC-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
       client: { name: 'Acme Corp', email: 'billing@acme.test', address: '1 Infinite Loop, Cupertino' },
       items: [{ catalogId: 'sku-1', name: 'Widget', quantity: 1, unitPrice: 100, vatRate: 0 }],
       currency: 'USD',
@@ -68,5 +69,49 @@ describe('Invoice lifecycle (e2e)', () => {
 
   it('returns 404 for a lifecycle action on an unknown invoice', async () => {
     expect(await statusOf(axios.post(`${basePath}/507f1f77bcf86cd799439011/issue`))).toBe(404);
+  });
+
+  describe('numbering', () => {
+    const NUMBER = /^([A-Z0-9]+)-(\d{4})-(\d{6,})$/;
+
+    it("numbers invoices on issue, consecutively, in the organization's format", async () => {
+      const first = (await axios.post(`${basePath}/${(await createDraft()).id}/issue`)).data;
+      const second = (await axios.post(`${basePath}/${(await createDraft()).id}/issue`)).data;
+
+      const [, prefix, year, seq] = NUMBER.exec(first.invoiceNumber) ?? [];
+      expect(year).toBe(String(new Date().getUTCFullYear()));
+      expect(second.invoiceNumber).toBe(`${prefix}-${year}-${String(Number(seq) + 1).padStart(6, '0')}`);
+    });
+
+    it('keeps its number when issued again (a retried request)', async () => {
+      const draft = await createDraft();
+      const issued = (await axios.post(`${basePath}/${draft.id}/issue`)).data;
+
+      expect((await axios.post(`${basePath}/${draft.id}/issue`)).data.invoiceNumber).toBe(issued.invoiceNumber);
+    });
+  });
+
+  describe('tenancy', () => {
+    it('is invisible from another organization: every route answers 404', async () => {
+      const draft = await createDraft();
+      const asOther = { headers: { 'x-organization-id': randomUUID() } };
+
+      expect(await statusOf(axios.get(`${basePath}/${draft.id}`, asOther))).toBe(404);
+      expect(await statusOf(axios.patch(`${basePath}/${draft.id}`, { notes: 'x' }, asOther))).toBe(404);
+      expect(await statusOf(axios.post(`${basePath}/${draft.id}/issue`, undefined, asOther))).toBe(404);
+      expect(await statusOf(axios.delete(`${basePath}/${draft.id}`, asOther))).toBe(404);
+      const list = await axios.get(basePath, { ...asOther, params: { search: 'LC-' } });
+      expect(list.data.items.map((item: { id: string }) => item.id)).not.toContain(draft.id);
+      expect((await axios.get(`${basePath}/${draft.id}`)).data.status).toBe('draft');
+    });
+
+    it('refuses a tenant route without the organization header with a 400 naming it', async () => {
+      const res = await axios
+        .get(basePath, { headers: { 'x-organization-id': '' } })
+        .catch((error: { response: { status: number; data: { detail: string } } }) => error.response);
+
+      expect(res.status).toBe(400);
+      expect(res.data.detail).toMatch(/x-organization-id/);
+    });
   });
 });

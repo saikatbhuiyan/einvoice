@@ -1,6 +1,8 @@
 import { ServiceUnavailableException } from '@nestjs/common';
 import { UserService } from './user.service';
 import { UserClientService } from './user-client.service';
+// Tenant cache keys need an organization in context, as every real request has.
+import { itInOrganization as it } from '@libs/logging/testing';
 
 type MockCache = { get: jest.Mock; set: jest.Mock };
 type MockRedis = { get: jest.Mock; incr: jest.Mock };

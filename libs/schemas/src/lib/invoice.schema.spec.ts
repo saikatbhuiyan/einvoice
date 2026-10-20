@@ -4,6 +4,7 @@ import { InvoiceModelName, InvoiceSchema } from './invoice.schema';
 describe('Invoice schema - recalculateTotals pre-validate hook', () => {
   const Invoice = mongoose.model(InvoiceModelName, InvoiceSchema);
 
+  const ORG = '00000000-0000-4000-8000-000000000001';
   const client = {
     name: 'Acme Corp',
     email: 'billing@acme.test',
@@ -12,7 +13,7 @@ describe('Invoice schema - recalculateTotals pre-validate hook', () => {
 
   it('rounds and sums per-item and invoice-level subtotal/vatTotal/total across multiple items', async () => {
     const invoice = new Invoice({
-      invoiceNumber: 'INV-0001',
+      organizationId: ORG,
       client,
       currency: 'USD',
       items: [
@@ -35,7 +36,7 @@ describe('Invoice schema - recalculateTotals pre-validate hook', () => {
 
   it('rounds fractional cent results to 2 decimal places', async () => {
     const invoice = new Invoice({
-      invoiceNumber: 'INV-0002',
+      organizationId: ORG,
       client,
       currency: 'USD',
       items: [{ catalogId: 'sku-1', name: 'Widget', quantity: 3, unitPrice: 0.1, vatRate: 15 }],
@@ -50,9 +51,21 @@ describe('Invoice schema - recalculateTotals pre-validate hook', () => {
     expect(invoice.total).toBeCloseTo(0.35, 2);
   });
 
+  // Every invoice belongs to an organization: tenancy is enforced at the schema too, not only by
+  // the repository's queries.
+  it('requires an organization', async () => {
+    const invoice = new Invoice({
+      client,
+      currency: 'USD',
+      items: [{ catalogId: 'sku-1', name: 'Widget', quantity: 1, unitPrice: 10, vatRate: 0 }],
+    });
+
+    await expect(invoice.validate()).rejects.toMatchObject({ errors: { organizationId: expect.anything() } });
+  });
+
   it('invalidates when dueDate is earlier than issueDate', async () => {
     const invoice = new Invoice({
-      invoiceNumber: 'INV-0003',
+      organizationId: ORG,
       client,
       currency: 'USD',
       issueDate: new Date('2024-02-01'),
@@ -65,7 +78,7 @@ describe('Invoice schema - recalculateTotals pre-validate hook', () => {
 
   it('does not invalidate when dueDate is on or after issueDate', async () => {
     const invoice = new Invoice({
-      invoiceNumber: 'INV-0004',
+      organizationId: ORG,
       client,
       currency: 'USD',
       issueDate: new Date('2024-01-01'),

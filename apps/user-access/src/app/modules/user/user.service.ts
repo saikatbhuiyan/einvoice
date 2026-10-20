@@ -1,9 +1,8 @@
-import { ConflictException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { QueryFailedError } from 'typeorm';
-import { Saga, SagaExecutionError } from '@libs/saga';
+import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { DEFAULT_LIMIT, DEFAULT_PAGE } from '@libs/constants';
 import { buildPaginationMeta } from '@libs/shared/types';
 import { KeycloakAdminService } from '@libs/auth/keycloak-admin.service';
+import { requireOrganizationId } from '@libs/logging/correlation-context';
 import {
   CreateUserRequest,
   DeactivateUserResponse,
@@ -12,21 +11,20 @@ import {
   UpdateUserRequest,
   UserResponse,
 } from '@libs/interfaces/gateway';
-import { UserEntity } from '../../../database/entities/user.entity';
+import { MembershipEntity } from '../../../database/entities/membership.entity';
 import { RoleService } from '../role/role.service';
+import { MemberProvisioningService } from '../membership/member-provisioning.service';
+import { MembershipDirectory } from '../membership/membership-directory';
 import { IUserRepository, USER_REPOSITORY } from './user.repository.interface';
 
-interface CreateUserSagaContext {
-  dto: CreateUserRequest;
-  roleName: string;
-  firstName: string;
-  lastName?: string;
-  keycloakUserId?: string;
-  createdUser?: UserEntity;
-}
-
-const POSTGRES_UNIQUE_VIOLATION = '23505';
-
+/**
+ * The members of the caller's organization. A "user" here is a person *as a member of this
+ * organization*: their role and active flag are the membership's, so the same person can be an
+ * admin in one organization and a deactivated viewer in another.
+ *
+ * Roles are no longer synced to Keycloak realm roles: permissions come from memberships (resolved
+ * by authorizer per request), and Keycloak only authenticates.
+ */
 @Injectable()
 export class UserService {
   private readonly logger = new Logger(UserService.name);
@@ -35,79 +33,18 @@ export class UserService {
     @Inject(USER_REPOSITORY)
     private readonly userRepository: IUserRepository,
     private readonly roleService: RoleService,
+    private readonly provisioning: MemberProvisioningService,
+    private readonly directory: MembershipDirectory,
     private readonly keycloakAdminService: KeycloakAdminService,
   ) {}
 
-  /**
-   * Provisions the Keycloak identity first, then the local Postgres row, as a Saga
-   * (@libs/saga) rather than hand-rolled try/catch: if role assignment fails, the Keycloak user
-   * step's own compensate deletes it; if the local write fails afterward, the same compensate
-   * runs again -- one compensation path instead of the two duplicated `deleteUser()` call sites
-   * this method used to have. Nothing to compensate for creating the Keycloak user itself (it's
-   * the first step -- a failure there never committed anything to undo).
-   */
   async create(createUserDto: CreateUserRequest): Promise<UserResponse> {
-    const role = await this.roleService.getByIdOrThrow(createUserDto.roleId);
-    const [firstName, ...rest] = createUserDto.name.trim().split(/\s+/);
-    const lastName = rest.length > 0 ? rest.join(' ') : undefined;
-
-    const context: CreateUserSagaContext = { dto: createUserDto, roleName: role.name, firstName, lastName };
-
-    const saga = new Saga<CreateUserSagaContext>('CreateUser');
-    saga
-      .addStep({
-        name: 'createKeycloakUser',
-        execute: async (ctx) => {
-          ctx.keycloakUserId = await this.keycloakAdminService.createUser({
-            username: ctx.dto.email,
-            email: ctx.dto.email,
-            firstName: ctx.firstName,
-            lastName: ctx.lastName,
-          });
-        },
-        // Compensation belongs on the step that created the thing needing undoing, not on
-        // whichever later step happens to fail -- a Saga only compensates steps that actually
-        // completed, in reverse order, so this runs whether assignRealmRole or persistUser is
-        // the one that fails. Deleting the user outright makes a separate "remove the role"
-        // compensation for assignRealmRole unnecessary -- there'd be nothing left to remove it
-        // from.
-        compensate: async (ctx) => {
-          await this.keycloakAdminService.deleteUser(ctx.keycloakUserId as string);
-        },
-      })
-      .addStep({
-        name: 'assignRealmRole',
-        execute: async (ctx) => {
-          await this.keycloakAdminService.assignRealmRole(ctx.keycloakUserId as string, ctx.roleName);
-        },
-      })
-      .addStep({
-        name: 'persistUser',
-        execute: async (ctx) => {
-          ctx.createdUser = await this.userRepository.create({
-            ...ctx.dto,
-            keycloakUserId: ctx.keycloakUserId as string,
-          });
-        },
-      });
-
-    try {
-      await saga.execute(context);
-    } catch (error) {
-      if (error instanceof SagaExecutionError) {
-        // The Saga's own bookkeeping is an implementation detail -- callers (and the HTTP
-        // exception filter) need to see the original failure type, e.g. a unique-violation
-        // QueryFailedError translated to ConflictException below, not a wrapping SagaExecutionError.
-        this.handlePersistenceError(error.cause, createUserDto.email);
-      }
-      throw error;
-    }
-
-    return this.toUserResponse(context.createdUser as UserEntity);
+    const membership = await this.provisioning.addMember(requireOrganizationId(), createUserDto);
+    return this.toUserResponse((await this.userRepository.findMember(membership.userId)) as MembershipEntity);
   }
 
   async findAll(query: FindAllUsersRequest): Promise<FindAllUsersResponse> {
-    const { items, total } = await this.userRepository.findAll(query);
+    const { items, total } = await this.userRepository.findMembers(query);
     const page = query.page ?? DEFAULT_PAGE;
     const limit = query.limit ?? DEFAULT_LIMIT;
 
@@ -118,64 +55,39 @@ export class UserService {
   }
 
   async findOne(id: string): Promise<UserResponse> {
-    const user = await this.userRepository.findById(id);
-    if (!user) {
-      throw new NotFoundException(`User not found for id "${id}".`);
-    }
-    return this.toUserResponse(user);
+    return this.toUserResponse(await this.getMemberOrThrow(id));
   }
 
-  /**
-   * What actually drives a user's permissions at runtime is the realm role embedded in their
-   * Keycloak-issued JWT, not the `roleId` column here — PermissionGuard reads roles straight off
-   * the token. Changing roleId without also swapping the Keycloak realm role mapping would leave
-   * the two silently out of sync: the API would report the new role while the user's real
-   * permissions stayed on the old one until they got a fresh token.
-   */
   async update(id: string, updateUserDto: UpdateUserRequest): Promise<UserResponse> {
-    const existing = await this.userRepository.findById(id);
-    if (!existing) {
+    await this.getMemberOrThrow(id);
+    if (updateUserDto.roleId) {
+      await this.roleService.getAssignableOrThrow(updateUserDto.roleId);
+    }
+
+    const updated = await this.userRepository.updateMember(id, {
+      name: updateUserDto.name,
+      roleId: updateUserDto.roleId,
+      isActive: updateUserDto.isActive,
+    });
+    if (!updated) {
       throw new NotFoundException(`User not found for id "${id}".`);
     }
-
-    if (updateUserDto.roleId && updateUserDto.roleId !== existing.roleId) {
-      const newRole = await this.roleService.getByIdOrThrow(updateUserDto.roleId);
-
-      if (existing.keycloakUserId) {
-        await this.keycloakAdminService.removeRealmRole(existing.keycloakUserId, existing.role.name);
-        await this.keycloakAdminService.assignRealmRole(existing.keycloakUserId, newRole.name);
-      } else {
-        this.logger.warn(`User "${id}" has no keycloakUserId — skipping Keycloak realm role sync on role change.`);
-      }
-    }
-
-    try {
-      const updated = await this.userRepository.update(id, updateUserDto);
-      if (!updated) {
-        throw new NotFoundException(`User not found for id "${id}".`);
-      }
-      return this.toUserResponse(updated);
-    } catch (error) {
-      if (error instanceof NotFoundException) throw error;
-      this.handlePersistenceError(error, updateUserDto.email ?? id);
-    }
+    return this.toUserResponse(updated);
   }
 
   /**
-   * Also disables the Keycloak account, best-effort — a failure here is logged, not thrown, since
-   * the local deactivation succeeding is the primary contract of this call. Note this only stops
-   * *new* tokens from being issued; a token already handed out before this call stays valid for
-   * its own remaining lifetime (a few minutes) since verification never re-checks Keycloak per
-   * request — real-time revocation of already-issued tokens is a separate, not-yet-built piece.
+   * Ends the person's membership in *this* organization. Their Keycloak account is disabled only
+   * when no active membership is left anywhere -- otherwise one organization could lock someone
+   * out of another. Best-effort (logged, not thrown), and it stops new tokens only: one already
+   * issued stays valid for its few remaining minutes.
    */
   async deactivate(id: string): Promise<DeactivateUserResponse> {
-    const user = await this.userRepository.deactivate(id);
-    if (!user) {
-      throw new NotFoundException(`User not found for id "${id}".`);
-    }
+    const member = await this.getMemberOrThrow(id);
+    await this.userRepository.updateMember(id, { isActive: false });
 
-    if (user.keycloakUserId) {
-      await this.keycloakAdminService.setEnabled(user.keycloakUserId, false).catch(() => {
+    const remaining = await this.directory.countActiveMemberships(id);
+    if (remaining === 0 && member.user?.keycloakUserId) {
+      await this.keycloakAdminService.setEnabled(member.user.keycloakUserId, false).catch(() => {
         this.logger.error(`Deactivated user "${id}" locally but failed to disable their Keycloak account.`);
       });
     }
@@ -183,40 +95,34 @@ export class UserService {
     return { id, deactivated: true };
   }
 
-  private toUserResponse(user: UserEntity): UserResponse {
+  private async getMemberOrThrow(id: string): Promise<MembershipEntity> {
+    const member = await this.userRepository.findMember(id);
+    if (!member) {
+      throw new NotFoundException(`User not found for id "${id}".`);
+    }
+    return member;
+  }
+
+  private toUserResponse(member: MembershipEntity): UserResponse {
+    const user = member.user as NonNullable<MembershipEntity['user']>;
     return {
       id: user.id,
       email: user.email,
       name: user.name,
       role: {
-        id: user.role.id,
-        name: user.role.name,
-        description: user.role.description ?? undefined,
-        permissions: user.role.permissions,
-        isActive: user.role.isActive,
-        createdAt: user.role.createdAt,
-        updatedAt: user.role.updatedAt,
+        id: member.role.id,
+        name: member.role.name,
+        description: member.role.description ?? undefined,
+        permissions: member.role.permissions,
+        scope: member.role.scope,
+        isActive: member.role.isActive,
+        createdAt: member.role.createdAt,
+        updatedAt: member.role.updatedAt,
       },
-      isActive: user.isActive,
-      createdAt: user.createdAt,
-      updatedAt: user.updatedAt,
+      // Active only if both the membership and the person are.
+      isActive: member.isActive && user.isActive,
+      createdAt: member.createdAt,
+      updatedAt: member.updatedAt,
     };
-  }
-
-  private handlePersistenceError(error: unknown, email: string): never {
-    if (this.isUniqueViolation(error)) {
-      throw new ConflictException(`User with email "${email}" already exists.`);
-    }
-
-    throw error;
-  }
-
-  private isUniqueViolation(error: unknown): boolean {
-    if (error instanceof QueryFailedError) {
-      const driverError = (error as QueryFailedError & { driverError?: { code?: string } }).driverError;
-      return driverError?.code === POSTGRES_UNIQUE_VIOLATION;
-    }
-
-    return false;
   }
 }
