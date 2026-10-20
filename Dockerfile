@@ -39,8 +39,11 @@ FROM development AS builder
 
 ARG APP_NAME
 
+# The build writes everything the runtime needs into dist/apps/<app>: main.js, its assets (gRPC
+# .proto files, templates -- see each webpack.config.js), and a package.json + pnpm-lock.yaml
+# pruned to the bundle's runtime dependencies (webpack's generatePackageJson). There is no
+# separate prune-lockfile step: Nx's needs a per-app package.json, which no app has (by design).
 RUN pnpm nx run ${APP_NAME}:build:production
-RUN pnpm nx run ${APP_NAME}:prune-lockfile
 
 FROM node:22-alpine AS runtime
 
@@ -59,9 +62,9 @@ RUN if [ "$APP_NAME" = "pdf-generator" ]; then \
     fi
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
 
-COPY --from=builder /app/dist/apps/${APP_NAME}/main.js ./main.js
-COPY --from=builder /app/dist/apps/${APP_NAME}/package.json ./package.json
-COPY --from=builder /app/dist/apps/${APP_NAME}/pnpm-lock.yaml ./pnpm-lock.yaml
+# The whole output, not just main.js: gRPC apps load .proto files from next to main.js at runtime
+# (grpc.config.ts), so copying main.js alone left bff/authorizer/user-access unable to start.
+COPY --from=builder /app/dist/apps/${APP_NAME}/ ./
 
 RUN pnpm install --prod --frozen-lockfile --ignore-scripts
 
