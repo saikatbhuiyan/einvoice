@@ -63,6 +63,20 @@ describe('Invoice schema - recalculateTotals pre-validate hook', () => {
     await expect(invoice.validate()).rejects.toMatchObject({ errors: { organizationId: expect.anything() } });
   });
 
+  // "Due on receipt": the due date is today's date, the issue date is a later instant of today.
+  it('accepts a due date on the issue day', async () => {
+    const invoice = new Invoice({
+      organizationId: ORG,
+      client,
+      currency: 'USD',
+      issueDate: new Date('2026-10-20T10:30:00.000Z'),
+      dueDate: new Date('2026-10-20T00:00:00.000Z'),
+      items: [{ catalogId: 'sku-1', name: 'Widget', quantity: 1, unitPrice: 10, vatRate: 0 }],
+    });
+
+    await expect(invoice.validate()).resolves.toBeUndefined();
+  });
+
   it('invalidates when dueDate is earlier than issueDate', async () => {
     const invoice = new Invoice({
       organizationId: ORG,

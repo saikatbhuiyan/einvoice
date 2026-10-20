@@ -33,7 +33,12 @@ describe('organization RPC over TCP (transport)', () => {
   let app: INestApplication;
   let tcp: ClientProxy;
   let fromInvoice: TestClient;
-  const organizationService = { invoiceSettings: jest.fn(), findAll: jest.fn() };
+  const organizationService = {
+    invoiceSettings: jest.fn(),
+    findAll: jest.fn(),
+    findOne: jest.fn(),
+    updateSettings: jest.fn(),
+  };
 
   const as = <T>(identity: Partial<CorrelationContext>, call: () => Promise<T>) =>
     runWithCorrelationContext({ correlationId: 'transport-spec', traceId: 'transport-spec', ...identity }, call);
@@ -87,6 +92,35 @@ describe('organization RPC over TCP (transport)', () => {
     );
 
     expect(organizationService.invoiceSettings).toHaveBeenCalledWith('org-acme');
+  });
+
+  // The active organization comes from the envelope, never from the payload.
+  it('lets an organization admin update its own organization, and only that one', async () => {
+    organizationService.updateSettings.mockResolvedValue({ id: 'org-acme' });
+    const admin = { userId: 'kc-1', organizationId: 'org-acme', permissions: ['organization:write'] };
+
+    await as(admin, () =>
+      fromInvoice.call(TCP_PATTERNS.ORGANIZATION.UPDATE_CURRENT, { reminderOffsetsDays: [1], id: 'org-other' }),
+    );
+
+    expect(organizationService.updateSettings).toHaveBeenCalledWith(
+      'org-acme',
+      expect.objectContaining({ reminderOffsetsDays: [1] }),
+    );
+  });
+
+  it('refuses a member without organization:write, but lets them read', async () => {
+    organizationService.findOne.mockResolvedValue({ id: 'org-acme' });
+    const viewer = { userId: 'kc-2', organizationId: 'org-acme', permissions: ['organization:read'] };
+
+    await expect(
+      as(viewer, () => fromInvoice.call(TCP_PATTERNS.ORGANIZATION.UPDATE_CURRENT, { reminderOffsetsDays: [1] })),
+    ).rejects.toMatchObject({ status: 403 });
+    await expect(as(viewer, () => fromInvoice.call(TCP_PATTERNS.ORGANIZATION.FIND_CURRENT))).resolves.toEqual({
+      id: 'org-acme',
+    });
+    expect(organizationService.findOne).toHaveBeenCalledWith('org-acme');
+    expect(organizationService.updateSettings).not.toHaveBeenCalled();
   });
 
   it('still refuses the rest of the controller to a call with no user (401)', async () => {

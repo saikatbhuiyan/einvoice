@@ -6,6 +6,7 @@ import {
   getCurrentCorrelationContext,
   requireOrganizationId,
   resolveCorrelationContext,
+  runAsSystem,
   runInOrganization,
   runWithCorrelationContext,
 } from './correlation-context';
@@ -90,6 +91,30 @@ describe('correlation context', () => {
         correlationId: expect.any(String),
         traceId: expect.any(String),
       });
+    });
+  });
+
+  describe('runAsSystem', () => {
+    // A job triggered while a user's request is in context must never act as, or be audited as, that user.
+    it('acts as the system with exactly the granted permissions, dropping any user identity', () => {
+      runWithCorrelationContext(
+        { correlationId: 'c-1', traceId: 't-1', userId: 'kc-1', roles: ['admin'], permissions: ['user:write'] },
+        () => {
+          const inner = runAsSystem(
+            { actor: 'overdue-job', organizationId: 'org-a', permissions: ['invoice:read'] },
+            () => getCurrentCorrelationContext(),
+          );
+
+          expect(inner).toEqual({
+            correlationId: 'c-1',
+            traceId: 't-1',
+            sourceService: undefined,
+            systemActor: 'overdue-job',
+            organizationId: 'org-a',
+            permissions: ['invoice:read'],
+          });
+        },
+      );
     });
   });
 });

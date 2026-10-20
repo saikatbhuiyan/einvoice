@@ -47,7 +47,9 @@ export class RpcPermissionGuard implements CanActivate {
 
     const meta = getRpcMeta(context.switchToRpc().getData());
 
-    if (!meta?.userId) {
+    // A caller is either an end user (forwarded by bff) or the system itself (a background job, see
+    // runAsSystem). Either way the permissions below are checked the same.
+    if (!meta?.userId && !meta?.systemActor) {
       throw new RpcException({
         code: GrpcStatus.UNAUTHENTICATED,
         status: HttpStatus.UNAUTHORIZED,

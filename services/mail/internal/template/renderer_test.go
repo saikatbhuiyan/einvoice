@@ -52,3 +52,29 @@ func TestRenderInvoiceEmailEscapesUserSuppliedText(t *testing.T) {
 		t.Fatalf("expected escaped markup in output")
 	}
 }
+
+func TestRenderReminderEmailSaysHowOverdueTheInvoiceIs(t *testing.T) {
+	html, err := RenderReminderEmail(ReminderEmailData{
+		ClientName: "Acme Corp", InvoiceNumber: "INV-7", Currency: "EUR", Total: "10.00",
+		DueDate: "2026-10-10", DaysOverdue: 1, ReminderNumber: 1,
+	})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	for _, want := range []string{"Hi Acme Corp,", "INV-7", "1 day overdue", "10.00 EUR", "Reminder 1 for this invoice"} {
+		if !strings.Contains(html, want) {
+			t.Errorf("reminder is missing %q", want)
+		}
+	}
+}
+
+// ClientName comes from user-supplied invoice data: it must be escaped, never interpreted.
+func TestRenderReminderEmailEscapesUserSuppliedFields(t *testing.T) {
+	html, err := RenderReminderEmail(ReminderEmailData{ClientName: `<script>alert(1)</script>`, InvoiceNumber: "I", DaysOverdue: 3})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if strings.Contains(html, "<script>") {
+		t.Fatalf("client name was not escaped")
+	}
+}

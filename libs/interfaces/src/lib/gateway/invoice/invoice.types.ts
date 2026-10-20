@@ -113,6 +113,11 @@ export interface InvoiceResponse {
   total: number;
   version: number;
   idempotencyKey?: string;
+  /** Payment reminders emailed so far (overdue invoices only). */
+  remindersSent?: number;
+  lastReminderAt?: string | Date | null;
+  /** When the next reminder will be sent, or null when none is scheduled. */
+  nextReminderAt?: string | Date | null;
   createdAt: string | Date;
   updatedAt: string | Date;
 }

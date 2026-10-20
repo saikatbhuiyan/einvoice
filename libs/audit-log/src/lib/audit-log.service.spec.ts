@@ -44,6 +44,15 @@ describe('AuditLogService', () => {
   });
 
   // e.g. payment marking an invoice paid from a Stripe webhook: no user, but a known caller.
+  it('attributes a background job to the system actor, not the service it runs in', async () => {
+    await runWithCorrelationContext(
+      { correlationId: 'c', traceId: 't', sourceService: 'invoice', systemActor: 'overdue-job' },
+      () => service.record({ action: 'STATUS_CHANGE', entityType: 'invoice', entityId: 'inv-1' }),
+    );
+
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ actor: 'system:overdue-job' }));
+  });
+
   it('attributes a service-to-service call with no user to the calling service', async () => {
     await runWithCorrelationContext({ correlationId: 'c1', traceId: 't1', sourceService: 'payment' }, () =>
       service.record({ action: 'STATUS_CHANGE', entityType: 'invoice', entityId: 'inv-1' }),

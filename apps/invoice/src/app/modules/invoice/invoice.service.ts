@@ -42,6 +42,8 @@ import {
 } from './invoice.repository.interface';
 import { CustomerService } from '../customer/customer.service';
 import { InvoiceNumberingService } from './invoice-numbering.service';
+import { OrganizationSettingsService } from './organization-settings.service';
+import { REMINDER_CATCH_UP_MS, daysOverdue, nextReminderAt, startOfUtcDay } from './reminder-schedule';
 import { PdfGeneratorClientService } from './clients/pdf-generator-client.service';
 import { MediaClientService } from './clients/media-client.service';
 import { InvoiceEventsProducerService } from './clients/invoice-events-producer.service';
@@ -84,6 +86,7 @@ export class InvoiceService {
     private readonly eventsProducer: InvoiceEventsProducerService,
     private readonly customers: CustomerService,
     private readonly numbering: InvoiceNumberingService,
+    private readonly settings: OrganizationSettingsService,
   ) {
     this.redis = redis;
   }
@@ -393,15 +396,100 @@ export class InvoiceService {
       throw new ConflictException(`Cannot ${TRANSITION_VERBS[to]} an invoice that is ${result.invoice.status}.`);
     }
 
+    await this.recordTransition(id, result.from, to);
+    return result.invoice;
+  }
+
+  /** After a committed status change: drop stale cache entries and audit who changed what. */
+  private async recordTransition(id: string, from: InvoiceStatus, to: InvoiceStatus): Promise<void> {
     await Promise.all([this.delCacheKey(CACHE_KEY_ONE(id)), this.bumpListVersion()]);
     await this.auditLog.record({
       action: 'STATUS_CHANGE',
       entityType: 'invoice',
       entityId: id,
-      diff: { status: { from: result.from, to } },
+      diff: { status: { from, to } },
     });
+  }
 
-    return result.invoice;
+  /**
+   * Overdue scheduler (runs inside runAsSystem for the invoice's organization): issued -> overdue,
+   * scheduling the first reminder from the organization's schedule. Returns false when there was
+   * nothing to do -- the invoice was paid, cancelled or already marked meanwhile; those simply win.
+   */
+  async markOverdue(id: string, now = new Date()): Promise<boolean> {
+    const { reminderOffsetsDays } = await this.settings.current();
+    const result = await this.invoiceRepository.transitionStatus(this.ensureObjectId(id), ['issued'], 'overdue', {
+      prepare: async (current) => ({
+        nextReminderAt: current.dueDate ? nextReminderAt(current.dueDate, reminderOffsetsDays, null, now) : null,
+      }),
+    });
+    if (result.outcome !== 'transitioned') return false;
+
+    await this.recordTransition(id, result.from, 'overdue');
+    return true;
+  }
+
+  /**
+   * Overdue scheduler (inside runAsSystem): handles the reminder that is due for this invoice, if
+   * any. A reminder missed by more than REMINDER_CATCH_UP_MS is skipped, never sent late (no bursts
+   * on rollout or after an outage). Otherwise it emails the stored PDF -- rendered first if the
+   * invoice was issued without one -- by an `invoice.reminder` outbox event written in the same
+   * transaction that records the reminder, so each scheduled reminder is sent at most once.
+   */
+  async sendDueReminder(id: string, now = new Date()): Promise<'sent' | 'skipped' | 'none'> {
+    const invoice = await this.invoiceRepository.findOne(this.ensureObjectId(id));
+    const scheduledAt = invoice?.nextReminderAt;
+    if (!invoice || invoice.status !== 'overdue' || !invoice.dueDate || !scheduledAt || scheduledAt > now) {
+      return 'none';
+    }
+
+    const { reminderOffsetsDays } = await this.settings.current();
+
+    if (scheduledAt.getTime() < now.getTime() - REMINDER_CATCH_UP_MS) {
+      // Skipped: the earliest later reminder that isn't too late yet is next (it may be due now).
+      const afterSkip = nextReminderAt(invoice.dueDate, reminderOffsetsDays, scheduledAt, now);
+      return (await this.invoiceRepository.advanceReminder(id, scheduledAt, afterSkip, null)) ? 'skipped' : 'none';
+    }
+
+    // After sending, the next reminder is strictly after *now*, not merely after `scheduledAt`: whatever
+    // value nextReminderAt held (a manual fix, a restored backup), one email is never followed by
+    // another on the very next pass.
+    const next = nextReminderAt(invoice.dueDate, reminderOffsetsDays, now, now);
+
+    const pdf = invoice.pdfKey
+      ? { key: invoice.pdfKey, fileName: pdfFileName(invoice.pdfKey) }
+      : await this.renderAndStorePdf(invoice);
+    const dueDate = invoice.dueDate;
+
+    const reminded = await this.invoiceRepository.advanceReminder(id, scheduledAt, next, {
+      at: now,
+      inTransaction: (stored, session) =>
+        this.eventsProducer
+          .enqueueReminder(session, {
+            invoiceId: id,
+            invoiceNumber: stored.invoiceNumber as string,
+            clientName: stored.client.name,
+            clientEmail: stored.client.email,
+            pdfKey: pdf.key,
+            fileName: pdf.fileName,
+            currency: stored.currency,
+            total: stored.total,
+            dueDate: dueDate.toISOString(),
+            daysOverdue: daysOverdue(dueDate, now),
+            reminderNumber: stored.remindersSent,
+          })
+          .then(() => undefined),
+    });
+    if (!reminded) return 'none';
+
+    await Promise.all([this.delCacheKey(CACHE_KEY_ONE(id)), this.bumpListVersion()]);
+    await this.auditLog.record({
+      action: 'REMINDER',
+      entityType: 'invoice',
+      entityId: id,
+      diff: { remindersSent: { from: reminded.remindersSent - 1, to: reminded.remindersSent } },
+    });
+    return 'sent';
   }
 
   /**
@@ -527,8 +615,4 @@ export class InvoiceService {
 /** Keys are `invoices/<uuid>/<fileName>`; the file name is what the browser should save it as. */
 function pdfFileName(pdfKey: string): string {
   return pdfKey.split('/').pop() ?? pdfKey;
-}
-
-function startOfUtcDay(date: Date): Date {
-  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
 }

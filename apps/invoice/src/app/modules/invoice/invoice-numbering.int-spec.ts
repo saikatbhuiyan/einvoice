@@ -46,11 +46,8 @@ describe('invoice numbering against real MongoDB', () => {
 
     repository = new InvoiceRepository(invoices, invoices);
     const noCache = { get: async () => undefined, set: async () => undefined, del: async () => undefined };
-    numbering = new InvoiceNumberingService(
-      counters,
-      { findInvoiceSettings: async () => ({ invoicePrefix: 'ACME' }) } as never,
-      noCache as never,
-    );
+    const settings = { current: async () => ({ invoicePrefix: 'ACME', reminderOffsetsDays: [1, 7, 14] }) };
+    numbering = new InvoiceNumberingService(counters, settings as never);
     service = new InvoiceService(
       repository,
       noCache as never,
@@ -61,6 +58,7 @@ describe('invoice numbering against real MongoDB', () => {
       {} as never,
       {} as never,
       numbering,
+      settings as never,
     );
   });
 

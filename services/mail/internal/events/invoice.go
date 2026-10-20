@@ -18,8 +18,10 @@ type Meta struct {
 	Permissions   []string `json:"permissions,omitempty"`
 	// The tenant the event happened in. Empty on messages produced before tenancy.
 	OrganizationID string `json:"organizationId,omitempty"`
-	SourceService  string `json:"sourceService"`
-	Timestamp      string `json:"timestamp"`
+	// Set instead of UserID when the system itself acted (e.g. "overdue-job" for reminders).
+	SystemActor   string `json:"systemActor,omitempty"`
+	SourceService string `json:"sourceService"`
+	Timestamp     string `json:"timestamp"`
 }
 
 // Envelope mirrors RpcEnvelope<T>. Data is decoded in two passes: first just enough to read
@@ -36,6 +38,8 @@ type typeOnly struct {
 const (
 	TypeDemo = "invoice.demo"
 	TypeSent = "invoice.sent"
+	// TypeReminder asks for a payment reminder for an overdue invoice (invoice's overdue scheduler).
+	TypeReminder = "invoice.reminder"
 	// TypeCancelled is consumed by apps/payment, not this service; Decode reports it as not ours.
 	TypeCancelled = "invoice.cancelled"
 	// TypePdfGeneratedLegacy is what the producer emitted before invoice.sent replaced it (same
@@ -73,6 +77,24 @@ type SentEvent struct {
 	DueDate       string  `json:"dueDate,omitempty"`
 }
 
+// ReminderEvent means a payment reminder is due for an overdue invoice: email ClientEmail, with the
+// PDF at PdfKey attached. Deduped on EventID like SentEvent.
+type ReminderEvent struct {
+	Type           string  `json:"type"`
+	EventID        string  `json:"eventId"`
+	InvoiceID      string  `json:"invoiceId"`
+	InvoiceNumber  string  `json:"invoiceNumber"`
+	ClientName     string  `json:"clientName"`
+	ClientEmail    string  `json:"clientEmail"`
+	PdfKey         string  `json:"pdfKey"`
+	FileName       string  `json:"fileName"`
+	Currency       string  `json:"currency"`
+	Total          float64 `json:"total"`
+	DueDate        string  `json:"dueDate"`
+	DaysOverdue    int     `json:"daysOverdue"`
+	ReminderNumber int     `json:"reminderNumber"`
+}
+
 // Decode parses a raw Kafka message value into an Envelope and the concrete event type its
 // data.type field selects. Returns (nil, nil, Meta{}, false) for a recognized-but-ignored type,
 // so callers can distinguish "not our event" from "malformed message" (the latter is an error).
@@ -100,6 +122,12 @@ func Decode(raw []byte) (event any, meta Meta, ok bool, err error) {
 			return nil, envelope.Meta, false, err
 		}
 		return sent, envelope.Meta, true, nil
+	case TypeReminder:
+		var reminder ReminderEvent
+		if err := json.Unmarshal(envelope.Data, &reminder); err != nil {
+			return nil, envelope.Meta, false, err
+		}
+		return reminder, envelope.Meta, true, nil
 	default:
 		return nil, envelope.Meta, false, nil
 	}
