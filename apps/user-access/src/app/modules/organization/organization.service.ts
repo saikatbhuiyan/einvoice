@@ -1,9 +1,9 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { QueryFailedError, Repository } from 'typeorm';
 import { Saga, SagaExecutionError } from '@libs/saga';
 import { DEFAULT_LIMIT, DEFAULT_PAGE } from '@libs/constants';
-import { buildPaginationMeta } from '@libs/shared/types';
+import { buildPaginationMeta, reminderScheduleProblem } from '@libs/shared/types';
 import { containsPattern } from '@libs/shared/utils';
 import {
   CreateOrganizationRequest,
@@ -11,6 +11,7 @@ import {
   FindAllOrganizationsResponse,
   OrganizationInvoiceSettings,
   OrganizationResponse,
+  UpdateCurrentOrganizationRequest,
 } from '@libs/interfaces/gateway';
 import { OrganizationEntity } from '../../../database/entities/organization.entity';
 import { RoleService } from '../role/role.service';
@@ -114,8 +115,38 @@ export class OrganizationService {
   }
 
   async invoiceSettings(id: string): Promise<OrganizationInvoiceSettings> {
-    const { invoicePrefix } = await this.findOne(id);
-    return { invoicePrefix };
+    const { invoicePrefix, reminderOffsetsDays } = await this.findOne(id);
+    return { invoicePrefix, reminderOffsetsDays };
+  }
+
+  /**
+   * An organization's admin changing its own settings. Re-validated here: RPC payloads skip the
+   * gateway's DTO validation, and only these three fields can ever be written this way.
+   */
+  async updateSettings(id: string, request: UpdateCurrentOrganizationRequest): Promise<OrganizationResponse> {
+    const changes: Partial<Pick<OrganizationEntity, 'name' | 'invoicePrefix' | 'reminderOffsetsDays'>> = {};
+    if (request.name !== undefined) {
+      if (typeof request.name !== 'string' || request.name.trim().length < 2 || request.name.length > 160) {
+        throw new UnprocessableEntityException('name must be 2-160 characters.');
+      }
+      changes.name = request.name.trim();
+    }
+    if (request.invoicePrefix !== undefined) {
+      if (typeof request.invoicePrefix !== 'string' || !/^[A-Z0-9]{1,10}$/.test(request.invoicePrefix)) {
+        throw new UnprocessableEntityException('invoicePrefix must be 1-10 upper-case letters or digits.');
+      }
+      changes.invoicePrefix = request.invoicePrefix;
+    }
+    if (request.reminderOffsetsDays !== undefined) {
+      const problem = reminderScheduleProblem(request.reminderOffsetsDays);
+      if (problem) throw new UnprocessableEntityException(problem);
+      changes.reminderOffsetsDays = request.reminderOffsetsDays;
+    }
+
+    if (Object.keys(changes).length > 0) {
+      await this.organizations.update({ id }, changes);
+    }
+    return this.findOne(id);
   }
 
   private toResponse(organization: OrganizationEntity): OrganizationResponse {
@@ -124,6 +155,7 @@ export class OrganizationService {
       name: organization.name,
       slug: organization.slug,
       invoicePrefix: organization.invoicePrefix,
+      reminderOffsetsDays: organization.reminderOffsetsDays,
       isActive: organization.isActive,
       createdAt: organization.createdAt,
       updatedAt: organization.updatedAt,

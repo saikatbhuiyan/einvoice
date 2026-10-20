@@ -14,6 +14,7 @@ import {
   FindAllUsersResponse,
   UpdateUserRequest,
   UserResponse,
+  UpdateCurrentOrganizationRequest,
 } from '@libs/interfaces/gateway';
 import { BaseTcpClient, ServiceName, TCP_CLIENT_TOKENS, TCP_PATTERNS } from '@libs/transports';
 
@@ -69,5 +70,17 @@ export class UserClientService extends BaseTcpClient {
 
   async findOneOrganization(id: string): Promise<OrganizationResponse> {
     return this.send<OrganizationResponse, { id: string }>(TCP_PATTERNS.ORGANIZATION.FIND_ONE, { id });
+  }
+
+  // The caller's active organization (tenant-facing).
+  async findCurrentOrganization(): Promise<OrganizationResponse> {
+    return this.send<OrganizationResponse, undefined>(TCP_PATTERNS.ORGANIZATION.FIND_CURRENT, undefined);
+  }
+
+  async updateCurrentOrganization(data: UpdateCurrentOrganizationRequest): Promise<OrganizationResponse> {
+    return this.send<OrganizationResponse, UpdateCurrentOrganizationRequest>(
+      TCP_PATTERNS.ORGANIZATION.UPDATE_CURRENT,
+      data,
+    );
   }
 }

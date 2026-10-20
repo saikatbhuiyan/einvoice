@@ -1,9 +1,7 @@
-import { randomUUID } from 'crypto';
-import { hostname } from 'os';
 import { Inject, Injectable, Logger, type OnApplicationBootstrap, type OnApplicationShutdown } from '@nestjs/common';
 import { metrics, type Counter } from '@opentelemetry/api';
 import Redis from 'ioredis';
-import { REDIS_CLIENT } from '@libs/cache';
+import { REDIS_CLIENT, RedisLease } from '@libs/cache';
 import { OutboxRepository } from './outbox.repository';
 import { OUTBOX_PUBLISHER, type OutboxPublisher } from './outbox-publisher';
 
@@ -28,23 +26,6 @@ export const DEFAULT_OUTBOX_RELAY_OPTIONS: OutboxRelayOptions = {
 
 export const OUTBOX_LEADER_KEY = 'svc:outbox:relay:leader';
 
-// Take the lease if free, or extend it if we already hold it -- atomically, so two instances can
-// never both believe they lead.
-const ACQUIRE_OR_RENEW = `
-if redis.call('GET', KEYS[1]) == ARGV[1] then
-  return redis.call('PEXPIRE', KEYS[1], ARGV[2])
-end
-if redis.call('SET', KEYS[1], ARGV[1], 'NX', 'PX', ARGV[2]) then
-  return 1
-end
-return 0`;
-
-const RELEASE_IF_HELD = `
-if redis.call('GET', KEYS[1]) == ARGV[1] then
-  return redis.call('DEL', KEYS[1])
-end
-return 0`;
-
 /**
  * Publishes committed outbox rows to Kafka, oldest first, and stamps them published.
  *
@@ -59,7 +40,7 @@ return 0`;
 @Injectable()
 export class OutboxRelay implements OnApplicationBootstrap, OnApplicationShutdown {
   private readonly logger = new Logger(OutboxRelay.name);
-  private readonly instanceId = `${hostname()}:${process.pid}:${randomUUID().slice(0, 8)}`;
+  private readonly lease: RedisLease;
   private timer: NodeJS.Timeout | undefined;
   private running: Promise<void> | undefined;
   private stopped = false;
@@ -69,9 +50,11 @@ export class OutboxRelay implements OnApplicationBootstrap, OnApplicationShutdow
   constructor(
     private readonly outbox: OutboxRepository,
     @Inject(OUTBOX_PUBLISHER) private readonly publisher: OutboxPublisher,
-    @Inject(REDIS_CLIENT) private readonly redis: Redis,
+    @Inject(REDIS_CLIENT) redis: Redis,
     @Inject(OUTBOX_RELAY_OPTIONS) private readonly options: OutboxRelayOptions,
-  ) {}
+  ) {
+    this.lease = new RedisLease(redis, OUTBOX_LEADER_KEY, options.leaseMs);
+  }
 
   onApplicationBootstrap(): void {
     this.registerMetrics();
@@ -82,7 +65,7 @@ export class OutboxRelay implements OnApplicationBootstrap, OnApplicationShutdow
     this.stopped = true;
     clearTimeout(this.timer);
     await this.running;
-    await this.redis.eval(RELEASE_IF_HELD, 1, OUTBOX_LEADER_KEY, this.instanceId).catch(() => undefined);
+    await this.lease.release().catch(() => undefined);
   }
 
   /**
@@ -90,7 +73,7 @@ export class OutboxRelay implements OnApplicationBootstrap, OnApplicationShutdow
    * can drive the relay deterministically without waiting on the timer.
    */
   async tick(): Promise<number> {
-    if (!(await this.holdLease())) return 0;
+    if (!(await this.lease.acquireOrRenew())) return 0;
 
     const batch = await this.outbox.findUnpublished(this.options.batchSize);
     let published = 0;
@@ -137,17 +120,6 @@ export class OutboxRelay implements OnApplicationBootstrap, OnApplicationShutdow
   private nextDelay(): number {
     if (this.consecutiveFailures === 0) return this.options.intervalMs;
     return Math.min(this.options.maxBackoffMs, this.options.intervalMs * 2 ** this.consecutiveFailures);
-  }
-
-  private async holdLease(): Promise<boolean> {
-    const held = await this.redis.eval(
-      ACQUIRE_OR_RENEW,
-      1,
-      OUTBOX_LEADER_KEY,
-      this.instanceId,
-      String(this.options.leaseMs),
-    );
-    return held === 1;
   }
 
   // Instruments are created here, not at import time: the metrics API has no proxy provider, so an

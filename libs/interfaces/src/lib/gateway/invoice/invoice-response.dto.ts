@@ -109,6 +109,20 @@ export class InvoiceResponseDto implements InvoiceResponse {
   })
   idempotencyKey?: string;
 
+  @ApiPropertyOptional({ example: 1, description: 'Payment reminders emailed so far (overdue invoices only).' })
+  remindersSent?: number;
+
+  @ApiPropertyOptional({ example: '2026-05-29T00:00:00.000Z', format: 'date-time', nullable: true })
+  lastReminderAt?: string | Date | null;
+
+  @ApiPropertyOptional({
+    example: '2026-06-04T00:00:00.000Z',
+    format: 'date-time',
+    nullable: true,
+    description: "When the next reminder will be sent (the organization's schedule), or null when none is scheduled.",
+  })
+  nextReminderAt?: string | Date | null;
+
   @ApiProperty({ example: '2026-04-28T10:30:00.000Z', format: 'date-time' })
   createdAt!: string | Date;
 

@@ -78,14 +78,63 @@ describe('OrganizationService', () => {
     await expect(service.findOne('org-1')).resolves.toMatchObject({ id: 'org-1', invoicePrefix: 'ACME' });
   });
 
-  it("returns only an organization's invoice settings to invoice", async () => {
+  it("returns only an organization's invoicing settings to invoice", async () => {
     organizations.findOne.mockResolvedValue({
       id: 'org-1',
       name: 'Acme',
       slug: 'acme',
       invoicePrefix: 'ACME',
+      reminderOffsetsDays: [1, 7],
     } as OrganizationEntity);
 
-    await expect(service.invoiceSettings('org-1')).resolves.toEqual({ invoicePrefix: 'ACME' });
+    await expect(service.invoiceSettings('org-1')).resolves.toEqual({
+      invoicePrefix: 'ACME',
+      reminderOffsetsDays: [1, 7],
+    });
+  });
+
+  describe('updateSettings (an organization admin, via RPC: re-validated here)', () => {
+    let update: jest.Mock;
+
+    beforeEach(() => {
+      organizations.findOne.mockResolvedValue({
+        id: 'org-1',
+        invoicePrefix: 'ACME',
+        reminderOffsetsDays: [3],
+      } as OrganizationEntity);
+      update = jest.fn().mockResolvedValue(undefined);
+      Object.assign(organizations, { update });
+    });
+
+    it('writes only name, prefix and schedule, whatever else the payload carries', async () => {
+      await service.updateSettings('org-1', {
+        name: '  Acme Ltd ',
+        invoicePrefix: 'ACM',
+        reminderOffsetsDays: [2, 9],
+        slug: 'taken',
+        isActive: false,
+      } as never);
+
+      expect(update).toHaveBeenCalledWith(
+        { id: 'org-1' },
+        { name: 'Acme Ltd', invoicePrefix: 'ACM', reminderOffsetsDays: [2, 9] },
+      );
+    });
+
+    it('accepts an empty schedule (reminders off)', async () => {
+      await service.updateSettings('org-1', { reminderOffsetsDays: [] });
+
+      expect(update).toHaveBeenCalledWith({ id: 'org-1' }, { reminderOffsetsDays: [] });
+    });
+
+    it.each([
+      [{ reminderOffsetsDays: [7, 1] }, /ascending/],
+      [{ reminderOffsetsDays: [0] }, /from 1 to 365/],
+      [{ invoicePrefix: 'acme' }, /upper-case/],
+      [{ name: 'A' }, /2-160/],
+    ])('refuses %j with a 422', async (request, message) => {
+      await expect(service.updateSettings('org-1', request as never)).rejects.toThrow(message);
+      expect(update).not.toHaveBeenCalled();
+    });
   });
 });

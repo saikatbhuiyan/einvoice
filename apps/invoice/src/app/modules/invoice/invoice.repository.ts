@@ -11,6 +11,7 @@ import {
   INVOICE_READ_MODEL,
   INVOICE_WRITE_MODEL,
   InTransaction,
+  InvoiceRef,
   NewInvoice,
   PaginatedResult,
   StatusTransitionResult,
@@ -176,6 +177,54 @@ export class InvoiceRepository implements IInvoiceRepository {
 
       await options.inTransaction?.(invoice, session);
       return { outcome: 'transitioned', invoice, from: current.status };
+    });
+  }
+
+  async findPastDueIssued(before: Date, limit: number): Promise<InvoiceRef[]> {
+    // Unscoped by design (system work across tenants); matches the partial { status, dueDate } index.
+    const rows = await this.writeModel
+      .find({ status: 'issued', dueDate: { $lt: before }, deletedAt: null })
+      .sort({ dueDate: 1 })
+      .limit(limit)
+      .select({ _id: 1, organizationId: 1 })
+      .lean()
+      .exec();
+    return rows.map((row) => ({ id: String(row._id), organizationId: row.organizationId }));
+  }
+
+  async findDueReminders(now: Date, limit: number): Promise<InvoiceRef[]> {
+    // Unscoped by design; matches the partial { status, nextReminderAt } index.
+    const rows = await this.writeModel
+      .find({ status: 'overdue', nextReminderAt: { $type: 'date', $lte: now }, deletedAt: null })
+      .sort({ nextReminderAt: 1 })
+      .limit(limit)
+      .select({ _id: 1, organizationId: 1 })
+      .lean()
+      .exec();
+    return rows.map((row) => ({ id: String(row._id), organizationId: row.organizationId }));
+  }
+
+  async advanceReminder(
+    id: string,
+    scheduledAt: Date,
+    next: Date | null,
+    sent: { at: Date; inTransaction?: InTransaction } | null,
+  ): Promise<InvoiceDocument | null> {
+    if (!isValidObjectId(id)) return null;
+
+    return this.transaction(async (session) => {
+      // No version bump: a reminder changes no content, and overdue invoices aren't editable anyway.
+      const update = sent
+        ? { $inc: { remindersSent: 1 }, $set: { lastReminderAt: sent.at, nextReminderAt: next } }
+        : { $set: { nextReminderAt: next } };
+      const invoice = await this.writeModel
+        .findOneAndUpdate({ ...this.activeFilter(id), status: 'overdue', nextReminderAt: scheduledAt }, update, {
+          returnDocument: 'after',
+          session,
+        })
+        .exec();
+      if (invoice && sent) await sent.inTransaction?.(invoice, session);
+      return invoice;
     });
   }
 

@@ -2,7 +2,7 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import type { ClientSession, Types } from 'mongoose';
 import type { OutboxEventModel } from '@libs/schemas';
-import { runWithCorrelationContext } from '@libs/logging';
+import { runAsSystem, runWithCorrelationContext } from '@libs/logging';
 import { INVOICE_EVENTS_TOPIC } from '@libs/transports';
 import { OutboxRepository } from '../../outbox/outbox.repository';
 import { InvoiceEventsProducerService } from './invoice-events-producer.service';
@@ -111,5 +111,24 @@ describe('invoice.events producer contract (via the outbox)', () => {
 
     expect(expected['data'].type).toBe('invoice.cancelled');
     expectRowToMatch(stored(), expected);
+  });
+
+  // Written by the overdue scheduler: the system acts, so the envelope names the job, not a user.
+  it('writes invoice.reminder exactly as the contract fixture', async () => {
+    const expected = fixture('invoice.reminder.json');
+    await runWithCorrelationContext({ correlationId: 'corr-contract-1', traceId: 'trace-contract-1' }, () =>
+      runAsSystem(
+        {
+          actor: 'overdue-job',
+          organizationId: IDENTITY.organizationId,
+          permissions: ['invoice:read', 'invoice:write'],
+        },
+        () => producer.enqueueReminder(session, producerPayload(expected)),
+      ),
+    );
+
+    expect(expected['data'].type).toBe('invoice.reminder');
+    expectRowToMatch(stored(), expected);
+    expect(stored().value['meta'].userId).toBeUndefined();
   });
 });

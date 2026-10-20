@@ -42,6 +42,10 @@ export const ORGANIZATION_PATTERNS = {
   CREATE: 'organization.create',
   FIND_ALL: 'organization.findAll',
   FIND_ONE: 'organization.findOne',
+  /** The caller's active organization (organization:read). */
+  FIND_CURRENT: 'organization.findCurrent',
+  /** Its admin changing its settings: name, invoice prefix, reminder schedule (organization:write). */
+  UPDATE_CURRENT: 'organization.updateCurrent',
   /**
    * Service-to-service (invoice): the invoice-numbering settings of the organization the call
    * carries. Public -- numbering happens with or without an end user behind it.

@@ -303,3 +303,68 @@ func TestHandleTreatsAMalformedMessageAsPermanent(t *testing.T) {
 		t.Fatalf("err = %v, want a permanent decode error", err)
 	}
 }
+
+func reminderMessage(eventID, pdfKeyValue string) []byte {
+	return []byte(fmt.Sprintf(`{
+	  "data": {
+	    "type": "invoice.reminder", "eventId": %q, "invoiceId": "i1", "invoiceNumber": "INV-7",
+	    "clientName": "Acme Corp", "clientEmail": "billing@acme.test", "pdfKey": %q,
+	    "fileName": "invoice-INV-7.pdf", "currency": "EUR", "total": 1234.5,
+	    "dueDate": "2026-10-10T00:00:00.000Z", "daysOverdue": 7, "reminderNumber": 2
+	  },
+	  "meta": {"correlationId": "c1", "traceId": "t1", "sourceService": "invoice", "systemActor": "overdue-job",
+	           "organizationId": "org-1", "timestamp": "2026-10-17T00:05:00.000Z"}
+	}`, eventID, pdfKeyValue))
+}
+
+func TestHandleEmailsAPaymentReminderWithThePdf(t *testing.T) {
+	f := newFixture()
+
+	if err := f.handle(t, reminderMessage("evt-r1", pdfKey)); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	if len(f.sender.sent) != 1 {
+		t.Fatalf("sent %d emails, want 1", len(f.sender.sent))
+	}
+	msg := f.sender.sent[0]
+	if msg.To != "billing@acme.test" || msg.Subject != "Reminder: invoice INV-7 is overdue" {
+		t.Fatalf("To/Subject = %q / %q", msg.To, msg.Subject)
+	}
+	for _, want := range []string{"7 days overdue", "2026-10-10", "1234.50 EUR", "Reminder 2 for this invoice"} {
+		if !strings.Contains(msg.HTMLBody, want) {
+			t.Errorf("reminder is missing %q", want)
+		}
+	}
+	if len(msg.Attachments) != 1 || !bytes.Equal(msg.Attachments[0].Data, pdfBytes) {
+		t.Fatalf("attachment = %+v", msg.Attachments)
+	}
+	if len(f.dedupe.marked) != 1 || f.dedupe.marked[0] != "evt-r1" {
+		t.Fatalf("marked = %v, want [evt-r1]", f.dedupe.marked)
+	}
+}
+
+func TestHandleSendsEachReminderOnce(t *testing.T) {
+	f := newFixture()
+	f.dedupe.seen["evt-r1"] = true
+
+	if err := f.handle(t, reminderMessage("evt-r1", pdfKey)); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if len(f.sender.sent) != 0 {
+		t.Fatalf("a redelivered reminder was emailed again")
+	}
+}
+
+func TestHandleDeadLettersAReminderWithoutAPdf(t *testing.T) {
+	f := newFixture()
+
+	err := f.handle(t, reminderMessage("evt-r1", ""))
+
+	if !failure.IsPermanent(err) {
+		t.Fatalf("err = %v, want a permanent failure", err)
+	}
+	if len(f.sender.sent) != 0 {
+		t.Fatalf("emailed a reminder with no PDF")
+	}
+}

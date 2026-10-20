@@ -20,6 +20,9 @@ PDFs became private carry a public `pdfUrl` (and no `eventId`) instead of `pdfKe
 fetches those by URL and can't dedupe them. Delete it together with that fallback once retention has
 passed.
 
+`invoice.reminder.json` is produced by invoice's overdue scheduler, not by a user request: its
+`meta` carries `systemActor` ("overdue-job") and the job's permissions instead of a `userId`.
+
 Every current event carries `eventId` (the producer's outbox row id); consumers dedupe on it, and
 `meta.organizationId` (the tenant the event happened in). The two legacy fixtures have neither:
 they predate both. A consumer that acts on an event without an organization treats it as the

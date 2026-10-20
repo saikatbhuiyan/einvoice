@@ -99,6 +99,14 @@ describe('user-access database (real Postgres)', () => {
     ...overrides,
   });
 
+  // A migration and exactly the ones that ran before it -- by position, not "all the others":
+  // later migrations (e.g. AddReminderScheduleToOrganizations) build on this one's tables.
+  const migrationAndItsPredecessors = (prefix: string) => {
+    const index = migrations.findIndex((m) => m.name.startsWith(prefix));
+    if (index === -1) throw new Error(`${prefix} migration not found`);
+    return { before: migrations.slice(0, index), migration: migrations[index] };
+  };
+
   describe('migrations', () => {
     it('produce exactly the schema the entities describe (no drift)', async () => {
       const pending = await dataSource.driver.createSchemaBuilder().log();
@@ -109,9 +117,7 @@ describe('user-access database (real Postgres)', () => {
     // The generated migration dropped users.roleId before anything copied it -- every user would
     // have lost their role. Written *between* migrations, as a production database would be.
     it('moves every existing user, with their role and active flag, into the default organization', async () => {
-      const before = migrations.filter((m) => !m.name.startsWith('AddOrganizationsAndMemberships'));
-      const AddTenancy = migrations.find((m) => m.name.startsWith('AddOrganizationsAndMemberships'));
-      if (!AddTenancy) throw new Error('tenancy migration not found');
+      const { before, migration: AddTenancy } = migrationAndItsPredecessors('AddOrganizationsAndMemberships');
       const db = await freshDataSource('tenancy_data', []);
       const runner = db.createQueryRunner();
       try {
@@ -147,9 +153,7 @@ describe('user-access database (real Postgres)', () => {
     });
 
     it('refuses to add tenancy while two users claim the same Keycloak identity', async () => {
-      const before = migrations.filter((m) => !m.name.startsWith('AddOrganizationsAndMemberships'));
-      const AddTenancy = migrations.find((m) => m.name.startsWith('AddOrganizationsAndMemberships'));
-      if (!AddTenancy) throw new Error('tenancy migration not found');
+      const { before, migration: AddTenancy } = migrationAndItsPredecessors('AddOrganizationsAndMemberships');
       const db = await freshDataSource('tenancy_dupes', []);
       const runner = db.createQueryRunner();
       try {

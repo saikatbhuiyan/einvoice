@@ -4,6 +4,8 @@ import {
   INVOICE_EVENTS_TOPIC,
   type InvoiceCancelledEvent,
   type InvoiceDemoEvent,
+  type InvoiceEvent,
+  type InvoiceReminderEvent,
   type InvoiceSentEvent,
   type UnstampedInvoiceEvent,
 } from '@libs/transports';
@@ -40,7 +42,14 @@ export class InvoiceEventsProducerService {
     return this.enqueue<InvoiceCancelledEvent>(session, payload.invoiceId, { type: 'invoice.cancelled', ...payload });
   }
 
-  private enqueue<T extends InvoiceDemoEvent | InvoiceSentEvent | InvoiceCancelledEvent>(
+  enqueueReminder(
+    session: ClientSession,
+    payload: Omit<UnstampedInvoiceEvent<InvoiceReminderEvent>, 'type'>,
+  ): Promise<string> {
+    return this.enqueue<InvoiceReminderEvent>(session, payload.invoiceId, { type: 'invoice.reminder', ...payload });
+  }
+
+  private enqueue<T extends InvoiceEvent>(
     session: ClientSession,
     invoiceId: string,
     event: UnstampedInvoiceEvent<T>,
