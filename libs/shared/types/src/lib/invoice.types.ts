@@ -46,4 +46,5 @@ export const INVOICE_CONSTRAINTS = {
     vatRate: { min: 0, max: 100, maxDecimalPlaces: 2 },
   },
   notes: { maxLength: 1000 },
+  reference: { maxLength: 64 },
 } as const;

@@ -32,6 +32,7 @@ export class AuditLogService {
         entityType: params.entityType,
         entityId: params.entityId,
         actor: params.actor ?? this.currentActor(),
+        organizationId: getCurrentCorrelationContext()?.organizationId,
         diff: params.diff,
         previous: params.previous,
       });

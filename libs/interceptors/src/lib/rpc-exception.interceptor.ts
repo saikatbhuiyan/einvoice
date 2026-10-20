@@ -23,6 +23,7 @@ import { CallHandler, ExecutionContext, HttpException, Injectable, NestIntercept
 import { RpcException } from '@nestjs/microservices';
 import { Observable, throwError } from 'rxjs';
 import { catchError } from 'rxjs/operators';
+import { MissingOrganizationContextError } from '@libs/logging/correlation-context';
 
 interface RpcErrorPayload {
   code: GrpcStatus;
@@ -42,6 +43,20 @@ export class RpcExceptionInterceptor implements NestInterceptor {
 
         if (err instanceof HttpException) {
           return throwError(() => new RpcException(this.toRpcErrorPayload(err)));
+        }
+
+        // A tenant-scoped handler reached by a call that carries no organization: the caller's bug
+        // (the guard lets @Public() service-to-service handlers through without one).
+        if (err instanceof MissingOrganizationContextError) {
+          return throwError(
+            () =>
+              new RpcException({
+                code: GrpcStatus.INVALID_ARGUMENT,
+                status: 400,
+                error: 'Bad Request',
+                message: 'This call carries no organization.',
+              }),
+          );
         }
 
         if (err instanceof Error) {

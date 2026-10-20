@@ -1,8 +1,7 @@
 import type { Observable } from 'rxjs';
 
-// No codegen (ts-proto etc.) here — these interfaces are hand-written to match
-// libs/transports/src/proto/*.proto exactly. Good enough for two small, stable contracts; would
-// be worth generating if this grows to more services or the protos start changing often.
+// Hand-written to match libs/transports/src/proto/{user-access,authorizer}.proto (no codegen; see
+// CLAUDE.md's gRPC section). Keep in sync with the .proto files.
 
 export interface GrpcRole {
   id: string;
@@ -10,16 +9,38 @@ export interface GrpcRole {
   description: string;
   permissions: string[];
   isActive: boolean;
+  /** "organization" | "platform". */
+  scope: string;
 }
 
 export interface RoleQueryServiceClient {
   findAllRoles(request: Record<string, never>): Observable<{ roles: GrpcRole[] }>;
 }
 
-export interface GetPermissionsForRolesRequest {
-  roles: string[];
+export interface GrpcMembership {
+  organizationId: string;
+  organizationName: string;
+  roleName: string;
+  permissions: string[];
 }
 
-export interface GetPermissionsForRolesResponse {
+export interface MembershipQueryServiceClient {
+  resolveMembership(request: { keycloakUserId: string }): Observable<{ memberships: GrpcMembership[] }>;
+}
+
+export interface ResolveCallerRequest {
+  userId: string;
+  roles: string[];
+  /** Empty string = none requested (proto3 has no undefined). */
+  organizationId: string;
+}
+
+export type CallerStatus = 'resolved' | 'ambiguous' | 'none' | 'not_member';
+
+export interface ResolveCallerResponse {
+  status: CallerStatus;
+  organizationId: string;
+  roleName: string;
   permissions: string[];
+  memberships: Array<{ organizationId: string; organizationName: string; roleName: string }>;
 }

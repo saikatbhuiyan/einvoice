@@ -1,5 +1,13 @@
-import { Column, CreateDateColumn, Entity, Index, OneToMany, PrimaryGeneratedColumn, UpdateDateColumn } from 'typeorm';
-import { UserEntity } from './user.entity';
+import { Column, CreateDateColumn, Entity, Index, PrimaryGeneratedColumn, UpdateDateColumn } from 'typeorm';
+
+/**
+ * `organization` roles are assigned through memberships and grant permissions inside one
+ * organization. `platform` roles are Keycloak realm roles (e.g. platform-admin) and grant
+ * cross-organization permissions such as creating organizations -- the only realm roles that still
+ * authorize anything.
+ */
+export const ROLE_SCOPES = ['organization', 'platform'] as const;
+export type RoleScope = (typeof ROLE_SCOPES)[number];
 
 @Entity({ name: 'roles' })
 export class RoleEntity {
@@ -17,11 +25,11 @@ export class RoleEntity {
   @Column({ type: 'jsonb', default: () => "'[]'" })
   permissions!: string[];
 
+  @Column({ type: 'varchar', length: 16, default: 'organization' })
+  scope!: RoleScope;
+
   @Column({ type: 'boolean', default: true })
   isActive!: boolean;
-
-  @OneToMany(() => UserEntity, (user) => user.role)
-  users?: UserEntity[];
 
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt!: Date;

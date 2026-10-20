@@ -2,22 +2,18 @@ import { AuthorizationController } from './authorization.controller';
 import type { AuthorizationService } from './authorization.service';
 
 describe('AuthorizationController', () => {
-  const service = { getPermissionsForRoles: jest.fn().mockResolvedValue(['invoice:read']) };
-  const controller = new AuthorizationController(service as unknown as AuthorizationService);
+  const resolveCaller = jest.fn().mockResolvedValue({ status: 'none' });
+  const controller = new AuthorizationController({ resolveCaller } as unknown as AuthorizationService);
 
-  beforeEach(() => service.getPermissionsForRoles.mockClear());
+  it('passes the request through to the service', async () => {
+    await controller.resolveCaller({ userId: 'kc-1', roles: ['platform-admin'], organizationId: 'org-1' });
 
-  it('wraps the resolved permissions in the proto response shape', async () => {
-    await expect(controller.getPermissionsForRoles({ roles: ['viewer'] })).resolves.toEqual({
-      permissions: ['invoice:read'],
-    });
-    expect(service.getPermissionsForRoles).toHaveBeenCalledWith(['viewer']);
+    expect(resolveCaller).toHaveBeenCalledWith({ userId: 'kc-1', roles: ['platform-admin'], organizationId: 'org-1' });
   });
 
-  // proto3 omits an empty repeated field on the wire, so a caller with no roles arrives as {}.
-  it('treats a missing roles field as no roles', async () => {
-    await controller.getPermissionsForRoles({} as { roles: string[] });
+  it('treats missing fields as none, never undefined', async () => {
+    await controller.resolveCaller({});
 
-    expect(service.getPermissionsForRoles).toHaveBeenCalledWith([]);
+    expect(resolveCaller).toHaveBeenLastCalledWith({ userId: '', roles: [], organizationId: '' });
   });
 });

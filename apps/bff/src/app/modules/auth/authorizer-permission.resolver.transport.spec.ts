@@ -11,16 +11,32 @@ import { AuthorizerPermissionResolver } from './authorizer-permission.resolver';
  * interface is hand-written (no codegen), so this is what proves its method name and message
  * fields actually line up with the proto. Authorizer's own transport spec covers the provider side.
  */
-const PERMISSIONS_BY_ROLE: Record<string, string[]> = {
-  accountant: ['invoice:read', 'invoice:write'],
-  viewer: ['invoice:read'],
-};
+const MEMBERSHIPS = [
+  { organizationId: 'org-acme', organizationName: 'Acme', roleName: 'accountant' },
+  { organizationId: 'org-globex', organizationName: 'Globex', roleName: 'viewer' },
+];
 
 @Controller()
 class StubAuthorizer {
-  @GrpcMethod('AuthorizerService', 'GetPermissionsForRoles')
-  getPermissionsForRoles({ roles }: { roles: string[] }) {
-    return { permissions: [...new Set(roles.flatMap((role) => PERMISSIONS_BY_ROLE[role] ?? []))] };
+  lastRequest: unknown;
+
+  @GrpcMethod('AuthorizerService', 'ResolveCaller')
+  resolveCaller(request: { userId: string; roles: string[]; organizationId: string }) {
+    this.lastRequest = request;
+    if (request.organizationId === 'org-acme') {
+      return {
+        status: 'resolved',
+        organizationId: 'org-acme',
+        roleName: 'accountant',
+        permissions: ['invoice:read', 'invoice:write'],
+        memberships: MEMBERSHIPS,
+      };
+    }
+    if (request.organizationId) {
+      return { status: 'not_member', organizationId: '', roleName: '', permissions: [], memberships: MEMBERSHIPS };
+    }
+    // proto3: empty strings and lists are dropped on the wire; the consumer must cope.
+    return { status: 'ambiguous', memberships: MEMBERSHIPS };
   }
 }
 
@@ -53,23 +69,41 @@ describe('bff → Authorizer over gRPC (consumer contract)', () => {
     await consumer?.close();
   });
 
-  it('resolves a Keycloak role list into permissions', async () => {
-    await expect(resolver.getPermissionsForRoles(['accountant'])).resolves.toEqual(['invoice:read', 'invoice:write']);
+  it('sends the caller and requested organization, and maps a resolved answer', async () => {
+    await expect(resolver.resolveCaller({ userId: 'kc-1', roles: ['platform-admin'] }, 'org-acme')).resolves.toEqual({
+      status: 'resolved',
+      organizationId: 'org-acme',
+      roleName: 'accountant',
+      permissions: ['invoice:read', 'invoice:write'],
+      memberships: MEMBERSHIPS,
+    });
+    expect(stub.get(StubAuthorizer).lastRequest).toEqual({
+      userId: 'kc-1',
+      roles: ['platform-admin'],
+      organizationId: 'org-acme',
+    });
   });
 
-  it('returns an empty list (not undefined) for a caller whose roles grant nothing', async () => {
-    await expect(resolver.getPermissionsForRoles(['default-roles-einvoice'])).resolves.toEqual([]);
+  it('sends an empty organization when none was requested', async () => {
+    await resolver.resolveCaller({ userId: 'kc-1', roles: [] });
+
+    expect(stub.get(StubAuthorizer).lastRequest).toMatchObject({ organizationId: '' });
   });
 
-  it('sends an empty role list and gets an empty answer', async () => {
-    await expect(resolver.getPermissionsForRoles([])).resolves.toEqual([]);
+  it('maps an answer whose empty fields were dropped on the wire to "no organization, no permissions"', async () => {
+    await expect(resolver.resolveCaller({ userId: 'kc-1', roles: [] })).resolves.toEqual({
+      status: 'ambiguous',
+      organizationId: undefined,
+      roleName: undefined,
+      permissions: [],
+      memberships: MEMBERSHIPS,
+    });
   });
 
-  // Documents current behavior: with Authorizer down, the gRPC error propagates as-is (bff's
-  // GlobalExceptionFilter turns it into a 500, not a 503). See the gRPC series, Part 5.
-  it('rejects with the gRPC UNAVAILABLE error when Authorizer is down', async () => {
-    await stub.close();
-
-    await expect(resolver.getPermissionsForRoles(['viewer'])).rejects.toMatchObject({ code: 14 });
+  it('never reports an organization for a non-member', async () => {
+    await expect(resolver.resolveCaller({ userId: 'kc-1', roles: [] }, 'org-other')).resolves.toMatchObject({
+      status: 'not_member',
+      organizationId: undefined,
+    });
   });
 });

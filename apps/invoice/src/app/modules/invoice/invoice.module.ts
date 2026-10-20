@@ -4,6 +4,11 @@ import { CacheModule } from '@libs/cache';
 import { READ_DB } from '@libs/constants';
 import { InvoiceModelName } from '@libs/schemas';
 import { ServiceName, TcpClientModule } from '@libs/transports';
+import { MongooseModule } from '@nestjs/mongoose';
+import { INVOICE_COUNTER_MODEL_DEFINITION } from '@libs/schemas';
+import { CustomerModule } from '../customer/customer.module';
+import { InvoiceNumberingService } from './invoice-numbering.service';
+import { OrganizationClientService } from './clients/organization-client.service';
 import { OutboxModule } from '../outbox/outbox.module';
 import { InvoiceHttpController } from './invoice-http.controller';
 import { InvoiceRpcController } from './invoice-rpc.controller';
@@ -25,7 +30,10 @@ export class InvoiceModule {
       module: InvoiceModule,
       imports: [
         CacheModule.forRoot('svc'),
-        TcpClientModule.forServices([ServiceName.PDF_GENERATOR, ServiceName.MEDIA]),
+        // USER: user-access, for the organization's invoice-number prefix.
+        TcpClientModule.forServices([ServiceName.PDF_GENERATOR, ServiceName.MEDIA, ServiceName.USER]),
+        MongooseModule.forFeature([INVOICE_COUNTER_MODEL_DEFINITION]),
+        CustomerModule,
         // Events go through the transactional outbox; its relay is the only thing that talks to Kafka.
         OutboxModule,
       ],
@@ -35,6 +43,8 @@ export class InvoiceModule {
         PdfGeneratorClientService,
         MediaClientService,
         InvoiceEventsProducerService,
+        InvoiceNumberingService,
+        OrganizationClientService,
         {
           provide: INVOICE_REPOSITORY,
           useClass: InvoiceRepository,

@@ -111,6 +111,9 @@ services:
       PDF_GENERATOR_SERVICE_PORT: ${PDF_GENERATOR_SERVICE_PORT:-3310}
       MEDIA_SERVICE_HOST: media
       MEDIA_SERVICE_PORT: ${MEDIA_SERVICE_PORT:-3312}
+      # The organization's invoice prefix, read when an invoice is numbered.
+      USER_SERVICE_HOST: user-access
+      USER_SERVICE_PORT: ${USER_SERVICE_PORT:-3306}
       KAFKA_BROKERS: kafka:9092
       REDIS_HOST: redis
       REDIS_PORT: 6379
@@ -129,9 +132,13 @@ services:
         condition: service_healthy
       kafka:
         condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
       pdf-generator:
         condition: service_started
       media:
+        condition: service_started
+      user-access:
         condition: service_started
     ports:
       - "${INVOICE_HTTP_PORT:-3302}:${INVOICE_HTTP_PORT:-3302}"
@@ -468,6 +475,8 @@ services:
         condition: service_started
       kafka:
         condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
     ports:
       - "${PAYMENT_HTTP_PORT:-3314}:${PAYMENT_HTTP_PORT:-3314}"
       - "${PAYMENT_SERVICE_PORT:-3004}:${PAYMENT_SERVICE_PORT:-3004}"
@@ -559,6 +568,13 @@ services:
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      # Topics exist only if infra/kafka/topics.conf lists them (kafka-init creates them): with
+      # auto-creation, the first consumer on a fresh broker raced the creation and payment failed to start.
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      # The volume's path. Unset, the image's env-based config writes to /tmp/kafka-logs -- the
+      # container's own layer -- so every recreate silently dropped all topics, unconsumed events and
+      # consumer-group offsets while the mounted volume stayed empty.
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
     ports:
       - "${KAFKA_PORT:-9092}:9092"
     volumes:
@@ -569,6 +585,22 @@ services:
       timeout: 10s
       retries: 10
       start_period: 30s
+    networks:
+      - backend
+
+  # One-shot: creates every topic in infra/kafka/topics.conf that doesn't exist yet, then exits.
+  # invoice, payment and mail-service start only after it completed successfully.
+  kafka-init:
+    image: apache/kafka:4.3.1
+    entrypoint: ["/bin/bash", "/topics/create-topics.sh"]
+    environment:
+      KAFKA_BOOTSTRAP_SERVER: kafka:9092
+    volumes:
+      - ./infra/kafka:/topics:ro
+    depends_on:
+      kafka:
+        condition: service_healthy
+    restart: "no"
     networks:
       - backend
 
@@ -601,20 +633,40 @@ services:
       S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-test}
       S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-test}
       MAIL_PROVIDER: ${MAIL_PROVIDER:-smtp}
-      SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
-      SMTP_PORT: ${SMTP_PORT:-587}
+      # Defaults deliver to the local Mailpit sink (plaintext, no auth; read mail at
+      # http://127.0.0.1:8025). These `${...}` values come from the shell or the root .env -- NOT from
+      # .env.dev: `environment` overrides `env_file`, so SMTP settings in .env.dev never reached this
+      # container. For a real relay (Gmail), set SMTP_HOST/PORT/USERNAME/PASSWORD/FROM and
+      # SMTP_TLS_POLICY=mandatory in the root .env or the shell.
+      SMTP_HOST: ${SMTP_HOST:-mailpit}
+      SMTP_PORT: ${SMTP_PORT:-1025}
+      SMTP_TLS_POLICY: ${SMTP_TLS_POLICY:-none}
       SMTP_USERNAME: ${SMTP_USERNAME:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
-      SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_FROM: ${SMTP_FROM:-invoices@einvoice.local}
       AWS_REGION: ${AWS_REGION:-us-east-1}
       SES_FROM_EMAIL: ${SES_FROM_EMAIL:-}
     depends_on:
       kafka:
         condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
       s3mock-init:
         condition: service_completed_successfully
+      mailpit:
+        condition: service_healthy
+    networks:
+      - backend
+
+  # Local SMTP sink, dev only: every email mail-service sends lands here, readable at
+  # http://127.0.0.1:8025. Healthcheck comes with the image (`mailpit readyz`).
+  mailpit:
+    image: axllent/mailpit:v1.31.6
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${MAILPIT_UI_PORT:-8025}:8025"
     networks:
       - backend
 

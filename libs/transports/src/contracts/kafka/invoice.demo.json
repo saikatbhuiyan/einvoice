@@ -11,6 +11,7 @@
     "userId": "user-1",
     "roles": ["accountant"],
     "permissions": ["invoice:write"],
+    "organizationId": "0d5c2b9e-7a41-4c8e-9f12-3b6a8e4d7c10",
     "sourceService": "invoice",
     "timestamp": "2026-10-16T09:00:00.000Z"
   }

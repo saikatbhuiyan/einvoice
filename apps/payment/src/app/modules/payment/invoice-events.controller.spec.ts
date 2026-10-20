@@ -1,5 +1,7 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import { DEFAULT_ORGANIZATION_ID } from '@libs/shared/types';
+import { getCurrentCorrelationContext, runWithCorrelationContext } from '@libs/logging/correlation-context';
 import { InvoiceEventsController } from './invoice-events.controller';
 import type { PaymentService } from './payment.service';
 
@@ -25,6 +27,41 @@ describe('InvoiceEventsController (payment consuming invoice.events)', () => {
     await controller.handle(fixture('invoice.cancelled.json'));
 
     expect(expireOpenSessionForInvoice).toHaveBeenCalledWith('6700000000000000000000a1');
+  });
+
+  // In production RpcLoggingInterceptor makes the envelope's meta the context before the handler runs.
+  const deliver = (message: { meta: Record<string, unknown> }) =>
+    runWithCorrelationContext(
+      { correlationId: 'c', traceId: 't', organizationId: message.meta['organizationId'] as string | undefined },
+      () => controller.handle(message as never),
+    );
+
+  it("acts in the event's organization", async () => {
+    let organizationId: string | undefined;
+    expireOpenSessionForInvoice.mockImplementation(async () => {
+      organizationId = getCurrentCorrelationContext()?.organizationId;
+      return true;
+    });
+    const message = fixture('invoice.cancelled.json');
+
+    await deliver(message);
+
+    expect(organizationId).toBe(message.meta.organizationId);
+  });
+
+  // Throwing would make Kafka redeliver it forever; it can only be about a pre-tenancy invoice.
+  it('acts in the default organization for an event published before tenancy (no organization)', async () => {
+    let organizationId: string | undefined;
+    expireOpenSessionForInvoice.mockImplementation(async () => {
+      organizationId = getCurrentCorrelationContext()?.organizationId;
+      return true;
+    });
+    const message = fixture('invoice.cancelled.json');
+    delete message.meta.organizationId;
+
+    await deliver(message);
+
+    expect(organizationId).toBe(DEFAULT_ORGANIZATION_ID);
   });
 
   it.each(['invoice.demo.json', 'invoice.sent.json'])('ignores %s', async (name) => {

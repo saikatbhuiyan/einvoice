@@ -1,19 +1,25 @@
 import { Inject, Injectable, OnModuleInit } from '@nestjs/common';
 import { ClientGrpc } from '@nestjs/microservices';
 import { firstValueFrom, Observable } from 'rxjs';
-import type { PermissionResolver } from '@libs/auth';
+import type { CallerResolution, CallerResolutionStatus, PermissionResolver } from '@libs/auth';
 import { GRPC_CLIENT_TOKENS, GrpcServiceName } from '@libs/transports';
 
+// Mirrors libs/transports/src/proto/authorizer.proto (hand-written; no codegen).
 interface AuthorizerServiceClient {
-  getPermissionsForRoles(request: { roles: string[] }): Observable<{ permissions: string[] }>;
+  resolveCaller(request: { userId: string; roles: string[]; organizationId: string }): Observable<{
+    status: string;
+    organizationId: string;
+    roleName: string;
+    permissions: string[];
+    memberships: Array<{ organizationId: string; organizationName: string; roleName: string }>;
+  }>;
 }
 
+const STATUSES: readonly CallerResolutionStatus[] = ['resolved', 'ambiguous', 'none', 'not_member'];
+
 /**
- * Replaces the old UserPermissionResolver (which called user-access directly over TCP) — same
- * PermissionResolver contract, so PermissionGuard and everything downstream of it needed zero
- * changes. Authorization decisions now live in apps/authorizer, reached over gRPC; this class is
- * just the gRPC client wiring, all the actual roles-to-permissions logic (and its own caching)
- * moved to AuthorizationService in that service.
+ * PermissionResolver backed by authorizer (gRPC), which looks up the caller's memberships in
+ * user-access and caches them. bff never decides organization membership itself.
  */
 @Injectable()
 export class AuthorizerPermissionResolver implements PermissionResolver, OnModuleInit {
@@ -25,8 +31,27 @@ export class AuthorizerPermissionResolver implements PermissionResolver, OnModul
     this.authorizerClient = this.client.getService<AuthorizerServiceClient>('AuthorizerService');
   }
 
-  async getPermissionsForRoles(roleNames: string[]): Promise<string[]> {
-    const response = await firstValueFrom(this.authorizerClient.getPermissionsForRoles({ roles: roleNames }));
-    return response.permissions ?? [];
+  async resolveCaller(
+    caller: { userId: string; roles: string[] },
+    requestedOrganizationId?: string,
+  ): Promise<CallerResolution> {
+    const response = await firstValueFrom(
+      this.authorizerClient.resolveCaller({
+        userId: caller.userId,
+        roles: caller.roles,
+        organizationId: requestedOrganizationId ?? '',
+      }),
+    );
+
+    // An unknown status would be a contract break; failing closed beats guessing.
+    const status = STATUSES.find((known) => known === response.status) ?? 'none';
+    return {
+      status,
+      organizationId: status === 'resolved' ? response.organizationId || undefined : undefined,
+      roleName: response.roleName || undefined,
+      // Authorizer already limits these to platform permissions unless resolved.
+      permissions: response.permissions ?? [],
+      memberships: response.memberships ?? [],
+    };
   }
 }

@@ -9,6 +9,7 @@ interface GrpcRole {
   description: string;
   permissions: string[];
   isActive: boolean;
+  scope: string;
 }
 
 // Authorizer's gRPC client to this service — general-purpose role data, the same information
@@ -37,6 +38,7 @@ export class RoleGrpcController {
         description: role.description ?? '',
         permissions: role.permissions,
         isActive: role.isActive,
+        scope: role.scope,
       })),
     };
   }

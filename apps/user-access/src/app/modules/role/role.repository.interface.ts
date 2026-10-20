@@ -6,4 +6,6 @@ export interface IRoleRepository {
   findAll(): Promise<RoleEntity[]>;
 
   findById(id: string): Promise<RoleEntity | null>;
+
+  findByName(name: string): Promise<RoleEntity | null>;
 }

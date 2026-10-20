@@ -2,8 +2,14 @@ import { BadRequestException, ConflictException } from '@nestjs/common';
 import { MongoDBContainer, type StartedMongoDBContainer } from '@testcontainers/mongodb';
 import mongoose, { type Connection } from 'mongoose';
 import { InvoiceModelName, InvoiceSchema, type InvoiceModel } from '@libs/schemas';
-import type { CreateInvoiceRequest } from '@libs/interfaces/gateway';
+import { runWithCorrelationContext } from '@libs/logging/correlation-context';
+import { itInOrganization as it, TEST_ORGANIZATION_ID as ORG } from '@libs/logging/testing';
 import { InvoiceRepository } from './invoice.repository';
+import type { NewInvoice } from './invoice.repository.interface';
+
+const OTHER_ORG = 'org-other';
+const inOrganization = <T>(organizationId: string, work: () => Promise<T>) =>
+  runWithCorrelationContext({ correlationId: 'int', traceId: 'int', organizationId }, work);
 
 /**
  * Integration test: InvoiceRepository against a real MongoDB. Concurrency control (version-checked
@@ -35,14 +41,18 @@ describe('InvoiceRepository against real MongoDB', () => {
 
   beforeEach(() => model.deleteMany({}));
 
-  const payload = (overrides: Partial<CreateInvoiceRequest> = {}): CreateInvoiceRequest =>
+  const payload = (overrides: Partial<NewInvoice> = {}): NewInvoice =>
     ({
-      invoiceNumber: `INT-${++counter}`,
+      reference: `REF-${++counter}`,
       client: { name: 'Acme Corp', email: 'billing@acme.test', address: '1 Main St' },
       items: [{ catalogId: 'sku-1', name: 'Widget', quantity: 2, unitPrice: 50, vatRate: 10 }],
       currency: 'USD',
       ...overrides,
-    }) as CreateInvoiceRequest;
+    }) as NewInvoice;
+
+  // Issues a draft with a given number, as InvoiceService's numbering does via `prepare`.
+  const issueAs = (id: string, invoiceNumber: string) =>
+    repository.transitionStatus(id, ['draft'], 'issued', { prepare: async () => ({ invoiceNumber }) });
 
   describe('create', () => {
     it('computes totals server-side via the pre-validate hook', async () => {
@@ -51,10 +61,22 @@ describe('InvoiceRepository against real MongoDB', () => {
       expect(invoice.toObject()).toMatchObject({ subtotal: 100, vatTotal: 10, total: 110 });
     });
 
-    it('enforces unique invoice numbers with a real index (E11000)', async () => {
-      await repository.create(payload({ invoiceNumber: 'DUP-1' }));
+    // A last line of defence behind the counter: a number can never be issued twice in one
+    // organization, and the issuing transaction rolls back if it somehow is.
+    it('enforces unique invoice numbers per organization with a real index (E11000)', async () => {
+      await issueAs((await repository.create(payload())).id, 'INV-2026-000001');
+      const second = await repository.create(payload());
 
-      await expect(repository.create(payload({ invoiceNumber: 'DUP-1' }))).rejects.toMatchObject({ code: 11000 });
+      await expect(issueAs(second.id, 'INV-2026-000001')).rejects.toMatchObject({ code: 11000 });
+      expect((await model.findById(second.id))?.status).toBe('draft');
+    });
+
+    // The unique index is partial on string numbers: any number of drafts can be unnumbered.
+    it('leaves drafts unnumbered, however many there are', async () => {
+      await repository.create(payload());
+      const second = await repository.create(payload());
+
+      expect(second.invoiceNumber).toBeUndefined();
     });
 
     it('returns the existing invoice for a retried idempotency key', async () => {
@@ -69,9 +91,7 @@ describe('InvoiceRepository against real MongoDB', () => {
     // check, the unique index rejects one insert. Idempotency means *both* callers get the invoice.
     it('returns the same invoice to concurrent requests with the same idempotency key', async () => {
       const results = await Promise.allSettled(
-        Array.from({ length: 5 }, () =>
-          repository.create(payload({ idempotencyKey: 'race-1', invoiceNumber: 'RACE-1' })),
-        ),
+        Array.from({ length: 5 }, () => repository.create(payload({ idempotencyKey: 'race-1' }))),
       );
 
       expect(results.map((r) => r.status)).toEqual(Array(5).fill('fulfilled'));
@@ -147,10 +167,14 @@ describe('InvoiceRepository against real MongoDB', () => {
       return created.id;
     };
 
-    it('creates every invoice as a draft, even when the payload claims otherwise', async () => {
-      const created = await repository.create({ ...payload(), status: 'paid' } as CreateInvoiceRequest);
+    it("creates every invoice as a draft in the caller's organization, whatever the payload claims", async () => {
+      const created = await repository.create({
+        ...payload(),
+        status: 'paid',
+        organizationId: OTHER_ORG,
+      } as NewInvoice);
 
-      expect(created.status).toBe('draft');
+      expect(created).toMatchObject({ status: 'draft', organizationId: ORG });
     });
 
     it('transitions only from an allowed status, bumping the version', async () => {
@@ -244,28 +268,74 @@ describe('InvoiceRepository against real MongoDB', () => {
       ).rejects.toBeInstanceOf(BadRequestException);
     });
 
-    it('searches invoice number and client fields case-insensitively', async () => {
-      await repository.create(payload({ invoiceNumber: 'ACME-2026-01' }));
+    it('searches invoice number, reference and client fields case-insensitively', async () => {
+      await issueAs((await repository.create(payload())).id, 'ACME-2026-000001');
+      await repository.create(payload({ reference: 'PO-77' }));
       await repository.create(
-        payload({
-          invoiceNumber: 'OTHER-1',
-          client: { name: 'Globex', email: 'ap@globex.test', address: '2 Side St' },
-        }),
+        payload({ reference: 'X', client: { name: 'Globex', email: 'ap@globex.test', address: '2 Side St' } }),
       );
 
-      const result = await repository.findAll({ search: 'acme-2026' });
+      const found = async (search: string) =>
+        (await repository.findAll({ search })).items.map((i) => i.invoiceNumber ?? i.reference);
 
-      expect(result.items.map((i) => i.invoiceNumber)).toEqual(['ACME-2026-01']);
+      expect(await found('acme-2026')).toEqual(['ACME-2026-000001']);
+      expect(await found('po-7')).toEqual(['PO-77']);
+      expect(await found('GLOBEX')).toEqual(['X']);
     });
 
     // Search text is user input: regex metacharacters must be literal, and an unbalanced pattern
     // must not reach Mongo as an invalid (or catastrophically backtracking) regex.
     it('treats regex metacharacters in the search term literally', async () => {
-      await repository.create(payload({ invoiceNumber: 'INV.1' }));
-      await repository.create(payload({ invoiceNumber: 'INVX1' }));
+      await repository.create(payload({ reference: 'PO.1' }));
+      await repository.create(payload({ reference: 'POX1' }));
 
-      expect((await repository.findAll({ search: 'INV.1' })).items.map((i) => i.invoiceNumber)).toEqual(['INV.1']);
+      expect((await repository.findAll({ search: 'PO.1' })).items.map((i) => i.reference)).toEqual(['PO.1']);
       await expect(repository.findAll({ search: 'INV(' })).resolves.toMatchObject({ items: [] });
+    });
+  });
+
+  // Ids are global ObjectIds: knowing (or guessing) another organization's id must get you nothing.
+  describe('tenancy isolation', () => {
+    const otherOrgsInvoice = () => inOrganization(OTHER_ORG, () => repository.create(payload({ reference: 'THEIRS' })));
+
+    it("cannot read, edit, delete or transition another organization's invoice -- it is not found", async () => {
+      const theirs = await otherOrgsInvoice();
+
+      expect(await repository.findOne(theirs.id)).toBeNull();
+      expect(await repository.update(theirs.id, { notes: 'mine now' })).toBeNull();
+      expect(await repository.remove(theirs.id)).toBeNull();
+      expect(await repository.setPdfMetadata(theirs.id, 'k', new Date())).toBeNull();
+      await expect(repository.transitionStatus(theirs.id, ['draft'], 'issued')).resolves.toEqual({
+        outcome: 'not_found',
+      });
+      expect(await model.findById(theirs.id)).toMatchObject({ status: 'draft', deletedAt: null, notes: undefined });
+    });
+
+    it('lists, searches, counts and pages only the current organization', async () => {
+      await otherOrgsInvoice();
+      const mine = [(await repository.create(payload())).id, (await repository.create(payload())).id];
+
+      const offset = await repository.findAll({ limit: 10 });
+      expect(offset.items.map((i) => i.id).sort()).toEqual([...mine].sort());
+      expect(offset.meta).toMatchObject({ total: 2 });
+      expect((await repository.findAll({ search: 'THEIRS' })).items).toEqual([]);
+
+      const first = await repository.findAll({ limit: 1, pagination: 'cursor' });
+      const second = await repository.findAll({ limit: 1, cursor: (first.meta as { cursor: string }).cursor });
+      expect([...first.items, ...second.items].map((i) => i.id)).toEqual([...mine].reverse());
+      expect(second.meta).toMatchObject({ hasNextPage: false });
+    });
+
+    it('scopes idempotency keys and invoice numbers per organization', async () => {
+      const theirs = await inOrganization(OTHER_ORG, async () => {
+        const created = await repository.create(payload({ idempotencyKey: 'shared-key' }));
+        await issueAs(created.id, 'INV-2026-000001');
+        return created;
+      });
+
+      const mine = await repository.create(payload({ idempotencyKey: 'shared-key' }));
+      expect(mine.id).not.toBe(theirs.id);
+      await expect(issueAs(mine.id, 'INV-2026-000001')).resolves.toMatchObject({ outcome: 'transitioned' });
     });
   });
 });

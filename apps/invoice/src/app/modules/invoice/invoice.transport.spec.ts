@@ -31,8 +31,9 @@ class TestInvoiceClient extends BaseTcpClient {
   }
 }
 
-const WRITER = { userId: 'kc-user-1', permissions: ['invoice:write'] };
-const READER = { userId: 'kc-user-2', permissions: ['invoice:read'] };
+const ORG = 'org-acme';
+const WRITER = { userId: 'kc-user-1', organizationId: ORG, permissions: ['invoice:write'] };
+const READER = { userId: 'kc-user-2', organizationId: ORG, permissions: ['invoice:read'] };
 const ID = '507f1f77bcf86cd799439011';
 
 describe('invoice lifecycle over TCP (transport)', () => {
@@ -119,23 +120,36 @@ describe('invoice lifecycle over TCP (transport)', () => {
 
     await expect(as(READER, () => fromBff.call(TCP_PATTERNS.INVOICE.GET_PDF_URL, ID))).resolves.toEqual(link);
     await expect(
-      as({ userId: 'kc-user-3', permissions: [] }, () => fromBff.call(TCP_PATTERNS.INVOICE.GET_PDF_URL, ID)),
+      as({ userId: 'kc-user-3', organizationId: ORG, permissions: [] }, () =>
+        fromBff.call(TCP_PATTERNS.INVOICE.GET_PDF_URL, ID),
+      ),
     ).rejects.toMatchObject({ status: 403 });
   });
 
-  // payment's webhook path has no end user; the context the handler runs in still names the caller,
-  // which is what attributes the audit entry to `service:payment`.
-  it('MARK_PAID is reachable from payment with no user, and the handler sees payment as the caller', async () => {
+  // Every repository query is scoped by the caller's organization; a tenant handler reached
+  // without one must be refused at the boundary, not left to fail (or leak) further in.
+  it('refuses a tenant call that carries no organization, even with the right permission', async () => {
+    const writerWithoutOrganization = { ...WRITER, organizationId: undefined };
+
+    await expect(
+      as(writerWithoutOrganization, () => fromBff.call(TCP_PATTERNS.INVOICE.ISSUE, ID)),
+    ).rejects.toMatchObject({ status: 403 });
+    expect(invoiceService.issue).not.toHaveBeenCalled();
+  });
+
+  // payment's webhook path has no end user; the context the handler runs in still names the caller
+  // (attributing the audit entry to `service:payment`) and the invoice's organization, which payment
+  // recorded with the checkout session and which scopes the lookup.
+  it("MARK_PAID is reachable from payment with no user, in the invoice's organization", async () => {
     invoiceService.markPaid.mockImplementation(async () => {
       seenContext = getCurrentCorrelationContext();
       return { id: ID, status: 'paid' };
     });
 
-    await expect(as({}, () => fromPayment.call(TCP_PATTERNS.INVOICE.MARK_PAID, ID))).resolves.toEqual({
-      id: ID,
-      status: 'paid',
-    });
-    expect(seenContext).toMatchObject({ sourceService: 'payment' });
+    await expect(
+      as({ organizationId: ORG }, () => fromPayment.call(TCP_PATTERNS.INVOICE.MARK_PAID, ID)),
+    ).resolves.toEqual({ id: ID, status: 'paid' });
+    expect(seenContext).toMatchObject({ sourceService: 'payment', organizationId: ORG });
     expect(seenContext?.userId).toBeUndefined();
   });
 
@@ -146,7 +160,9 @@ describe('invoice lifecycle over TCP (transport)', () => {
       new ConflictException('Cannot mark as paid an invoice that is cancelled.'),
     );
 
-    const error = await as({}, () => fromPayment.call(TCP_PATTERNS.INVOICE.MARK_PAID, ID)).catch((e: unknown) => e);
+    const error = await as({ organizationId: ORG }, () => fromPayment.call(TCP_PATTERNS.INVOICE.MARK_PAID, ID)).catch(
+      (e: unknown) => e,
+    );
 
     expect(error).toBeInstanceOf(HttpException);
     expect((error as HttpException).getStatus()).toBe(409);

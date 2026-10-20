@@ -3,6 +3,8 @@ export interface RoleResponse {
   name: string;
   description?: string;
   permissions: string[];
+  /** "organization" (assigned through memberships) or "platform" (a Keycloak realm role). */
+  scope: 'organization' | 'platform';
   isActive: boolean;
   createdAt: string | Date;
   updatedAt: string | Date;

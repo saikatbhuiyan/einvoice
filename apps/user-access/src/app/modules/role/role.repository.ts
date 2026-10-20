@@ -18,4 +18,8 @@ export class RoleRepository implements IRoleRepository {
   async findById(id: string): Promise<RoleEntity | null> {
     return this.repository.findOne({ where: { id } });
   }
+
+  async findByName(name: string): Promise<RoleEntity | null> {
+    return this.repository.findOne({ where: { name } });
+  }
 }

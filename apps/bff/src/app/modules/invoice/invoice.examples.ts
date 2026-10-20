@@ -8,17 +8,22 @@ import {
 
 export const INVOICE_ID_EXAMPLE = '662f9d38f2ab7c001f52c901';
 
+export const CUSTOMER_ID_EXAMPLE = '662f9d38f2ab7c001f52c9aa';
+
+const CLIENT_EXAMPLE = {
+  name: 'Acme Bangladesh Ltd.',
+  email: 'finance@acme.example',
+  address: 'House 12, Road 8, Gulshan, Dhaka 1212',
+};
+
+/** A one-off client, given inline. Drafts are unnumbered: the number is assigned on issue. */
 export const CREATE_INVOICE_EXAMPLE: CreateInvoiceDto = {
-  invoiceNumber: 'INV-2026-0001',
+  reference: 'PO-4471',
   currency: 'BDT',
   issueDate: '2026-04-28',
   dueDate: '2026-05-28',
   notes: 'Payment due within 30 days.',
-  client: {
-    name: 'Acme Bangladesh Ltd.',
-    email: 'finance@acme.example',
-    address: 'House 12, Road 8, Gulshan, Dhaka 1212',
-  },
+  client: CLIENT_EXAMPLE,
   items: [
     {
       catalogId: 'SKU-SUBSCRIPTION-PRO',
@@ -30,19 +35,30 @@ export const CREATE_INVOICE_EXAMPLE: CreateInvoiceDto = {
   ],
 };
 
+/** A saved customer: their current details are snapshotted onto the invoice. */
+export const CREATE_INVOICE_FOR_CUSTOMER_EXAMPLE: CreateInvoiceDto = {
+  customerId: CUSTOMER_ID_EXAMPLE,
+  currency: 'BDT',
+  dueDate: '2026-05-28',
+  items: CREATE_INVOICE_EXAMPLE.items,
+};
+
 export const UPDATE_INVOICE_EXAMPLE: UpdateInvoiceDto = {
   notes: 'Payment due within 14 days.',
 };
 
 export const INVOICE_RESPONSE_EXAMPLE: InvoiceResponseDto = {
   id: INVOICE_ID_EXAMPLE,
-  invoiceNumber: 'INV-2026-0001',
+  organizationId: '00000000-0000-4000-8000-000000000001',
+  invoiceNumber: 'INV-2026-000001',
+  reference: 'PO-4471',
+  customerId: null,
   currency: 'BDT',
   status: 'issued',
   issueDate: '2026-04-28',
   dueDate: '2026-05-28',
   notes: 'Payment due within 30 days.',
-  client: CREATE_INVOICE_EXAMPLE.client,
+  client: CLIENT_EXAMPLE,
   items: [
     {
       ...CREATE_INVOICE_EXAMPLE.items[0],

@@ -3,7 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { CONFIGURATION } from '../configuration';
-import { CorrelationIdMiddleware } from '@libs/middlewares';
+import { InternalCallerContextMiddleware } from '@libs/middlewares';
 import { LoggingModule } from '@libs/logging';
 import { MongoDbModule } from '../database/mongodb.module';
 import { SchemasModule } from '@libs/schemas';
@@ -45,6 +45,6 @@ const hasReadReplicas = !!CONFIGURATION.MONGODB_CONFIG.MONGODB_READ_URI;
 })
 export class AppModule {
   configure(consumer: MiddlewareConsumer) {
-    consumer.apply(CorrelationIdMiddleware).forRoutes('*');
+    consumer.apply(InternalCallerContextMiddleware).forRoutes('*');
   }
 }
