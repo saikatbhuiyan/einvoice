@@ -20,7 +20,7 @@ describe('RoleService', () => {
   let service: RoleService;
 
   beforeEach(() => {
-    repository = { findAll: jest.fn(), findById: jest.fn() };
+    repository = { findAll: jest.fn(), findById: jest.fn(), findByName: jest.fn() };
     service = new RoleService(repository);
   });
 

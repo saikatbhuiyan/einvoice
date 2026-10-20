@@ -14,6 +14,9 @@ export class RoleResponseDto implements RoleResponse {
   @ApiProperty({ example: ['invoice:read', 'invoice:write', 'product:read'], type: [String] })
   permissions!: string[];
 
+  @ApiProperty({ enum: ['organization', 'platform'], example: 'organization' })
+  scope!: 'organization' | 'platform';
+
   @ApiProperty({ example: true })
   isActive!: boolean;
 

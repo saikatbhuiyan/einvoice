@@ -28,6 +28,7 @@ export class HealthController extends BaseHealthController {
     return [
       tcpPeerCheck(this.microservice, ServiceName.PDF_GENERATOR),
       tcpPeerCheck(this.microservice, ServiceName.MEDIA),
+      tcpPeerCheck(this.microservice, ServiceName.USER),
     ];
   }
 }

@@ -4,7 +4,7 @@ import type express from 'express';
 import Redis from 'ioredis';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import type { Cache } from 'cache-manager';
-import { REDIS_CLIENT } from '@libs/cache';
+import { REDIS_CLIENT, tenantCacheKey } from '@libs/cache';
 import { CIRCUIT_BREAKER_FACTORY } from '@libs/circuit-breaker';
 import type { CircuitBreakerFactory } from '@libs/circuit-breaker';
 import { ServiceName } from '@libs/transports';
@@ -16,8 +16,9 @@ import {
 } from '@libs/interfaces/gateway';
 import { ProductClientService } from './product-client.service';
 
-const CACHE_KEY_LIST = (version: number, hash: string) => `bff:product:list:${version}:${hash}`;
-const CACHE_KEY_LIST_VERSION = 'bff:product:list:version';
+// Catalogs are per organization: list keys and the version counter are tenant-scoped.
+const CACHE_KEY_LIST = (version: number, hash: string) => tenantCacheKey('bff', 'product', 'list', version, hash);
+const CACHE_KEY_LIST_VERSION = () => tenantCacheKey('bff', 'product', 'list', 'version');
 const TTL_LIST_MS = 10_000;
 
 @Injectable()
@@ -90,7 +91,7 @@ export class ProductService {
 
   private async getListVersion(): Promise<number> {
     try {
-      const version = await this.redis.get(CACHE_KEY_LIST_VERSION);
+      const version = await this.redis.get(CACHE_KEY_LIST_VERSION());
       return version ? Number(version) : 1;
     } catch {
       this.logger.warn('Failed to read list version counter, defaulting to 1');
@@ -100,7 +101,7 @@ export class ProductService {
 
   private async bumpListVersion(): Promise<void> {
     try {
-      await this.redis.incr(CACHE_KEY_LIST_VERSION);
+      await this.redis.incr(CACHE_KEY_LIST_VERSION());
     } catch {
       this.logger.warn('Failed to increment list version counter');
     }

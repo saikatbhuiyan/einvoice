@@ -51,8 +51,20 @@ export class InvoiceResponseDto implements InvoiceResponse {
   })
   id!: string;
 
-  @ApiProperty({ example: 'INV-2026-0001' })
-  invoiceNumber!: string;
+  @ApiProperty({ example: '6a1f1c2e-0b9d-4d55-9a8b-6b8f7c1d2e3f' })
+  organizationId!: string;
+
+  @ApiPropertyOptional({
+    example: 'ACME-2026-000042',
+    description: 'Assigned when the invoice is issued ({prefix}-{year}-{sequence}); absent on drafts.',
+  })
+  invoiceNumber?: string;
+
+  @ApiPropertyOptional({ example: 'PO-4711' })
+  reference?: string;
+
+  @ApiPropertyOptional({ example: '662f9d38f2ab7c001f52c9aa', nullable: true })
+  customerId?: string | null;
 
   @ApiProperty({ type: () => ClientSnapshotResponseDto })
   client!: ClientSnapshotResponseDto;

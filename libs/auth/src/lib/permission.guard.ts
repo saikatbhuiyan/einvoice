@@ -1,7 +1,15 @@
-import { CanActivate, ExecutionContext, ForbiddenException, Inject, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  CanActivate,
+  ExecutionContext,
+  ForbiddenException,
+  Inject,
+  Injectable,
+} from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import type { Request } from 'express';
 import { setIdentityOnCurrentContext } from '@libs/logging';
+import { isPlatformPermission, ORGANIZATION_HEADER } from '@libs/shared/types';
 import { REQUIRED_PERMISSIONS_KEY } from './require-permission.decorator';
 import { PERMISSION_RESOLVER, type PermissionResolver } from './permission-resolver.interface';
 import type { AuthenticatedUser } from './authenticated-user.interface';
@@ -10,6 +18,16 @@ interface RequestWithUser extends Request {
   user?: AuthenticatedUser;
 }
 
+/**
+ * Resolves, for every authenticated request, which organization it acts in and what the caller may
+ * do there -- then enforces @RequirePermission. The organization comes from the X-Organization-Id
+ * header, *validated against the caller's memberships* (never believed as-is), or is the caller's
+ * only organization. It is put on the request context, so every downstream RPC carries it and every
+ * downstream query is scoped to it.
+ *
+ * Resolution happens even for routes without @RequirePermission: downstream services enforce their
+ * own permissions and scope their own queries, so they always need the caller's real context.
+ */
 @Injectable()
 export class PermissionGuard implements CanActivate {
   constructor(
@@ -21,19 +39,23 @@ export class PermissionGuard implements CanActivate {
     const request = context.switchToHttp().getRequest<RequestWithUser>();
     const user = request.user;
 
-    // @Public() routes never reach here with a user — JwtAuthGuard skipped verification entirely,
-    // so there's no identity to resolve permissions for or enforce anything against.
+    // No authenticated user means JwtAuthGuard let this through as @Public(), which has nothing to
+    // resolve or check here.
     if (!user) {
       return true;
     }
 
-    // Resolved for every authenticated request, not just ones @RequirePermission happens to gate,
-    // so the permissions riding on the outgoing RpcEnvelope (via setIdentityOnCurrentContext) are
-    // always populated for downstream services to check themselves — enforcement here stays
-    // conditional on @RequirePermission, but propagation doesn't.
-    const permissions = await this.permissionResolver.getPermissionsForRoles(user.roles);
-    user.permissions = permissions;
-    setIdentityOnCurrentContext({ permissions });
+    const requested = this.requestedOrganization(request);
+    const resolution = await this.permissionResolver.resolveCaller({ userId: user.sub, roles: user.roles }, requested);
+
+    if (resolution.status === 'not_member') {
+      throw new ForbiddenException(`You are not a member of organization "${requested}".`);
+    }
+
+    user.permissions = resolution.permissions;
+    user.organizationId = resolution.organizationId;
+    user.memberships = resolution.memberships;
+    setIdentityOnCurrentContext({ permissions: resolution.permissions, organizationId: resolution.organizationId });
 
     const required = this.reflector.getAllAndOverride<string[] | undefined>(REQUIRED_PERMISSIONS_KEY, [
       context.getHandler(),
@@ -44,11 +66,28 @@ export class PermissionGuard implements CanActivate {
       return true;
     }
 
-    const missing = required.filter((permission) => !permissions.includes(permission));
+    // A tenant permission needs an organization to mean anything. Say *why* it's missing instead
+    // of reporting the permission itself as missing.
+    if (!resolution.organizationId && required.some((permission) => !isPlatformPermission(permission))) {
+      if (resolution.status === 'ambiguous') {
+        throw new BadRequestException(
+          `You belong to several organizations; choose one with the ${ORGANIZATION_HEADER} header.`,
+        );
+      }
+      throw new ForbiddenException('You are not a member of any organization.');
+    }
+
+    const missing = required.filter((permission) => !resolution.permissions.includes(permission));
     if (missing.length > 0) {
       throw new ForbiddenException(`Missing required permission(s): ${missing.join(', ')}.`);
     }
 
     return true;
+  }
+
+  private requestedOrganization(request: Request): string | undefined {
+    const header = request.headers[ORGANIZATION_HEADER];
+    const value = (Array.isArray(header) ? header[0] : header)?.trim();
+    return value || undefined;
   }
 }

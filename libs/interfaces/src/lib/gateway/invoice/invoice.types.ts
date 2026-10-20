@@ -17,9 +17,14 @@ export interface InvoiceItemRequest {
   vatRate: number;
 }
 
+/**
+ * Exactly one of `customerId` (the server snapshots that customer) or `client` (a one-off client).
+ * No invoice number: the server assigns it when the invoice is issued.
+ */
 export interface CreateInvoiceRequest {
-  invoiceNumber: string;
-  client: ClientSnapshotRequest;
+  customerId?: string;
+  client?: ClientSnapshotRequest;
+  reference?: string;
   items: InvoiceItemRequest[];
   currency: SupportedCurrency;
   issueDate?: string;
@@ -43,7 +48,7 @@ export interface UpdateInvoiceItemRequest {
 }
 
 export interface UpdateInvoiceRequest {
-  invoiceNumber?: string;
+  reference?: string;
   client?: UpdateClientSnapshotRequest;
   items?: UpdateInvoiceItemRequest[];
   currency?: SupportedCurrency;
@@ -64,6 +69,7 @@ export interface FindAllInvoicesRequest {
   status?: InvoiceStatus;
   currency?: SupportedCurrency;
   clientEmail?: string;
+  customerId?: string;
   search?: string;
 }
 
@@ -90,7 +96,11 @@ export interface InvoiceItemResponse extends InvoiceItemRequest {
 
 export interface InvoiceResponse {
   id: string;
-  invoiceNumber: string;
+  organizationId: string;
+  /** Absent on drafts: assigned when the invoice is issued. */
+  invoiceNumber?: string;
+  reference?: string;
+  customerId?: string | null;
   client: ClientSnapshotResponse;
   items: InvoiceItemResponse[];
   currency: SupportedCurrency;

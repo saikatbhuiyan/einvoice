@@ -61,6 +61,20 @@
         "command": "TS_NODE_PROJECT=apps/invoice/tsconfig.app.json TS_NODE_TRANSPILE_ONLY=true node -r ts-node/register apps/invoice/src/database/scripts/backfill-pdf-keys.ts",
         "cwd": "{workspaceRoot}"
       }
+    },
+    "sync-indexes": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "SWC_NODE_PROJECT=apps/invoice/tsconfig.app.json node -r @swc-node/register apps/invoice/src/database/scripts/sync-indexes.ts",
+        "cwd": "{workspaceRoot}"
+      }
+    },
+    "backfill-tenancy": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "SWC_NODE_PROJECT=apps/invoice/tsconfig.app.json node -r @swc-node/register apps/invoice/src/database/scripts/backfill-tenancy.ts",
+        "cwd": "{workspaceRoot}"
+      }
     }
   }
 }

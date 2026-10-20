@@ -43,6 +43,7 @@ import {
 import {
   INVOICE_ID_EXAMPLE,
   CREATE_INVOICE_EXAMPLE,
+  CREATE_INVOICE_FOR_CUSTOMER_EXAMPLE,
   UPDATE_INVOICE_EXAMPLE,
   INVOICE_RESPONSE_EXAMPLE,
   FIND_ALL_RESPONSE_EXAMPLE,
@@ -63,15 +64,20 @@ export class InvoiceController {
   @RateLimit({ burst: RATE_LIMIT_MUTATE_BURST, rate: RATE_LIMIT_MUTATE_RATE })
   @ResponseMessage('Invoice created successfully')
   @ApiOperation({
-    summary: 'Create invoice',
-    description: 'Creates an invoice through the invoice service and returns calculated totals.',
+    summary: 'Create a draft invoice',
+    description:
+      'Creates a draft in the active organization, billed either to a saved customer (`customerId`) or to a one-off `client` -- exactly one of the two. Totals are calculated server-side. Drafts are unnumbered: the invoice number (`{prefix}-{year}-{000001}`, gapless per organization and year) is assigned when it is issued.',
   })
   @ApiBody({
     type: CreateInvoiceDto,
     examples: {
-      invoice: {
-        summary: 'Issued invoice',
+      client: {
+        summary: 'One-off client',
         value: CREATE_INVOICE_EXAMPLE,
+      },
+      customer: {
+        summary: 'Saved customer',
+        value: CREATE_INVOICE_FOR_CUSTOMER_EXAMPLE,
       },
     },
   })
@@ -265,7 +271,7 @@ export class InvoiceController {
   @ApiOperation({
     summary: 'Issue invoice',
     description:
-      'Moves a draft invoice to issued. From then on its content is immutable (PATCH/DELETE return 409). Issuing an already-issued invoice is a no-op; any other status is a 409.',
+      "Moves a draft invoice to issued, assigning its number (the organization's next `{prefix}-{year}-{000001}`, gapless) and setting its issue date to now. From then on its content is immutable (PATCH/DELETE return 409). A draft whose due date has already passed is refused (422) without consuming a number. Issuing an already-issued invoice is a no-op that keeps its number; any other status is a 409.",
   })
   @ApiParam({ name: 'id', example: INVOICE_ID_EXAMPLE, description: 'MongoDB ObjectId of the invoice.' })
   @ApiEnvelopeResponse({
@@ -275,7 +281,12 @@ export class InvoiceController {
     message: 'Invoice issued successfully',
     dataExample: INVOICE_RESPONSE_EXAMPLE,
   })
-  @ApiProblemResponses(HttpStatus.NOT_FOUND, HttpStatus.CONFLICT, HttpStatus.BAD_GATEWAY)
+  @ApiProblemResponses(
+    HttpStatus.NOT_FOUND,
+    HttpStatus.CONFLICT,
+    HttpStatus.UNPROCESSABLE_ENTITY,
+    HttpStatus.BAD_GATEWAY,
+  )
   issue(@Param() params: InvoiceIdGatewayDto) {
     return this.invoiceService.issue(params.id);
   }

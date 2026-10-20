@@ -26,6 +26,8 @@ import { RoleRpcController } from './modules/role/role-rpc.controller';
 import { RoleService } from './modules/role/role.service';
 import { UserRpcController } from './modules/user/user-rpc.controller';
 import { UserService } from './modules/user/user.service';
+import { MembershipGrpcController } from './modules/membership/membership-grpc.controller';
+import { MembershipDirectory } from './modules/membership/membership-directory';
 
 /**
  * Transport test: user-access's real RPC controllers, served over real TCP and gRPC sockets, with
@@ -35,18 +37,33 @@ import { UserService } from './modules/user/user.service';
  */
 const roles = {
   items: [
-    { id: 'r1', name: 'accountant', description: 'Books', permissions: ['invoice:read'], isActive: true },
-    { id: 'r2', name: 'pending', description: undefined, permissions: [], isActive: true },
+    {
+      id: 'r1',
+      name: 'accountant',
+      description: 'Books',
+      permissions: ['invoice:read'],
+      isActive: true,
+      scope: 'organization',
+    },
+    { id: 'r2', name: 'pending', description: undefined, permissions: [], isActive: true, scope: 'organization' },
   ],
 };
 
 interface RoleQueryClient {
   findAllRoles(request: Record<string, never>): Observable<{
-    roles: Array<{ name: string; description: string; permissions: string[]; isActive: boolean }>;
+    roles: Array<{ name: string; description: string; permissions: string[]; isActive: boolean; scope: string }>;
   }>;
 }
 
-const asCaller = <T>(data: T, identity: { userId?: string; permissions?: string[] }) =>
+interface MembershipQueryClient {
+  resolveMembership(request: { keycloakUserId: string }): Observable<{
+    memberships: Array<{ organizationId: string; organizationName: string; roleName: string; permissions: string[] }>;
+  }>;
+}
+
+const ORG = '6a1f1c2e-0b9d-4d55-9a8b-6b8f7c1d2e3f';
+
+const asCaller = <T>(data: T, identity: { userId?: string; permissions?: string[]; organizationId?: string }) =>
   runWithCorrelationContext({ correlationId: 'transport-spec', traceId: 'transport-spec', ...identity }, () =>
     createRpcEnvelope(data, 'bff'),
   );
@@ -56,15 +73,32 @@ describe('user-access over TCP and gRPC (transport)', () => {
   let tcp: ClientProxy;
   let grpc: ClientGrpcProxy;
   let roleQuery: RoleQueryClient;
+  let membershipQuery: MembershipQueryClient;
   const userService = { findAll: jest.fn().mockResolvedValue({ items: [], total: 0 }) };
+  const directory = {
+    findActiveMembershipsOf: jest.fn().mockResolvedValue([
+      {
+        organizationId: ORG,
+        organization: { name: 'Acme' },
+        role: { name: 'accountant', permissions: ['invoice:read'], isActive: true },
+      },
+      // A role deactivated while still assigned grants nothing.
+      {
+        organizationId: 'org-2',
+        organization: { name: 'Globex' },
+        role: { name: 'viewer', permissions: ['invoice:read'], isActive: false },
+      },
+    ]),
+  };
 
   beforeAll(async () => {
     const [tcpPort, grpcPort] = [await freePort(), await freePort()];
 
     const moduleRef = await Test.createTestingModule({
-      controllers: [RoleGrpcController, RoleRpcController, UserRpcController],
+      controllers: [RoleGrpcController, RoleRpcController, UserRpcController, MembershipGrpcController],
       providers: [
         RpcPermissionGuard,
+        { provide: MembershipDirectory, useValue: directory },
         { provide: RoleService, useValue: { findAll: jest.fn().mockResolvedValue(roles) } },
         { provide: UserService, useValue: userService },
       ],
@@ -91,6 +125,7 @@ describe('user-access over TCP and gRPC (transport)', () => {
       forTest(createGrpcClientConfig(GrpcServiceName.USER_ACCESS_ROLE_QUERY), grpcPort).options,
     );
     roleQuery = grpc.getService<RoleQueryClient>('RoleQueryService');
+    membershipQuery = grpc.getService<MembershipQueryClient>('MembershipQueryService');
   });
 
   afterAll(async () => {
@@ -110,7 +145,26 @@ describe('user-access over TCP and gRPC (transport)', () => {
     it('delivers empty lists and empty strings as values, not as missing fields', async () => {
       const { roles: received } = await firstValueFrom(roleQuery.findAllRoles({}));
 
-      expect(received[1]).toEqual({ id: 'r2', name: 'pending', description: '', permissions: [], isActive: true });
+      expect(received[1]).toEqual({
+        id: 'r2',
+        name: 'pending',
+        description: '',
+        permissions: [],
+        isActive: true,
+        scope: 'organization',
+      });
+    });
+  });
+
+  describe('gRPC MembershipQueryService (called by Authorizer, no RpcEnvelope)', () => {
+    it("returns the caller's active memberships, and no permissions from an inactive role", async () => {
+      const { memberships } = await firstValueFrom(membershipQuery.resolveMembership({ keycloakUserId: 'kc-1' }));
+
+      expect(directory.findActiveMembershipsOf).toHaveBeenCalledWith('kc-1');
+      expect(memberships).toEqual([
+        { organizationId: ORG, organizationName: 'Acme', roleName: 'accountant', permissions: ['invoice:read'] },
+        { organizationId: 'org-2', organizationName: 'Globex', roleName: 'viewer', permissions: [] },
+      ]);
     });
   });
 
@@ -140,8 +194,22 @@ describe('user-access over TCP and gRPC (transport)', () => {
       expect(userService.findAll).not.toHaveBeenCalled();
     });
 
+    // Tenant permissions only mean something inside an organization.
+    it('rejects USER.FIND_ALL when the envelope carries no organization', async () => {
+      const envelope = asCaller({ page: 1, limit: 10 }, { userId: 'u-1', permissions: ['user:read'] });
+
+      await expect(firstValueFrom(tcp.send(TCP_PATTERNS.USER.FIND_ALL, envelope))).rejects.toMatchObject({
+        status: 403,
+        message: 'This call requires an active organization.',
+      });
+      expect(userService.findAll).not.toHaveBeenCalled();
+    });
+
     it('serves USER.FIND_ALL and passes the unwrapped payload to the service', async () => {
-      const envelope = asCaller({ page: 2, limit: 5 }, { userId: 'u-1', permissions: ['user:read'] });
+      const envelope = asCaller(
+        { page: 2, limit: 5 },
+        { userId: 'u-1', permissions: ['user:read'], organizationId: ORG },
+      );
 
       await expect(firstValueFrom(tcp.send(TCP_PATTERNS.USER.FIND_ALL, envelope))).resolves.toEqual({
         items: [],

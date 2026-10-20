@@ -1,4 +1,5 @@
-import { Module } from '@nestjs/common';
+import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
+import { InternalCallerContextMiddleware } from '@libs/middlewares';
 import { ConfigModule } from '@nestjs/config';
 import { LoggingModule } from '@libs/logging';
 import { CONFIGURATION } from '../configuration';
@@ -7,6 +8,8 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { RoleModule } from './modules/role/role.module';
 import { UserModule } from './modules/user/user.module';
+import { MembershipModule } from './modules/membership/membership.module';
+import { OrganizationModule } from './modules/organization/organization.module';
 import { HealthModule } from './health/health.module';
 import { RpcPermissionGuard } from '@libs/auth/rpc-permission.guard';
 
@@ -21,9 +24,17 @@ import { RpcPermissionGuard } from '@libs/auth/rpc-permission.guard';
     PostgresModule,
     RoleModule,
     UserModule,
+    MembershipModule,
+    OrganizationModule,
     HealthModule,
   ],
   controllers: [AppController],
   providers: [AppService, RpcPermissionGuard],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  // Internal HTTP API: correlation context, plus the organization from X-Organization-Id (trusted
+  // here, unlike in bff) so tenant-scoped handlers can run. RPC calls get theirs from RpcMeta.
+  configure(consumer: MiddlewareConsumer) {
+    consumer.apply(InternalCallerContextMiddleware).forRoutes('*');
+  }
+}

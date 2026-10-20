@@ -1,3 +1,7 @@
+import { NotFoundException } from '@nestjs/common';
+import { DEFAULT_ORGANIZATION_ID } from '@libs/shared/types';
+import { runInOrganization } from '@libs/logging/correlation-context';
+import { itInOrganization as it, TEST_ORGANIZATION_ID as ORG } from '@libs/logging/testing';
 import { MediaService } from './media.service';
 import type { StorageProvider } from './storage-provider.interface';
 
@@ -27,21 +31,21 @@ describe('MediaService', () => {
     expect(storage.upload.mock.calls[0][0].body.equals(bytes)).toBe(true);
   });
 
-  it('stores under an unguessable invoices/<uuid>/ prefix, so keys never collide or follow the invoice number', async () => {
+  it("stores under the organization's prefix and an unguessable uuid, so keys never collide or follow the invoice number", async () => {
     const first = await service.upload({ fileName: 'invoice-INV-1.pdf', contentType: 'application/pdf', base64: '' });
     const second = await service.upload({ fileName: 'invoice-INV-1.pdf', contentType: 'application/pdf', base64: '' });
 
-    expect(first.key).toMatch(/^invoices\/[0-9a-f-]{36}\/invoice-INV-1\.pdf$/);
+    expect(first.key).toMatch(new RegExp(`^orgs/${ORG}/invoices/[0-9a-f-]{36}/invoice-INV-1\\.pdf$`));
     expect(second.key).not.toBe(first.key);
     expect(first).toEqual({ key: first.key });
   });
 
   describe('getDownloadUrl', () => {
     it('defaults to a 5-minute URL named after the key, and returns the expiry as ISO', async () => {
-      const result = await service.getDownloadUrl({ key: 'invoices/u/invoice-INV-1.pdf' });
+      const result = await service.getDownloadUrl({ key: `orgs/${ORG}/invoices/u/invoice-INV-1.pdf` });
 
       expect(storage.getDownloadUrl).toHaveBeenCalledWith({
-        key: 'invoices/u/invoice-INV-1.pdf',
+        key: `orgs/${ORG}/invoices/u/invoice-INV-1.pdf`,
         fileName: 'invoice-INV-1.pdf',
         expiresInSeconds: 300,
       });
@@ -53,9 +57,27 @@ describe('MediaService', () => {
       [100_000, 3600],
       [120.9, 120],
     ])('clamps a requested lifetime of %p seconds to %p', async (requested, applied) => {
-      await service.getDownloadUrl({ key: 'k.pdf', fileName: 'x.pdf', expiresInSeconds: requested });
+      await service.getDownloadUrl({ key: `orgs/${ORG}/k.pdf`, fileName: 'x.pdf', expiresInSeconds: requested });
 
       expect(storage.getDownloadUrl).toHaveBeenCalledWith(expect.objectContaining({ expiresInSeconds: applied }));
+    });
+  });
+
+  describe('tenancy', () => {
+    it.each([
+      ["another organization's key", 'orgs/11111111-1111-4111-8111-111111111111/invoices/u/x.pdf'],
+      ['a key climbing out of the prefix', `orgs/${ORG}/../11111111-1111-4111-8111-111111111111/invoices/u/x.pdf`],
+      ['a pre-tenancy key (those belong to the default organization)', 'invoices/u/x.pdf'],
+      ['a key outside any organization', 'other/x.pdf'],
+    ])('refuses to sign %s as not found', async (_label, key) => {
+      await expect(service.getDownloadUrl({ key })).rejects.toBeInstanceOf(NotFoundException);
+      expect(storage.getDownloadUrl).not.toHaveBeenCalled();
+    });
+
+    test('signs pre-tenancy keys for the default organization, which now owns those invoices', async () => {
+      await runInOrganization(DEFAULT_ORGANIZATION_ID, () => service.getDownloadUrl({ key: 'invoices/u/x.pdf' }));
+
+      expect(storage.getDownloadUrl).toHaveBeenCalledWith(expect.objectContaining({ key: 'invoices/u/x.pdf' }));
     });
   });
 

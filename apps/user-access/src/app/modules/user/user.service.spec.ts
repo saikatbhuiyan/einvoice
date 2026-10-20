@@ -1,217 +1,166 @@
-import { ConflictException, NotFoundException } from '@nestjs/common';
-import { QueryFailedError } from 'typeorm';
+import { NotFoundException, UnprocessableEntityException } from '@nestjs/common';
+import { runWithCorrelationContext } from '@libs/logging/correlation-context';
+import type { KeycloakAdminService } from '@libs/auth/keycloak-admin.service';
 import { UserService } from './user.service';
 import { IUserRepository } from './user.repository.interface';
 import { RoleService } from '../role/role.service';
-import type { KeycloakAdminService } from '@libs/auth/keycloak-admin.service';
-import { UserEntity } from '../../../database/entities/user.entity';
+import { MemberProvisioningService } from '../membership/member-provisioning.service';
+import { MembershipDirectory } from '../membership/membership-directory';
+import { MembershipEntity } from '../../../database/entities/membership.entity';
 import { RoleEntity } from '../../../database/entities/role.entity';
 
-const buildRole = (overrides: Partial<RoleEntity> = {}): RoleEntity =>
+const ORG = '6a1f1c2e-0b9d-4d55-9a8b-6b8f7c1d2e3f';
+
+const role = (overrides: Partial<RoleEntity> = {}) =>
   ({
     id: 'role-1',
     name: 'accountant',
     description: 'desc',
     permissions: ['invoice:read'],
+    scope: 'organization',
     isActive: true,
     createdAt: new Date('2026-01-01'),
     updatedAt: new Date('2026-01-01'),
     ...overrides,
   }) as RoleEntity;
 
-const buildUser = (overrides: Partial<UserEntity> = {}): UserEntity =>
+const member = (overrides: Partial<MembershipEntity> = {}, userOverrides: Record<string, unknown> = {}) =>
   ({
-    id: 'user-1',
-    email: 'jane@acme.test',
-    name: 'Jane Doe',
+    id: 'membership-1',
+    userId: 'user-1',
+    organizationId: ORG,
     roleId: 'role-1',
-    role: buildRole(),
-    keycloakUserId: 'kc-user-1',
+    role: role(),
     isActive: true,
-    createdAt: new Date('2026-01-01'),
-    updatedAt: new Date('2026-01-01'),
+    createdAt: new Date('2026-02-01'),
+    updatedAt: new Date('2026-02-01'),
+    user: {
+      id: 'user-1',
+      email: 'jane@acme.test',
+      name: 'Jane Doe',
+      keycloakUserId: 'kc-1',
+      isActive: true,
+      ...userOverrides,
+    },
     ...overrides,
-  }) as UserEntity;
+  }) as MembershipEntity;
 
-type MockedKeycloakAdminService = jest.Mocked<
-  Pick<KeycloakAdminService, 'createUser' | 'assignRealmRole' | 'removeRealmRole' | 'setEnabled' | 'deleteUser'>
->;
-
-describe('UserService', () => {
+describe('UserService (members of the current organization)', () => {
   let repository: jest.Mocked<IUserRepository>;
-  let roleService: jest.Mocked<Pick<RoleService, 'getByIdOrThrow'>>;
-  let keycloakAdminService: MockedKeycloakAdminService;
+  let roleService: jest.Mocked<Pick<RoleService, 'getAssignableOrThrow'>>;
+  let provisioning: jest.Mocked<Pick<MemberProvisioningService, 'addMember'>>;
+  let directory: jest.Mocked<Pick<MembershipDirectory, 'countActiveMemberships'>>;
+  let keycloak: jest.Mocked<Pick<KeycloakAdminService, 'setEnabled'>>;
   let service: UserService;
 
+  const inOrg = <T>(work: () => Promise<T>) =>
+    runWithCorrelationContext({ correlationId: 'c', traceId: 't', organizationId: ORG }, work);
+
   beforeEach(() => {
-    repository = {
-      create: jest.fn(),
-      findAll: jest.fn(),
-      findById: jest.fn(),
-      update: jest.fn(),
-      deactivate: jest.fn(),
-    };
-    roleService = { getByIdOrThrow: jest.fn().mockResolvedValue(buildRole()) };
-    keycloakAdminService = {
-      createUser: jest.fn().mockResolvedValue('kc-user-1'),
-      assignRealmRole: jest.fn().mockResolvedValue(undefined),
-      removeRealmRole: jest.fn().mockResolvedValue(undefined),
-      setEnabled: jest.fn().mockResolvedValue(undefined),
-      deleteUser: jest.fn().mockResolvedValue(undefined),
-    };
-    service = new UserService(repository, roleService as never, keycloakAdminService as never);
+    repository = { findMembers: jest.fn(), findMember: jest.fn(), updateMember: jest.fn() };
+    roleService = { getAssignableOrThrow: jest.fn().mockResolvedValue(role()) };
+    provisioning = { addMember: jest.fn() };
+    directory = { countActiveMemberships: jest.fn().mockResolvedValue(0) };
+    keycloak = { setEnabled: jest.fn().mockResolvedValue(undefined) };
+    service = new UserService(
+      repository,
+      roleService as never,
+      provisioning as never,
+      directory as never,
+      keycloak as never,
+    );
   });
 
-  describe('create', () => {
-    it('validates the role exists before provisioning anything', async () => {
-      repository.create.mockResolvedValue(buildUser());
+  it('adds the person to the current organization and returns them as a member', async () => {
+    provisioning.addMember.mockResolvedValue(member());
+    repository.findMember.mockResolvedValue(member());
 
-      await service.create({ email: 'jane@acme.test', name: 'Jane Doe', roleId: 'role-1' });
+    const result = await inOrg(() => service.create({ email: 'jane@acme.test', name: 'Jane Doe', roleId: 'role-1' }));
 
-      expect(roleService.getByIdOrThrow).toHaveBeenCalledWith('role-1');
+    expect(provisioning.addMember).toHaveBeenCalledWith(ORG, {
+      email: 'jane@acme.test',
+      name: 'Jane Doe',
+      roleId: 'role-1',
     });
-
-    it('creates the Keycloak identity, assigns the realm role, then the local user with the returned keycloakUserId', async () => {
-      repository.create.mockResolvedValue(buildUser());
-
-      await service.create({ email: 'jane@acme.test', name: 'Jane Doe', roleId: 'role-1' });
-
-      expect(keycloakAdminService.createUser).toHaveBeenCalledWith({
-        username: 'jane@acme.test',
-        email: 'jane@acme.test',
-        firstName: 'Jane',
-        lastName: 'Doe',
-      });
-      expect(keycloakAdminService.assignRealmRole).toHaveBeenCalledWith('kc-user-1', 'accountant');
-      expect(repository.create).toHaveBeenCalledWith(
-        expect.objectContaining({ email: 'jane@acme.test', keycloakUserId: 'kc-user-1' }),
-      );
-    });
-
-    it('rolls back the Keycloak user if role assignment fails', async () => {
-      const roleError = new Error('role assignment failed');
-      keycloakAdminService.assignRealmRole.mockRejectedValue(roleError);
-
-      await expect(service.create({ email: 'jane@acme.test', name: 'Jane', roleId: 'role-1' })).rejects.toBe(roleError);
-
-      expect(keycloakAdminService.deleteUser).toHaveBeenCalledWith('kc-user-1');
-      expect(repository.create).not.toHaveBeenCalled();
-    });
-
-    it('rolls back the Keycloak user if the local write fails', async () => {
-      const error = new QueryFailedError('insert', [], new Error('duplicate key'));
-      (error as unknown as { driverError: { code: string } }).driverError = { code: '23505' };
-      repository.create.mockRejectedValue(error);
-
-      await expect(service.create({ email: 'jane@acme.test', name: 'Jane', roleId: 'role-1' })).rejects.toBeInstanceOf(
-        ConflictException,
-      );
-
-      expect(keycloakAdminService.deleteUser).toHaveBeenCalledWith('kc-user-1');
-    });
-
-    it('propagates a role-not-found error without provisioning anything', async () => {
-      const notFound = new NotFoundException('Role not found');
-      roleService.getByIdOrThrow.mockRejectedValue(notFound);
-
-      await expect(service.create({ email: 'jane@acme.test', name: 'Jane', roleId: 'missing' })).rejects.toBe(notFound);
-
-      expect(keycloakAdminService.createUser).not.toHaveBeenCalled();
-      expect(repository.create).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      id: 'user-1',
+      email: 'jane@acme.test',
+      role: { name: 'accountant', scope: 'organization' },
     });
   });
 
-  describe('findAll', () => {
-    it('maps entities to responses with pagination meta', async () => {
-      repository.findAll.mockResolvedValue({ items: [buildUser()], total: 1 });
-
-      const result = await service.findAll({ page: 1, limit: 20 });
-
-      expect(result.items).toHaveLength(1);
-      expect(result.items[0].role.name).toBe('accountant');
-      expect(result.meta).toMatchObject({ page: 1, limit: 20, total: 1 });
-    });
+  it('refuses to create a member without an organization in context', async () => {
+    await expect(service.create({ email: 'x@y.test', name: 'X', roleId: 'role-1' })).rejects.toThrow(
+      /No organization in the request context/,
+    );
+    expect(provisioning.addMember).not.toHaveBeenCalled();
   });
 
-  describe('findOne', () => {
-    it('throws NotFoundException when the user does not exist', async () => {
-      repository.findById.mockResolvedValue(null);
+  it('reports a member as inactive when either the membership or the person is', async () => {
+    repository.findMember
+      .mockResolvedValueOnce(member({ isActive: false }))
+      .mockResolvedValueOnce(member({}, { isActive: false }));
 
-      await expect(service.findOne('missing')).rejects.toBeInstanceOf(NotFoundException);
-    });
-
-    it('returns the mapped response when found', async () => {
-      repository.findById.mockResolvedValue(buildUser());
-
-      const result = await service.findOne('user-1');
-
-      expect(result.id).toBe('user-1');
-    });
+    expect((await inOrg(() => service.findOne('user-1'))).isActive).toBe(false);
+    expect((await inOrg(() => service.findOne('user-1'))).isActive).toBe(false);
   });
 
-  describe('update', () => {
-    it('throws NotFoundException when the user does not exist', async () => {
-      repository.findById.mockResolvedValue(null);
+  // A person who belongs to another organization only is "not found" here.
+  it('treats someone who is not a member of this organization as not found', async () => {
+    repository.findMember.mockResolvedValue(null);
 
-      await expect(service.update('missing', { name: 'X' })).rejects.toBeInstanceOf(NotFoundException);
-      expect(repository.update).not.toHaveBeenCalled();
+    await expect(inOrg(() => service.findOne('user-1'))).rejects.toBeInstanceOf(NotFoundException);
+    await expect(inOrg(() => service.update('user-1', { name: 'x' }))).rejects.toBeInstanceOf(NotFoundException);
+    await expect(inOrg(() => service.deactivate('user-1'))).rejects.toBeInstanceOf(NotFoundException);
+    expect(repository.updateMember).not.toHaveBeenCalled();
+  });
+
+  it('changes the role in this organization only after checking the role may be assigned', async () => {
+    repository.findMember.mockResolvedValue(member());
+    repository.updateMember.mockResolvedValue(
+      member({ roleId: 'role-2', role: role({ id: 'role-2', name: 'viewer' }) }),
+    );
+
+    const result = await inOrg(() => service.update('user-1', { roleId: 'role-2', name: 'Jane D.' }));
+
+    expect(roleService.getAssignableOrThrow).toHaveBeenCalledWith('role-2');
+    expect(repository.updateMember).toHaveBeenCalledWith('user-1', {
+      name: 'Jane D.',
+      roleId: 'role-2',
+      isActive: undefined,
     });
+    expect(result.role.name).toBe('viewer');
+  });
 
-    it('swaps the Keycloak realm role when roleId actually changes', async () => {
-      repository.findById.mockResolvedValue(buildUser({ roleId: 'role-1', role: buildRole({ name: 'accountant' }) }));
-      roleService.getByIdOrThrow.mockResolvedValue(buildRole({ id: 'role-2', name: 'manager' }));
-      repository.update.mockResolvedValue(buildUser({ roleId: 'role-2' }));
+  it('refuses to assign a platform role through an organization', async () => {
+    repository.findMember.mockResolvedValue(member());
+    roleService.getAssignableOrThrow.mockRejectedValue(new UnprocessableEntityException('nope'));
 
-      await service.update('user-1', { roleId: 'role-2' });
-
-      expect(roleService.getByIdOrThrow).toHaveBeenCalledWith('role-2');
-      expect(keycloakAdminService.removeRealmRole).toHaveBeenCalledWith('kc-user-1', 'accountant');
-      expect(keycloakAdminService.assignRealmRole).toHaveBeenCalledWith('kc-user-1', 'manager');
-    });
-
-    it('does not touch Keycloak roles when roleId is provided but unchanged', async () => {
-      repository.findById.mockResolvedValue(buildUser({ roleId: 'role-1' }));
-      repository.update.mockResolvedValue(buildUser({ roleId: 'role-1' }));
-
-      await service.update('user-1', { roleId: 'role-1' });
-
-      expect(roleService.getByIdOrThrow).not.toHaveBeenCalled();
-      expect(keycloakAdminService.removeRealmRole).not.toHaveBeenCalled();
-      expect(keycloakAdminService.assignRealmRole).not.toHaveBeenCalled();
-    });
-
-    it('does not validate or touch a role when roleId is omitted', async () => {
-      repository.findById.mockResolvedValue(buildUser());
-      repository.update.mockResolvedValue(buildUser({ name: 'New Name' }));
-
-      await service.update('user-1', { name: 'New Name' });
-
-      expect(roleService.getByIdOrThrow).not.toHaveBeenCalled();
-      expect(keycloakAdminService.assignRealmRole).not.toHaveBeenCalled();
-    });
+    await expect(inOrg(() => service.update('user-1', { roleId: 'platform-role' }))).rejects.toBeInstanceOf(
+      UnprocessableEntityException,
+    );
+    expect(repository.updateMember).not.toHaveBeenCalled();
   });
 
   describe('deactivate', () => {
-    it('returns a deactivated confirmation and disables the Keycloak account', async () => {
-      repository.deactivate.mockResolvedValue(buildUser({ isActive: false }));
+    beforeEach(() => repository.findMember.mockResolvedValue(member()));
 
-      const result = await service.deactivate('user-1');
+    it('ends the membership, and disables the Keycloak account once no active membership is left', async () => {
+      directory.countActiveMemberships.mockResolvedValue(0);
 
-      expect(result).toEqual({ id: 'user-1', deactivated: true });
-      expect(keycloakAdminService.setEnabled).toHaveBeenCalledWith('kc-user-1', false);
+      await expect(inOrg(() => service.deactivate('user-1'))).resolves.toEqual({ id: 'user-1', deactivated: true });
+
+      expect(repository.updateMember).toHaveBeenCalledWith('user-1', { isActive: false });
+      expect(keycloak.setEnabled).toHaveBeenCalledWith('kc-1', false);
     });
 
-    it('throws NotFoundException when the user does not exist', async () => {
-      repository.deactivate.mockResolvedValue(null);
+    // Otherwise one organization could lock a person out of another.
+    it('keeps the Keycloak account enabled while the person is active elsewhere', async () => {
+      directory.countActiveMemberships.mockResolvedValue(1);
 
-      await expect(service.deactivate('missing')).rejects.toBeInstanceOf(NotFoundException);
-    });
+      await inOrg(() => service.deactivate('user-1'));
 
-    it('does not fail the operation if disabling the Keycloak account fails', async () => {
-      repository.deactivate.mockResolvedValue(buildUser({ isActive: false }));
-      keycloakAdminService.setEnabled.mockRejectedValue(new Error('keycloak unreachable'));
-
-      await expect(service.deactivate('user-1')).resolves.toEqual({ id: 'user-1', deactivated: true });
+      expect(keycloak.setEnabled).not.toHaveBeenCalled();
     });
   });
 });

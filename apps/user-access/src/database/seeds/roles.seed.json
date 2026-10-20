@@ -9,22 +9,43 @@
       "product:write",
       "user:read",
       "user:write",
-      "role:read"
-    ]
+      "role:read",
+      "customer:read",
+      "customer:write"
+    ],
+    "scope": "organization"
   },
   {
     "name": "manager",
     "description": "Day-to-day operational access to invoices, products, and users. Cannot manage roles.",
-    "permissions": ["invoice:read", "invoice:write", "product:read", "product:write", "user:read", "user:write"]
+    "permissions": [
+      "invoice:read",
+      "invoice:write",
+      "product:read",
+      "product:write",
+      "user:read",
+      "user:write",
+      "customer:read",
+      "customer:write"
+    ],
+    "scope": "organization"
   },
   {
     "name": "accountant",
     "description": "Reads and writes invoices, reads the product catalog. No user management.",
-    "permissions": ["invoice:read", "invoice:write", "product:read"]
+    "permissions": ["invoice:read", "invoice:write", "product:read", "customer:read", "customer:write"],
+    "scope": "organization"
   },
   {
     "name": "viewer",
     "description": "Read-only access across invoices, products, and users.",
-    "permissions": ["invoice:read", "product:read", "user:read"]
+    "permissions": ["invoice:read", "product:read", "user:read", "customer:read"],
+    "scope": "organization"
+  },
+  {
+    "name": "platform-admin",
+    "scope": "platform",
+    "description": "Operates the platform itself: creates organizations and their first administrator. A Keycloak realm role; grants nothing inside any organization.",
+    "permissions": ["platform:admin"]
   }
 ]

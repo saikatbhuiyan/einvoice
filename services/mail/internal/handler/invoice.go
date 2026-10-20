@@ -65,7 +65,8 @@ func (h *InvoiceHandler) Handle(ctx context.Context, _ []byte, value []byte) err
 }
 
 func (h *InvoiceHandler) handleSent(ctx context.Context, e events.SentEvent, meta events.Meta) error {
-	log := slog.With("invoiceId", e.InvoiceID, "invoiceNumber", e.InvoiceNumber, "eventId", e.EventID, "correlationId", meta.CorrelationID)
+	log := slog.With("invoiceId", e.InvoiceID, "invoiceNumber", e.InvoiceNumber, "eventId", e.EventID,
+		"organizationId", meta.OrganizationID, "correlationId", meta.CorrelationID)
 
 	if e.EventID != "" {
 		seen, err := h.dedupe.Seen(ctx, e.EventID)

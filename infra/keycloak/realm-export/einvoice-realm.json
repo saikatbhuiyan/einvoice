@@ -9,7 +9,11 @@
       { "name": "admin", "description": "Full platform access." },
       { "name": "manager", "description": "Manages invoices, products, and users." },
       { "name": "accountant", "description": "Reads and writes invoices, reads the product catalog." },
-      { "name": "viewer", "description": "Read-only access." }
+      { "name": "viewer", "description": "Read-only access." },
+      {
+        "name": "platform-admin",
+        "description": "Operates the platform: creates organizations. Grants nothing inside any organization -- those permissions come from memberships."
+      }
     ]
   },
   "clients": [
@@ -84,6 +88,17 @@
       "requiredActions": [],
       "credentials": [{ "type": "password", "value": "DevPassw0rd!", "temporary": false }],
       "realmRoles": ["accountant"]
+    },
+    {
+      "username": "dev.platform",
+      "email": "dev.platform@einvoice.local",
+      "firstName": "Dev",
+      "lastName": "Platform",
+      "enabled": true,
+      "emailVerified": true,
+      "requiredActions": [],
+      "credentials": [{ "type": "password", "value": "DevPassw0rd!", "temporary": false }],
+      "realmRoles": ["platform-admin"]
     }
   ]
 }

@@ -1,5 +1,10 @@
 import { InvoiceDocument } from '@libs/schemas';
-import { CreateInvoiceRequest, FindAllInvoicesRequest, UpdateInvoiceRequest } from '@libs/interfaces/gateway';
+import {
+  ClientSnapshotRequest,
+  CreateInvoiceRequest,
+  FindAllInvoicesRequest,
+  UpdateInvoiceRequest,
+} from '@libs/interfaces/gateway';
 import type { ClientSession } from 'mongoose';
 import type { InvoiceStatus } from '@libs/shared/types';
 
@@ -40,9 +45,29 @@ export interface PaginatedResult<T = InvoiceDocument> {
  */
 export type InTransaction = (invoice: InvoiceDocument, session: ClientSession) => Promise<void>;
 
+/** A create request whose client snapshot has been resolved (inline, or copied from a customer). */
+export type NewInvoice = Omit<CreateInvoiceRequest, 'client' | 'customerId'> & {
+  client: ClientSnapshotRequest;
+  customerId?: string;
+};
+
+export interface TransitionOptions {
+  /**
+   * Runs inside the transaction, after the status check passed and before the update: returns
+   * extra fields to set atomically with the new status (issuing: the invoice number and issue date).
+   * Throwing aborts the transition -- including any counter it incremented.
+   */
+  prepare?: (current: InvoiceDocument, session: ClientSession) => Promise<Record<string, unknown>>;
+  /** Runs inside the transaction after the update (e.g. enqueueing the event it produced). */
+  inTransaction?: InTransaction;
+}
+
 export interface IInvoiceRepository {
-  /** `inTransaction` runs only when a new invoice is inserted, never for an idempotent replay. */
-  create(data: CreateInvoiceRequest, inTransaction?: InTransaction): Promise<InvoiceDocument>;
+  /**
+   * Inserts a draft in the current organization. `inTransaction` runs only when a new invoice is
+   * inserted, never for an idempotent replay.
+   */
+  create(data: NewInvoice, inTransaction?: InTransaction): Promise<InvoiceDocument>;
 
   findAll(query: FindAllInvoicesRequest): Promise<PaginatedResult>;
 
@@ -77,7 +102,7 @@ export interface IInvoiceRepository {
     id: string,
     from: readonly InvoiceStatus[],
     to: InvoiceStatus,
-    inTransaction?: InTransaction,
+    options?: TransitionOptions,
   ): Promise<StatusTransitionResult>;
 }
 

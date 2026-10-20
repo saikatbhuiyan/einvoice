@@ -19,12 +19,18 @@ const decimalTransformer: ValueTransformer = {
   from: (value?: string) => (value === null || value === undefined ? value : Number(value)),
 };
 
+/** One organization's catalog entry. A SKU is unique within its organization, not across them. */
 @Entity({ name: 'products' })
+@Index(['organizationId', 'sku'], { unique: true })
 export class ProductEntity {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
-  @Index({ unique: true })
+  /** Every query is scoped by it (ProductRepository). user-access owns organizations: no FK across databases' owners. */
+  @Index()
+  @Column({ type: 'uuid' })
+  organizationId!: string;
+
   @Column({ type: 'varchar', length: 64 })
   sku!: string;
 

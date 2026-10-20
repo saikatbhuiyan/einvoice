@@ -1,13 +1,17 @@
 import { Type } from 'class-transformer';
 import {
   ArrayMinSize,
+  IsMongoId,
+  Validate,
+  ValidateIf,
+  ValidatorConstraint,
+  type ValidationArguments,
+  type ValidatorConstraintInterface,
   IsArray,
   IsDateString,
-  IsDefined,
   IsEnum,
   IsOptional,
   IsString,
-  Length,
   MaxLength,
   ValidateNested,
 } from 'class-validator';
@@ -20,26 +24,52 @@ import type { SupportedCurrency } from './invoice.types';
 
 const constraints = INVOICE_CONSTRAINTS;
 
-export class CreateInvoiceDto implements CreateInvoiceRequest {
-  @ApiProperty({
-    example: 'INV-2026-0001',
-    minLength: constraints.invoiceNumber.minLength,
-    maxLength: constraints.invoiceNumber.maxLength,
-    description: 'External invoice number. Must be unique in the invoice service.',
-  })
-  @Sanitize({ normalizeWhitespace: false })
-  @IsString()
-  @Length(constraints.invoiceNumber.minLength, constraints.invoiceNumber.maxLength)
-  invoiceNumber!: string;
+@ValidatorConstraint({ name: 'notBothWithClient' })
+class NotBothWithClient implements ValidatorConstraintInterface {
+  validate(_customerId: unknown, args: ValidationArguments): boolean {
+    return (args.object as CreateInvoiceDto).client === undefined;
+  }
 
-  @ApiProperty({
-    type: () => ClientSnapshotDto,
-    description: 'Client details captured as an immutable invoice snapshot.',
+  defaultMessage(): string {
+    return 'give either customerId or client, not both';
+  }
+}
+
+/**
+ * A new draft. Give either `customerId` (the server snapshots that customer's details) or `client`
+ * (a one-off client), not both. There is no invoice number: it is assigned when the invoice is
+ * issued.
+ */
+export class CreateInvoiceDto implements CreateInvoiceRequest {
+  @ApiPropertyOptional({
+    example: '662f9d38f2ab7c001f52c9aa',
+    description: 'Customer to invoice; their details are copied onto the invoice. Mutually exclusive with `client`.',
   })
-  @IsDefined()
+  // Validated when given, and also when *neither* is given -- so "neither" fails with a clear message.
+  @ValidateIf((dto: CreateInvoiceDto) => dto.customerId !== undefined || dto.client === undefined)
+  @IsMongoId({ message: 'customerId must be a valid id (or give a one-off client instead)' })
+  @Validate(NotBothWithClient)
+  customerId?: string;
+
+  @ApiPropertyOptional({
+    type: () => ClientSnapshotDto,
+    description: 'One-off client details, captured as an immutable snapshot. Mutually exclusive with `customerId`.',
+  })
+  @ValidateIf((dto: CreateInvoiceDto) => dto.client !== undefined)
   @ValidateNested()
   @Type(() => ClientSnapshotDto)
-  client!: ClientSnapshotDto;
+  client?: ClientSnapshotDto;
+
+  @ApiPropertyOptional({
+    example: 'PO-4711',
+    maxLength: constraints.reference.maxLength,
+    description: "The client's own reference (e.g. a purchase-order number).",
+  })
+  @IsOptional()
+  @Sanitize()
+  @IsString()
+  @MaxLength(constraints.reference.maxLength)
+  reference?: string;
 
   @ApiProperty({
     type: () => InvoiceItemDto,

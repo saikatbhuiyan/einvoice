@@ -19,15 +19,29 @@ export type { InvoiceStatus, SupportedCurrency };
 
 @Schema(BASE_SCHEMA_OPTIONS)
 export class Invoice extends BaseSchema {
+  /** The tenant this invoice belongs to. Every query is scoped by it (InvoiceRepository.activeFilter). */
+  @Prop({ required: true })
+  organizationId!: string;
+
+  /**
+   * Assigned by the server when the invoice is issued -- `{prefix}-{year}-{seq}`, gapless per
+   * organization and year (see InvoiceService.issue). Drafts have none. Unique per organization.
+   */
   @Prop({
-    required: true,
-    unique: true,
     trim: true,
     uppercase: true,
     minlength: INVOICE_CONSTRAINTS.invoiceNumber.minLength,
     maxlength: INVOICE_CONSTRAINTS.invoiceNumber.maxLength,
   })
-  invoiceNumber!: string;
+  invoiceNumber?: string;
+
+  /** The client's own reference for this invoice (a purchase-order number, etc.). Free text. */
+  @Prop({ trim: true, maxlength: INVOICE_CONSTRAINTS.reference.maxLength })
+  reference?: string;
+
+  /** The customer record the client snapshot was taken from, if any (null for one-off clients). */
+  @Prop({ type: String, default: null })
+  customerId?: string | null;
 
   /**
    * Embedded snapshot by design:
@@ -108,7 +122,7 @@ export class Invoice extends BaseSchema {
    * Sparse unique index ensures collisions only for actual keys,
    * not for the default null/absent value.
    */
-  @Prop({ type: String, trim: true, index: { unique: true, sparse: true } })
+  @Prop({ type: String, trim: true })
   idempotencyKey?: string | null;
 }
 
@@ -144,6 +158,19 @@ InvoiceSchema.pre('validate', function recalculateTotals() {
     invoice.invalidate('dueDate', 'dueDate cannot be earlier than issueDate.');
   }
 });
+
+// Tenancy: every index leads with organizationId, and the unique ones are unique *per organization*.
+// Partial (not sparse) for compound indexes: only numbered invoices / keyed creates take part.
+InvoiceSchema.index(
+  { organizationId: 1, invoiceNumber: 1 },
+  { unique: true, partialFilterExpression: { invoiceNumber: { $type: 'string' } } },
+);
+InvoiceSchema.index(
+  { organizationId: 1, idempotencyKey: 1 },
+  { unique: true, partialFilterExpression: { idempotencyKey: { $type: 'string' } } },
+);
+InvoiceSchema.index({ organizationId: 1, deletedAt: 1, issueDate: -1, createdAt: -1 });
+InvoiceSchema.index({ organizationId: 1, customerId: 1 });
 
 export const InvoiceModelName = Invoice.name;
 

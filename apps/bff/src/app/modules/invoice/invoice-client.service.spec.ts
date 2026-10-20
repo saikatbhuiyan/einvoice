@@ -1,6 +1,8 @@
 import { of } from 'rxjs';
 import { TCP_PATTERNS } from '@libs/transports';
 import { InvoiceClientService } from './invoice-client.service';
+// Tenant cache keys need an organization in context, as every real request has.
+import { itInOrganization as it } from '@libs/logging/testing';
 
 describe('InvoiceClientService', () => {
   let client: { send: jest.Mock };

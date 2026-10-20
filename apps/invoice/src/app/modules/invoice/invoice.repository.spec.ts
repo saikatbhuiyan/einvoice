@@ -1,5 +1,7 @@
 import { BadRequestException, ConflictException } from '@nestjs/common';
 import { Types } from 'mongoose';
+import { MissingOrganizationContextError } from '@libs/logging/correlation-context';
+import { itInOrganization as it, TEST_ORGANIZATION_ID as ORG } from '@libs/logging/testing';
 import { InvoiceRepository } from './invoice.repository';
 import type { InvoiceModel } from '@libs/schemas';
 
@@ -49,6 +51,12 @@ describe('InvoiceRepository', () => {
       const result = await repository.create({ idempotencyKey: 'key-1' } as never);
 
       expect(result).toBe(existing);
+      // Keys are per organization: another tenant's identical key is a different request.
+      expect(writeModel.findOne).toHaveBeenCalledWith({
+        organizationId: ORG,
+        idempotencyKey: 'key-1',
+        deletedAt: null,
+      });
       expect(writeModel.create).not.toHaveBeenCalled();
     });
 
@@ -56,7 +64,7 @@ describe('InvoiceRepository', () => {
       const created = { _id: objectId() };
       writeModel.create.mockResolvedValue([created] as never);
 
-      const result = await repository.create({ invoiceNumber: 'INV-0001' } as never);
+      const result = await repository.create({ notes: 'n' } as never);
 
       expect(result).toBe(created);
       expect(writeModel.findOne).not.toHaveBeenCalled();
@@ -68,23 +76,42 @@ describe('InvoiceRepository', () => {
       writeModel.create.mockResolvedValue([created] as never);
       const hook = jest.fn().mockResolvedValue(undefined);
 
-      await repository.create({ invoiceNumber: 'INV-0001' } as never, hook);
+      await repository.create({ notes: 'n' } as never, hook);
 
       expect(transaction).toHaveBeenCalledTimes(1);
-      expect(writeModel.create).toHaveBeenCalledWith([expect.objectContaining({ invoiceNumber: 'INV-0001' })], {
-        session,
-      });
+      expect(writeModel.create).toHaveBeenCalledWith([expect.objectContaining({ notes: 'n' })], { session });
       expect(hook).toHaveBeenCalledWith(created, session);
+    });
+
+    // The number is assigned on issue, from the organization's counter; a client can't pick one,
+    // nor plant the invoice in another organization.
+    it("stamps the caller's organization and drops a client-supplied number or organization", async () => {
+      writeModel.create.mockResolvedValue([{ _id: objectId() }] as never);
+
+      await repository.create({
+        notes: 'n',
+        customerId: 'cust-1',
+        invoiceNumber: 'INV-2026-000001',
+        organizationId: 'org-other',
+        status: 'paid',
+      } as never);
+
+      const [[[stored]]] = writeModel.create.mock.calls as unknown as [[[Record<string, unknown>]]];
+      expect(stored).toMatchObject({ notes: 'n', customerId: 'cust-1', organizationId: ORG });
+      expect(stored).not.toHaveProperty('invoiceNumber');
+      expect(stored).not.toHaveProperty('status');
+    });
+
+    test('refuses to create outside an organization context', async () => {
+      await expect(repository.create({ notes: 'n' } as never)).rejects.toBeInstanceOf(MissingOrganizationContextError);
+      expect(writeModel.create).not.toHaveBeenCalled();
     });
 
     it('fails the create if the hook fails, so neither the invoice nor its event commits', async () => {
       writeModel.create.mockResolvedValue([{ _id: objectId() }] as never);
 
       await expect(
-        repository.create(
-          { invoiceNumber: 'INV-0001' } as never,
-          jest.fn().mockRejectedValue(new Error('outbox down')),
-        ),
+        repository.create({ notes: 'n' } as never, jest.fn().mockRejectedValue(new Error('outbox down'))),
       ).rejects.toThrow('outbox down');
     });
 
@@ -113,10 +140,13 @@ describe('InvoiceRepository', () => {
         currency: 'USD',
         clientEmail: 'Client@Example.com',
         search: 'acme',
+        customerId: 'cust-1',
       });
 
       expect(readModel.find).toHaveBeenCalledWith(
         expect.objectContaining({
+          organizationId: ORG,
+          customerId: 'cust-1',
           deletedAt: null,
           status: 'issued',
           currency: 'USD',
@@ -176,6 +206,7 @@ describe('InvoiceRepository', () => {
 
       expect(writeModel.findOne).toHaveBeenCalledWith({
         _id: id,
+        organizationId: ORG,
         deletedAt: null,
         status: { $in: ['draft'] },
         version: 3,
@@ -241,7 +272,7 @@ describe('InvoiceRepository', () => {
       const result = await repository.remove(id);
 
       expect(writeModel.findOneAndUpdate).toHaveBeenCalledWith(
-        { _id: id, deletedAt: null, status: { $in: ['draft'] } },
+        { _id: id, organizationId: ORG, deletedAt: null, status: { $in: ['draft'] } },
         { deletedAt: expect.any(Date) },
         { returnDocument: 'after' },
       );
@@ -285,7 +316,7 @@ describe('InvoiceRepository', () => {
       const result = await repository.setPdfMetadata(id, 'invoices/u/x.pdf', at, hook);
 
       expect(writeModel.findOneAndUpdate).toHaveBeenCalledWith(
-        { _id: id, deletedAt: null },
+        { _id: id, organizationId: ORG, deletedAt: null },
         { $set: { pdfKey: 'invoices/u/x.pdf', pdfGeneratedAt: at } },
         { returnDocument: 'after', session },
       );
@@ -303,39 +334,84 @@ describe('InvoiceRepository', () => {
   });
 
   describe('transitionStatus', () => {
-    it('changes status only from an allowed status, bumps version, and reports where it came from', async () => {
+    const current = (status: string, version = 3) => ({ _id: objectId(), status, version });
+
+    it('reads the invoice in the transaction, then moves it from an allowed status guarded on that read', async () => {
       const id = objectId();
       const after = { _id: id, status: 'paid' };
-      writeModel.findOneAndUpdate.mockReturnValue(query({ _id: id, status: 'overdue' }) as never);
-      writeModel.findOne.mockReturnValue(query(after) as never);
-      const hook = jest.fn().mockResolvedValue(undefined);
+      writeModel.findOne.mockReturnValue(query(current('overdue')) as never);
+      writeModel.findOneAndUpdate.mockReturnValue(query(after) as never);
+      const inTransaction = jest.fn().mockResolvedValue(undefined);
 
-      const result = await repository.transitionStatus(id, ['issued', 'overdue'], 'paid', hook);
+      const result = await repository.transitionStatus(id, ['issued', 'overdue'], 'paid', { inTransaction });
 
+      expect(writeModel.findOne).toHaveBeenCalledWith({ _id: id, organizationId: ORG, deletedAt: null });
       expect(writeModel.findOneAndUpdate).toHaveBeenCalledWith(
-        { _id: id, deletedAt: null, status: { $in: ['issued', 'overdue'] } },
+        { _id: id, organizationId: ORG, deletedAt: null, status: 'overdue', version: 3 },
         { $set: { status: 'paid' }, $inc: { version: 1 } },
-        { returnDocument: 'before', session },
+        { returnDocument: 'after', session },
       );
       expect(result).toEqual({ outcome: 'transitioned', invoice: after, from: 'overdue' });
       // e.g. invoice.cancelled is enqueued in the same transaction as the status change.
-      expect(hook).toHaveBeenCalledWith(after, session);
+      expect(inTransaction).toHaveBeenCalledWith(after, session);
     });
 
-    it('rejects, returning the current state, when the invoice is not in an allowed status -- and runs no hook', async () => {
-      const current = { status: 'cancelled' };
+    // Issuing: the number and issue date are written by the same update as the status.
+    it('writes the fields prepare returns, computed from the current invoice inside the transaction', async () => {
+      const draft = current('draft');
+      writeModel.findOne.mockReturnValue(query(draft) as never);
+      writeModel.findOneAndUpdate.mockReturnValue(query({ status: 'issued' }) as never);
+      const issueDate = new Date('2026-10-19T10:00:00.000Z');
+      const prepare = jest.fn().mockResolvedValue({ invoiceNumber: 'INV-2026-000007', issueDate });
+
+      await repository.transitionStatus(objectId(), ['draft'], 'issued', { prepare });
+
+      expect(prepare).toHaveBeenCalledWith(draft, session);
+      expect(writeModel.findOneAndUpdate).toHaveBeenCalledWith(
+        expect.anything(),
+        { $set: { invoiceNumber: 'INV-2026-000007', issueDate, status: 'issued' }, $inc: { version: 1 } },
+        expect.anything(),
+      );
+    });
+
+    // The status is checked before prepare runs, so a refused issue never touches the counter.
+    it('rejects, returning the current state, without running prepare or the hook', async () => {
+      const cancelled = current('cancelled');
+      writeModel.findOne.mockReturnValue(query(cancelled) as never);
+      const prepare = jest.fn();
+      const inTransaction = jest.fn();
+
+      const result = await repository.transitionStatus(objectId(), ['issued', 'overdue'], 'paid', {
+        prepare,
+        inTransaction,
+      });
+
+      expect(result).toEqual({ outcome: 'rejected', invoice: cancelled });
+      expect(prepare).not.toHaveBeenCalled();
+      expect(inTransaction).not.toHaveBeenCalled();
+      expect(writeModel.findOneAndUpdate).not.toHaveBeenCalled();
+    });
+
+    it('fails the whole transition when prepare refuses (nothing is written)', async () => {
+      writeModel.findOne.mockReturnValue(query(current('draft')) as never);
+      const refusal = new ConflictException('due date in the past');
+
+      await expect(
+        repository.transitionStatus(objectId(), ['draft'], 'issued', { prepare: jest.fn().mockRejectedValue(refusal) }),
+      ).rejects.toBe(refusal);
+      expect(writeModel.findOneAndUpdate).not.toHaveBeenCalled();
+    });
+
+    it('is a 409 if the invoice changed between the read and the guarded write', async () => {
+      writeModel.findOne.mockReturnValue(query(current('draft')) as never);
       writeModel.findOneAndUpdate.mockReturnValue(query(null) as never);
-      writeModel.findOne.mockReturnValue(query(current) as never);
-      const hook = jest.fn();
 
-      const result = await repository.transitionStatus(objectId(), ['issued', 'overdue'], 'paid', hook);
-
-      expect(result).toEqual({ outcome: 'rejected', invoice: current });
-      expect(hook).not.toHaveBeenCalled();
+      await expect(repository.transitionStatus(objectId(), ['draft'], 'issued')).rejects.toThrow(
+        /modified by another user/,
+      );
     });
 
     it('reports not_found for a missing invoice or a malformed id', async () => {
-      writeModel.findOneAndUpdate.mockReturnValue(query(null) as never);
       writeModel.findOne.mockReturnValue(query(null) as never);
 
       await expect(repository.transitionStatus(objectId(), ['draft'], 'issued')).resolves.toEqual({

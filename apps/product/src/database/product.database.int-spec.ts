@@ -2,11 +2,18 @@ import { readdirSync } from 'fs';
 import { join } from 'path';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { DataSource } from 'typeorm';
+import { DEFAULT_ORGANIZATION_ID } from '@libs/shared/types';
+import { runWithCorrelationContext } from '@libs/logging/correlation-context';
+import { itInOrganization as it, TEST_ORGANIZATION_ID as ORG } from '@libs/logging/testing';
 import { ProductRepository } from '../app/modules/product/product.repository';
 import { ProductEntity } from './entities/product.entity';
 
 // Every migration file on disk, exactly what `product:migration:run` applies.
 const MIGRATIONS_DIR = join(__dirname, 'migrations');
+const OTHER_ORG = '11111111-1111-4111-8111-111111111111';
+const inOrganization = <T>(organizationId: string, work: () => Promise<T>) =>
+  runWithCorrelationContext({ correlationId: 'int', traceId: 'int', organizationId }, work);
+
 const migrations = readdirSync(MIGRATIONS_DIR)
   .filter((file) => file.endsWith('.ts'))
   .sort()
@@ -57,6 +64,27 @@ describe('product database (real Postgres)', () => {
       expect(pending.upQueries.map((query) => query.query)).toEqual([]);
     });
 
+    // Pre-tenancy products join the default organization, and nothing is lost on the way.
+    it('move existing products into the default organization', async () => {
+      await dataSource.undoLastMigration();
+      await dataSource.query(
+        `INSERT INTO "products" ("sku", "name", "unitPrice", "currency") VALUES ('LEGACY-1', 'Old widget', 12.5, 'EUR')`,
+      );
+
+      await dataSource.runMigrations();
+
+      expect(await dataSource.query(`SELECT "sku", "organizationId", "unitPrice" FROM "products"`)).toEqual([
+        { sku: 'LEGACY-1', organizationId: DEFAULT_ORGANIZATION_ID, unitPrice: '12.50' },
+      ]);
+    });
+
+    it('refuse to revert tenancy while two organizations share a SKU', async () => {
+      await createProduct({ sku: 'SHARED' });
+      await inOrganization(OTHER_ORG, () => createProduct({ sku: 'SHARED' }));
+
+      await expect(dataSource.undoLastMigration()).rejects.toThrow(/SHARED/);
+    });
+
     it('revert cleanly and re-apply', async () => {
       for (let i = 0; i < migrations.length; i++) await dataSource.undoLastMigration();
       expect(await dataSource.query(`SELECT to_regclass('public.products') AS t`)).toEqual([{ t: null }]);
@@ -66,12 +94,33 @@ describe('product database (real Postgres)', () => {
     });
   });
 
-  it('enforces unique SKUs at the database', async () => {
+  it('enforces unique SKUs per organization at the database', async () => {
     await createProduct({ sku: 'DUP-1' });
 
     await expect(createProduct({ sku: 'DUP-1' })).rejects.toMatchObject({
       driverError: expect.objectContaining({ code: '23505' }),
     });
+    // Another organization's catalog is its own.
+    await expect(inOrganization(OTHER_ORG, () => createProduct({ sku: 'DUP-1' }))).resolves.toBeDefined();
+  });
+
+  it("lists only the current organization's products, and can't be told to create in another", async () => {
+    const mine = await createProduct({ name: 'Mine' });
+    await inOrganization(OTHER_ORG, () => createProduct({ name: 'Theirs' }));
+    const planted = await products.create({
+      sku: 'PLANTED',
+      name: 'Planted',
+      unitPrice: 1,
+      currency: 'USD',
+      vatRate: 0,
+      organizationId: OTHER_ORG,
+    } as never);
+
+    expect(planted.organizationId).toBe(ORG);
+    expect((await products.findAll({})).items.map((p) => p.id).sort()).toEqual([mine.id, planted.id].sort());
+    expect(await inOrganization(OTHER_ORG, async () => (await products.findAll({})).items.map((p) => p.name))).toEqual([
+      'Theirs',
+    ]);
   });
 
   // numeric columns come back from pg as strings; the entity's transformer must turn them back

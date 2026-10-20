@@ -12,7 +12,7 @@ import { createHash } from 'crypto';
 import Redis from 'ioredis';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import type { Cache } from 'cache-manager';
-import { REDIS_CLIENT } from '@libs/cache';
+import { REDIS_CLIENT, tenantCacheKey } from '@libs/cache';
 import { DEFAULT_LIMIT, DEFAULT_PAGE } from '@libs/constants';
 import {
   buildPaginationMeta,
@@ -22,6 +22,7 @@ import {
 } from '@libs/shared/types';
 import type { InvoiceDocument } from '@libs/schemas';
 import {
+  ClientSnapshotRequest,
   CreateInvoiceRequest,
   DeleteInvoiceResponse,
   FindAllInvoicesCursorResponse,
@@ -33,15 +34,23 @@ import {
   UpdateInvoiceRequest,
 } from '@libs/interfaces/gateway';
 import { AuditLogService } from '@libs/audit-log';
-import { INVOICE_REPOSITORY, IInvoiceRepository, type InTransaction } from './invoice.repository.interface';
+import {
+  INVOICE_REPOSITORY,
+  IInvoiceRepository,
+  type InTransaction,
+  type TransitionOptions,
+} from './invoice.repository.interface';
+import { CustomerService } from '../customer/customer.service';
+import { InvoiceNumberingService } from './invoice-numbering.service';
 import { PdfGeneratorClientService } from './clients/pdf-generator-client.service';
 import { MediaClientService } from './clients/media-client.service';
 import { InvoiceEventsProducerService } from './clients/invoice-events-producer.service';
 
 const SVC_PREFIX = 'svc';
-const CACHE_KEY_ONE = (id: string) => `${SVC_PREFIX}:invoice:one:${id}`;
-const CACHE_KEY_LIST = (version: number, hash: string) => `${SVC_PREFIX}:invoice:list:${version}:${hash}`;
-const CACHE_KEY_LIST_VERSION = `${SVC_PREFIX}:invoice:list:version`;
+// Tenant-scoped: an invoice id cached for one organization must never be served to another.
+const CACHE_KEY_ONE = (id: string) => tenantCacheKey(SVC_PREFIX, 'invoice', 'one', id);
+const CACHE_KEY_LIST = (version: number, hash: string) => tenantCacheKey(SVC_PREFIX, 'invoice', 'list', version, hash);
+const CACHE_KEY_LIST_VERSION = () => tenantCacheKey(SVC_PREFIX, 'invoice', 'list', 'version');
 
 const TTL_ONE_MS = 30_000;
 const TTL_LIST_MS = 15_000;
@@ -73,17 +82,31 @@ export class InvoiceService {
     private readonly pdfGeneratorClient: PdfGeneratorClientService,
     private readonly mediaClient: MediaClientService,
     private readonly eventsProducer: InvoiceEventsProducerService,
+    private readonly customers: CustomerService,
+    private readonly numbering: InvoiceNumberingService,
   ) {
     this.redis = redis;
   }
 
+  /**
+   * A new draft in the caller's organization, billed either to a customer (whose details are
+   * snapshotted onto the invoice) or to a one-off client. Unnumbered until issued.
+   */
   async create(createInvoiceDto: CreateInvoiceRequest): Promise<InvoiceResponse> {
+    const { customerId, client, ...rest } = createInvoiceDto;
+    // Re-checked here: RPC payloads reach this service without DTO validation.
+    if ((customerId === undefined) === (client === undefined)) {
+      throw new UnprocessableEntityException('Give either customerId or client, not both and not neither.');
+    }
+    const snapshot = customerId ? await this.customers.snapshotOf(customerId) : (client as ClientSnapshotRequest);
+
     try {
       // Demo event: proves the outbox -> Kafka -> services/mail pipe end to end, independent of the
       // real invoice.sent event this same topic carries (see send below). Written in the insert's
       // transaction, so an idempotent replay (no insert) doesn't emit it again.
-      const createdInvoice = await this.invoiceRepository.create(createInvoiceDto, (invoice, session) =>
-        this.eventsProducer.enqueueDemo(session, invoice._id.toString()).then(() => undefined),
+      const createdInvoice = await this.invoiceRepository.create(
+        { ...rest, client: snapshot, customerId },
+        (invoice, session) => this.eventsProducer.enqueueDemo(session, invoice._id.toString()).then(() => undefined),
       );
       await this.bumpListVersion();
       await this.auditLog.record({
@@ -251,21 +274,23 @@ export class InvoiceService {
   }
 
   async issue(id: string): Promise<InvoiceResponse> {
-    return this.toInvoiceResponse(await this.transition(id, 'issued'));
+    return this.toInvoiceResponse(await this.issueInvoice(id));
   }
 
   /** Also tells payment (via invoice.cancelled) to close any open checkout session for it. */
   async cancel(id: string): Promise<InvoiceResponse> {
     return this.toInvoiceResponse(
-      await this.transition(id, 'cancelled', (invoice, session) =>
-        this.eventsProducer
-          .enqueueCancelled(session, {
-            invoiceId: invoice._id.toString(),
-            invoiceNumber: invoice.invoiceNumber,
-            cancelledAt: new Date().toISOString(),
-          })
-          .then(() => undefined),
-      ),
+      await this.transition(id, 'cancelled', {
+        inTransaction: (invoice, session) =>
+          this.eventsProducer
+            .enqueueCancelled(session, {
+              invoiceId: invoice._id.toString(),
+              // Only issued/overdue invoices can be cancelled, and those are numbered.
+              invoiceNumber: invoice.invoiceNumber as string,
+              cancelledAt: new Date().toISOString(),
+            })
+            .then(() => undefined),
+      }),
     );
   }
 
@@ -298,12 +323,13 @@ export class InvoiceService {
       throw new ConflictException(`Cannot send an invoice that is ${current.status}.`);
     }
 
-    const invoice = current.status === 'draft' ? await this.transition(id, 'issued') : current;
+    const invoice = current.status === 'draft' ? await this.issueInvoice(id) : current;
     const { key, fileName } = await this.renderAndStorePdf(invoice, (stored, session) =>
       this.eventsProducer
         .enqueueSent(session, {
           invoiceId: id,
-          invoiceNumber: stored.invoiceNumber,
+          // A sent invoice is issued, so it has its number.
+          invoiceNumber: stored.invoiceNumber as string,
           clientName: stored.client.name,
           clientEmail: stored.client.email,
           pdfKey: stored.pdfKey as string,
@@ -325,16 +351,37 @@ export class InvoiceService {
   }
 
   /**
+   * draft -> issued, assigning the invoice number and issue date in the same transaction (gapless:
+   * if the transaction aborts, the number is given back). The issue date is the moment of issue,
+   * so within an organization's year numbers and dates always ascend together.
+   */
+  private async issueInvoice(id: string): Promise<InvoiceDocument> {
+    const issuedAt = new Date();
+    const numbering = await this.numbering.prepare(issuedAt);
+
+    return this.transition(id, 'issued', {
+      prepare: async (current, session) => {
+        if (current.dueDate && current.dueDate < startOfUtcDay(issuedAt)) {
+          throw new UnprocessableEntityException(
+            `The due date (${current.dueDate.toISOString().slice(0, 10)}) is before today; change it before issuing.`,
+          );
+        }
+        return { invoiceNumber: await this.numbering.next(numbering, session), issueDate: issuedAt };
+      },
+    });
+  }
+
+  /**
    * The one path for every status change. Requesting the status the invoice is already in is a
    * no-op success (safe retries, Stripe redeliveries) and runs no hook; any other illegal change is
    * a 409 naming the current status.
    */
-  private async transition(id: string, to: InvoiceStatus, inTransaction?: InTransaction): Promise<InvoiceDocument> {
+  private async transition(id: string, to: InvoiceStatus, options?: TransitionOptions): Promise<InvoiceDocument> {
     const result = await this.invoiceRepository.transitionStatus(
       this.ensureObjectId(id),
       statusesTransitionableTo(to),
       to,
-      inTransaction,
+      options,
     );
 
     if (result.outcome === 'not_found') {
@@ -367,7 +414,8 @@ export class InvoiceService {
   ): Promise<{ key: string; fileName: string }> {
     const id = invoice._id.toString();
     const { base64, contentType, fileName } = await this.pdfGeneratorClient.generateInvoicePdf({
-      invoiceNumber: invoice.invoiceNumber,
+      // Drafts have no number yet; their PDF says so.
+      invoiceNumber: invoice.invoiceNumber ?? 'DRAFT',
       client: {
         name: invoice.client.name,
         email: invoice.client.email,
@@ -419,7 +467,7 @@ export class InvoiceService {
 
   private async getListVersion(): Promise<number> {
     try {
-      const version = await this.redis.get(CACHE_KEY_LIST_VERSION);
+      const version = await this.redis.get(CACHE_KEY_LIST_VERSION());
       return version ? Number(version) : 1;
     } catch {
       this.logger.warn('Failed to read list version counter, defaulting to 1');
@@ -429,7 +477,7 @@ export class InvoiceService {
 
   private async bumpListVersion(): Promise<void> {
     try {
-      await this.redis.incr(CACHE_KEY_LIST_VERSION);
+      await this.redis.incr(CACHE_KEY_LIST_VERSION());
     } catch {
       this.logger.warn('Failed to increment list version counter');
     }
@@ -460,28 +508,11 @@ export class InvoiceService {
   }
 
   private handlePersistenceError(error: unknown): never {
-    if (this.isDuplicateInvoiceNumberError(error)) {
-      const invoiceNumber =
-        typeof error.keyValue?.invoiceNumber === 'string' ? ` "${error.keyValue.invoiceNumber}"` : '';
-      throw new ConflictException(`Invoice number${invoiceNumber} already exists.`);
-    }
-
     if (error instanceof MongooseError.ValidationError) {
       throw new UnprocessableEntityException(this.formatValidationError(error));
     }
 
     throw error;
-  }
-
-  private isDuplicateInvoiceNumberError(
-    error: unknown,
-  ): error is { code: number; keyPattern?: Record<string, unknown>; keyValue?: Record<string, unknown> } {
-    if (typeof error !== 'object' || error === null) {
-      return false;
-    }
-
-    const mongoError = error as { code?: unknown; keyPattern?: Record<string, unknown> };
-    return mongoError.code === 11000 && Boolean(mongoError.keyPattern?.invoiceNumber);
   }
 
   private formatValidationError(error: MongooseError.ValidationError): string {
@@ -496,4 +527,8 @@ export class InvoiceService {
 /** Keys are `invoices/<uuid>/<fileName>`; the file name is what the browser should save it as. */
 function pdfFileName(pdfKey: string): string {
   return pdfKey.split('/').pop() ?? pdfKey;
+}
+
+function startOfUtcDay(date: Date): Date {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
 }
