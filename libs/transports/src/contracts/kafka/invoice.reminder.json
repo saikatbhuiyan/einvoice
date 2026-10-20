@@ -1,0 +1,26 @@
+{
+  "data": {
+    "type": "invoice.reminder",
+    "eventId": "6710000000000000000000e5",
+    "invoiceId": "6700000000000000000000a1",
+    "invoiceNumber": "INV-2026-001",
+    "clientName": "Acme Corp",
+    "clientEmail": "billing@acme.test",
+    "pdfKey": "invoices/2b6f0c2e-1c3a-4e3b-9a51-0d2f7b6c9e10/invoice-INV-2026-001.pdf",
+    "fileName": "invoice-INV-2026-001.pdf",
+    "currency": "EUR",
+    "total": 129.9,
+    "dueDate": "2026-10-09T00:00:00.000Z",
+    "daysOverdue": 7,
+    "reminderNumber": 2
+  },
+  "meta": {
+    "correlationId": "corr-contract-1",
+    "traceId": "trace-contract-1",
+    "permissions": ["invoice:read", "invoice:write"],
+    "organizationId": "0d5c2b9e-7a41-4c8e-9f12-3b6a8e4d7c10",
+    "systemActor": "overdue-job",
+    "sourceService": "invoice",
+    "timestamp": "2026-10-16T09:00:00.000Z"
+  }
+}

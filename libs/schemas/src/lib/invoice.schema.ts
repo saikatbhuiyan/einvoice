@@ -14,6 +14,9 @@ import {
 
 const roundCurrency = (value: number): number => Math.round((value + Number.EPSILON) * 100) / 100;
 
+const startOfUtcDay = (date: Date): Date =>
+  new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+
 export { INVOICE_STATUSES, SUPPORTED_CURRENCIES };
 export type { InvoiceStatus, SupportedCurrency };
 
@@ -117,6 +120,21 @@ export class Invoice extends BaseSchema {
   @Prop()
   pdfGeneratedAt?: Date;
 
+  /** Payment reminders actually emailed for this invoice (see the overdue scheduler). */
+  @Prop({ required: true, min: 0, default: 0 })
+  remindersSent!: number;
+
+  @Prop({ type: Date, default: null })
+  lastReminderAt?: Date | null;
+
+  /**
+   * When the next reminder is due (`dueDate + one of the organization's offsets`), or null when none
+   * is scheduled. Set when the invoice turns overdue and after each reminder; the scheduler sends a
+   * reminder by a conditional update on this exact value, so it is also the reminder's identity.
+   */
+  @Prop({ type: Date, default: null })
+  nextReminderAt?: Date | null;
+
   /**
    * Client-supplied idempotency key for safe retry semantics.
    * Sparse unique index ensures collisions only for actual keys,
@@ -154,7 +172,9 @@ InvoiceSchema.pre('validate', function recalculateTotals() {
   invoice.vatTotal = roundCurrency(vatTotal);
   invoice.total = roundCurrency(invoice.subtotal + invoice.vatTotal);
 
-  if (invoice.dueDate && invoice.issueDate && invoice.dueDate < invoice.issueDate) {
+  // Compared as calendar days: a due date is a date (midnight UTC of the due day) while issueDate is
+  // an instant (it defaults to now), so comparing instants would reject an invoice due today.
+  if (invoice.dueDate && invoice.issueDate && invoice.dueDate < startOfUtcDay(invoice.issueDate)) {
     invoice.invalidate('dueDate', 'dueDate cannot be earlier than issueDate.');
   }
 });
@@ -171,6 +191,13 @@ InvoiceSchema.index(
 );
 InvoiceSchema.index({ organizationId: 1, deletedAt: 1, issueDate: -1, createdAt: -1 });
 InvoiceSchema.index({ organizationId: 1, customerId: 1 });
+// The overdue scheduler's two scans run across organizations (system work), so these don't lead with
+// organizationId. Partial: only issued invoices can turn overdue, only scheduled reminders are due.
+InvoiceSchema.index({ status: 1, dueDate: 1 }, { partialFilterExpression: { status: 'issued' } });
+InvoiceSchema.index(
+  { status: 1, nextReminderAt: 1 },
+  { partialFilterExpression: { status: 'overdue', nextReminderAt: { $type: 'date' } } },
+);
 
 export const InvoiceModelName = Invoice.name;
 

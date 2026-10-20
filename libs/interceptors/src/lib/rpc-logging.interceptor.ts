@@ -46,6 +46,7 @@ export class RpcLoggingInterceptor implements NestInterceptor {
       correlationId: meta.correlationId,
       traceId: meta.traceId,
       sourceService: meta.sourceService,
+      systemActor: meta.systemActor,
       payloadKeys: data && typeof data === 'object' ? Object.keys(data) : [],
     });
 
@@ -70,6 +71,7 @@ export class RpcLoggingInterceptor implements NestInterceptor {
             correlationId: meta.correlationId,
             traceId: meta.traceId,
             sourceService: meta.sourceService,
+            systemActor: meta.systemActor,
             durationMs: this.elapsedMs(startAt),
             status: 'success',
           });
@@ -88,6 +90,7 @@ export class RpcLoggingInterceptor implements NestInterceptor {
             correlationId: meta.correlationId,
             traceId: meta.traceId,
             sourceService: meta.sourceService,
+            systemActor: meta.systemActor,
             durationMs: this.elapsedMs(startAt),
             status: 'error',
             error: message,

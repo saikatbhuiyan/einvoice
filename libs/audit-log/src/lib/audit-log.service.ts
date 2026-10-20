@@ -14,9 +14,10 @@ export class AuditLogService {
   ) {}
 
   /**
-   * `actor` defaults to whoever the current request is acting for — the end user's id, or
-   * `service:<name>` for a service-to-service call with no user behind it (e.g. payment marking an
-   * invoice paid from a Stripe webhook) — so no call site can forget to attribute an entry.
+   * `actor` defaults to whoever the current request is acting for — the end user's id,
+   * `system:<actor>` for a background job (runAsSystem), or `service:<name>` for a service-to-service
+   * call with no user behind it (e.g. payment marking an invoice paid from a Stripe webhook) — so no
+   * call site can forget to attribute an entry.
    */
   async record(params: {
     action: AuditAction;
@@ -46,6 +47,7 @@ export class AuditLogService {
   private currentActor(): string | undefined {
     const context = getCurrentCorrelationContext();
     if (context?.userId) return context.userId;
+    if (context?.systemActor) return `system:${context.systemActor}`;
     return context?.sourceService ? `service:${context.sourceService}` : undefined;
   }
 }

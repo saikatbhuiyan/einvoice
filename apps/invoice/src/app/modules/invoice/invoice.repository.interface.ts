@@ -104,6 +104,36 @@ export interface IInvoiceRepository {
     to: InvoiceStatus,
     options?: TransitionOptions,
   ): Promise<StatusTransitionResult>;
+
+  /**
+   * System scan (the overdue scheduler): issued invoices whose due date is before `before`, across
+   * **all organizations** -- deliberately unscoped, like the Stripe webhook's session lookup. Returns
+   * only ids and organizations; each is then handled inside its own organization (runAsSystem).
+   */
+  findPastDueIssued(before: Date, limit: number): Promise<InvoiceRef[]>;
+
+  /** System scan: overdue invoices whose next reminder is due by `now`, across all organizations. */
+  findDueReminders(now: Date, limit: number): Promise<InvoiceRef[]>;
+
+  /**
+   * Handles the reminder scheduled for `scheduledAt` -- sent (`sent` given: counts it, runs
+   * `sent.inTransaction` in the same transaction, e.g. the outbox event) or skipped (`sent` null) --
+   * and schedules `next`. Conditional on `nextReminderAt` still being `scheduledAt` and the invoice
+   * still overdue, so a reminder can only ever be handled once; returns null if it already was (or
+   * the invoice was paid or cancelled meanwhile).
+   */
+  advanceReminder(
+    id: string,
+    scheduledAt: Date,
+    next: Date | null,
+    sent: { at: Date; inTransaction?: InTransaction } | null,
+  ): Promise<InvoiceDocument | null>;
+}
+
+/** An invoice found by a system scan: enough to act on it inside its own organization. */
+export interface InvoiceRef {
+  id: string;
+  organizationId: string;
 }
 
 export type StatusTransitionResult =

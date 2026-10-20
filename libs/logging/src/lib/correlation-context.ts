@@ -19,6 +19,12 @@ export interface CorrelationContext {
   organizationId?: string;
   /** The calling service, when this context was established from an incoming RPC (RpcMeta). */
   sourceService?: string;
+  /**
+   * Set instead of `userId` when the system itself is acting -- a scheduled job, not an end user
+   * (e.g. `overdue-job`). Only code inside a service sets it (runAsSystem); nothing derives it from a
+   * request. Audit entries attribute such work to `system:<actor>`.
+   */
+  systemActor?: string;
 }
 
 /** A tenant-scoped operation ran without an organization in its context -- always a bug. */
@@ -127,6 +133,31 @@ export function runInOrganization<T>(organizationId: string, work: () => T): T {
       traceId: current?.traceId ?? activeOpenTelemetryTraceId() ?? randomUUID(),
       ...current,
       organizationId,
+    },
+    work,
+  );
+}
+
+/**
+ * Runs `work` as the system itself, acting in one organization with exactly `permissions` -- for
+ * background jobs, which have no end user but still call permission-gated services (RpcPermission-
+ * Guard accepts a system actor in place of a user, and checks permissions the same way). Grant the
+ * least the job needs. Any user identity of the surrounding context is dropped: the work must never
+ * be attributed to, or authorized as, whoever happened to trigger it.
+ */
+export function runAsSystem<T>(
+  principal: { actor: string; organizationId: string; permissions: string[] },
+  work: () => T,
+): T {
+  const current = correlationStorage.getStore();
+  return correlationStorage.run(
+    {
+      correlationId: current?.correlationId ?? randomUUID(),
+      traceId: current?.traceId ?? activeOpenTelemetryTraceId() ?? randomUUID(),
+      sourceService: current?.sourceService,
+      systemActor: principal.actor,
+      organizationId: principal.organizationId,
+      permissions: principal.permissions,
     },
     work,
   );

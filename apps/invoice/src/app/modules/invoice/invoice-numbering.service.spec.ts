@@ -7,15 +7,13 @@ const exec = (result: unknown) => ({ exec: jest.fn().mockResolvedValue(result) }
 describe('InvoiceNumberingService', () => {
   const session = { id: 'txn' };
   let counters: { updateOne: jest.Mock; findOneAndUpdate: jest.Mock };
-  let organizations: { findInvoiceSettings: jest.Mock };
-  let cache: { get: jest.Mock; set: jest.Mock };
+  let settings: { current: jest.Mock };
   let service: InvoiceNumberingService;
 
   beforeEach(() => {
     counters = { updateOne: jest.fn(() => exec({})), findOneAndUpdate: jest.fn() };
-    organizations = { findInvoiceSettings: jest.fn().mockResolvedValue({ invoicePrefix: 'ACME' }) };
-    cache = { get: jest.fn().mockResolvedValue(undefined), set: jest.fn().mockResolvedValue(undefined) };
-    service = new InvoiceNumberingService(counters as never, organizations as never, cache as never);
+    settings = { current: jest.fn().mockResolvedValue({ invoicePrefix: 'ACME', reminderOffsetsDays: [1, 7, 14] }) };
+    service = new InvoiceNumberingService(counters as never, settings as never);
   });
 
   describe('formatInvoiceNumber', () => {
@@ -50,27 +48,6 @@ describe('InvoiceNumberingService', () => {
       await service.prepare(new Date('2027-01-01T00:00:00.000Z'));
 
       expect(counters.updateOne).toHaveBeenCalledWith({ _id: `${ORG}:2027` }, expect.anything(), expect.anything());
-    });
-
-    it("caches the organization's prefix per organization", async () => {
-      await service.prepare(new Date());
-
-      expect(cache.get).toHaveBeenCalledWith(`svc:org:${ORG}:invoice-prefix`);
-      expect(cache.set).toHaveBeenCalledWith(`svc:org:${ORG}:invoice-prefix`, 'ACME', 60_000);
-    });
-
-    it('uses a cached prefix without calling user-access', async () => {
-      cache.get.mockResolvedValue('CACHED');
-
-      await expect(service.prepare(new Date())).resolves.toMatchObject({ prefix: 'CACHED' });
-      expect(organizations.findInvoiceSettings).not.toHaveBeenCalled();
-    });
-
-    it('still numbers when the cache is down', async () => {
-      cache.get.mockRejectedValue(new Error('redis down'));
-      cache.set.mockRejectedValue(new Error('redis down'));
-
-      await expect(service.prepare(new Date())).resolves.toMatchObject({ prefix: 'ACME' });
     });
 
     test('refuses outside an organization context', async () => {

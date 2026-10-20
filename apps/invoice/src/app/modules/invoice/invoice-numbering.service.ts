@@ -1,14 +1,9 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { CACHE_MANAGER } from '@nestjs/cache-manager';
-import type { Cache } from 'cache-manager';
 import type { ClientSession } from 'mongoose';
 import { InvoiceCounterModelName, type InvoiceCounterModel } from '@libs/schemas';
-import { tenantCacheKey } from '@libs/cache';
 import { requireOrganizationId } from '@libs/logging/correlation-context';
-import { OrganizationClientService } from './clients/organization-client.service';
-
-const PREFIX_TTL_MS = 60_000;
+import { OrganizationSettingsService } from './organization-settings.service';
 
 export function formatInvoiceNumber(prefix: string, year: number, sequence: number): string {
   return `${prefix}-${year}-${String(sequence).padStart(6, '0')}`;
@@ -24,12 +19,9 @@ export function formatInvoiceNumber(prefix: string, year: number, sequence: numb
  */
 @Injectable()
 export class InvoiceNumberingService {
-  private readonly logger = new Logger(InvoiceNumberingService.name);
-
   constructor(
     @InjectModel(InvoiceCounterModelName) private readonly counters: InvoiceCounterModel,
-    private readonly organizations: OrganizationClientService,
-    @Inject(CACHE_MANAGER) private readonly cache: Cache,
+    private readonly settings: OrganizationSettingsService,
   ) {}
 
   /**
@@ -42,8 +34,8 @@ export class InvoiceNumberingService {
   async prepare(issuedAt: Date): Promise<{ organizationId: string; prefix: string; year: number }> {
     const organizationId = requireOrganizationId();
     const year = issuedAt.getUTCFullYear();
-    const [prefix] = await Promise.all([
-      this.prefix(),
+    const [{ invoicePrefix: prefix }] = await Promise.all([
+      this.settings.current(),
       this.counters
         .updateOne({ _id: `${organizationId}:${year}` }, { $setOnInsert: { seq: 0 } }, { upsert: true })
         .exec(),
@@ -67,24 +59,5 @@ export class InvoiceNumberingService {
       throw new Error(`Invoice counter ${prepared.organizationId}:${prepared.year} vanished inside its transaction.`);
     }
     return formatInvoiceNumber(prepared.prefix, prepared.year, counter.seq);
-  }
-
-  /** The organization's configured prefix; cached briefly, so a rename applies within a minute. */
-  private async prefix(): Promise<string> {
-    const key = tenantCacheKey('svc', 'invoice-prefix');
-    try {
-      const cached = await this.cache.get<string>(key);
-      if (cached) return cached;
-    } catch {
-      this.logger.warn(`Cache read failed for key "${key}"`);
-    }
-
-    const { invoicePrefix } = await this.organizations.findInvoiceSettings();
-    try {
-      await this.cache.set(key, invoicePrefix, PREFIX_TTL_MS);
-    } catch {
-      this.logger.warn(`Cache write failed for key "${key}"`);
-    }
-    return invoicePrefix;
   }
 }

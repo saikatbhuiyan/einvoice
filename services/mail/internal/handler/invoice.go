@@ -59,6 +59,8 @@ func (h *InvoiceHandler) Handle(ctx context.Context, _ []byte, value []byte) err
 		return nil
 	case events.SentEvent:
 		return h.handleSent(ctx, e, meta)
+	case events.ReminderEvent:
+		return h.handleReminder(ctx, e, meta)
 	default:
 		return nil
 	}
@@ -68,60 +70,105 @@ func (h *InvoiceHandler) handleSent(ctx context.Context, e events.SentEvent, met
 	log := slog.With("invoiceId", e.InvoiceID, "invoiceNumber", e.InvoiceNumber, "eventId", e.EventID,
 		"organizationId", meta.OrganizationID, "correlationId", meta.CorrelationID)
 
-	if e.EventID != "" {
-		seen, err := h.dedupe.Seen(ctx, e.EventID)
+	return h.sendOnce(ctx, log, e.EventID, "invoice email", func() (mail.Message, error) {
+		pdfBytes, err := h.loadPDF(ctx, e)
 		if err != nil {
-			// Unknown whether it was already sent: don't risk a duplicate, retry once Redis answers.
+			return mail.Message{}, err
+		}
+		html, err := template.RenderInvoiceEmail(template.InvoiceEmailData{
+			ClientName:    e.ClientName,
+			InvoiceNumber: e.InvoiceNumber,
+			Currency:      e.Currency,
+			Total:         fmt.Sprintf("%.2f", e.Total),
+			IssueDate:     e.IssueDate,
+			DueDate:       e.DueDate,
+		})
+		if err != nil {
+			return mail.Message{}, failure.Permanent(fmt.Errorf("render email template: %w", err))
+		}
+		return mail.Message{
+			To:          e.ClientEmail,
+			Subject:     fmt.Sprintf("Invoice %s", e.InvoiceNumber),
+			HTMLBody:    html,
+			Attachments: []mail.Attachment{{Filename: e.FileName, ContentType: "application/pdf", Data: pdfBytes}},
+		}, nil
+	})
+}
+
+func (h *InvoiceHandler) handleReminder(ctx context.Context, e events.ReminderEvent, meta events.Meta) error {
+	log := slog.With("invoiceId", e.InvoiceID, "invoiceNumber", e.InvoiceNumber, "eventId", e.EventID,
+		"reminderNumber", e.ReminderNumber, "organizationId", meta.OrganizationID,
+		"systemActor", meta.SystemActor, "correlationId", meta.CorrelationID)
+
+	return h.sendOnce(ctx, log, e.EventID, "payment reminder", func() (mail.Message, error) {
+		if e.PdfKey == "" {
+			return mail.Message{}, failure.Permanent(errors.New("invoice.reminder event has no pdfKey"))
+		}
+		pdfBytes, err := h.pdfs.Get(ctx, e.PdfKey)
+		if err != nil {
+			return mail.Message{}, err
+		}
+		html, err := template.RenderReminderEmail(template.ReminderEmailData{
+			ClientName:     e.ClientName,
+			InvoiceNumber:  e.InvoiceNumber,
+			Currency:       e.Currency,
+			Total:          fmt.Sprintf("%.2f", e.Total),
+			DueDate:        dateOnly(e.DueDate),
+			DaysOverdue:    e.DaysOverdue,
+			ReminderNumber: e.ReminderNumber,
+		})
+		if err != nil {
+			return mail.Message{}, failure.Permanent(fmt.Errorf("render reminder template: %w", err))
+		}
+		return mail.Message{
+			To:          e.ClientEmail,
+			Subject:     fmt.Sprintf("Reminder: invoice %s is overdue", e.InvoiceNumber),
+			HTMLBody:    html,
+			Attachments: []mail.Attachment{{Filename: e.FileName, ContentType: "application/pdf", Data: pdfBytes}},
+		}, nil
+	})
+}
+
+// sendOnce emails what build returns, unless eventID was already emailed (delivery is
+// at-least-once). An unknown dedupe state is retried, never guessed: guessing "not sent" risks a
+// duplicate. A failure to record the send is only logged -- the email is already out, and failing
+// the message would send it again.
+func (h *InvoiceHandler) sendOnce(ctx context.Context, log *slog.Logger, eventID, what string, build func() (mail.Message, error)) error {
+	if eventID != "" {
+		seen, err := h.dedupe.Seen(ctx, eventID)
+		if err != nil {
 			return err
 		}
 		if seen {
-			log.Info("duplicate invoice.sent event, email already sent; skipping")
+			log.Info("duplicate event, " + what + " already sent; skipping")
 			return nil
 		}
 	}
 
-	log.Info("sending invoice email")
-
-	pdfBytes, err := h.loadPDF(ctx, e)
+	log.Info("sending " + what)
+	msg, err := build()
 	if err != nil {
 		return err
 	}
-
-	html, err := template.RenderInvoiceEmail(template.InvoiceEmailData{
-		ClientName:    e.ClientName,
-		InvoiceNumber: e.InvoiceNumber,
-		Currency:      e.Currency,
-		Total:         fmt.Sprintf("%.2f", e.Total),
-		IssueDate:     e.IssueDate,
-		DueDate:       e.DueDate,
-	})
-	if err != nil {
-		return failure.Permanent(fmt.Errorf("render email template: %w", err))
-	}
-
-	msg := mail.Message{
-		To:       e.ClientEmail,
-		Subject:  fmt.Sprintf("Invoice %s", e.InvoiceNumber),
-		HTMLBody: html,
-		Attachments: []mail.Attachment{
-			{Filename: e.FileName, ContentType: "application/pdf", Data: pdfBytes},
-		},
-	}
-
 	if err := h.sender.Send(ctx, msg); err != nil {
-		return fmt.Errorf("send invoice email: %w", err)
+		return fmt.Errorf("send %s: %w", what, err)
 	}
 
-	if e.EventID != "" {
-		// Not returned: the email is already out, and a retry would send it again. The cost of a
-		// lost mark is a possible duplicate if this exact event is redelivered.
-		if err := h.dedupe.Mark(ctx, e.EventID); err != nil {
-			log.Warn("invoice email sent but not recorded for dedupe", "error", err)
+	if eventID != "" {
+		if err := h.dedupe.Mark(ctx, eventID); err != nil {
+			log.Warn(what+" sent but not recorded for dedupe", "error", err)
 		}
 	}
-
-	log.Info("invoice email sent", "to", e.ClientEmail)
+	log.Info(what+" sent", "to", msg.To)
 	return nil
+}
+
+// dateOnly shows an ISO-8601 instant as its date (the due date is midnight UTC of the due day).
+func dateOnly(iso string) string {
+	if len(iso) >= len("2006-01-02") {
+		return iso[:len("2006-01-02")]
+	}
+	return iso
 }
 
 func (h *InvoiceHandler) loadPDF(ctx context.Context, e events.SentEvent) ([]byte, error) {

@@ -22,6 +22,14 @@ export class OrganizationEntity {
   @Column({ type: 'varchar', length: 10, default: 'INV' })
   invoicePrefix!: string;
 
+  /**
+   * Payment reminder schedule: days after an invoice's due date (ascending, see
+   * reminderScheduleProblem in @libs/shared/types). Empty = no reminders. Read by invoice's overdue
+   * scheduler through ORGANIZATION.INVOICE_SETTINGS.
+   */
+  @Column({ type: 'int', array: true, default: '{1,7,14}' })
+  reminderOffsetsDays!: number[];
+
   @Column({ type: 'boolean', default: true })
   isActive!: boolean;
 

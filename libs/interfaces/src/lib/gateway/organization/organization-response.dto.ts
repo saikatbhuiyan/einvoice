@@ -20,6 +20,9 @@ export class OrganizationResponseDto implements OrganizationResponse {
   @ApiProperty({ example: 'ACME' })
   invoicePrefix!: string;
 
+  @ApiProperty({ example: [1, 7, 14], type: [Number], description: 'Payment reminders, in days after the due date.' })
+  reminderOffsetsDays!: number[];
+
   @ApiProperty({ example: true })
   isActive!: boolean;
 

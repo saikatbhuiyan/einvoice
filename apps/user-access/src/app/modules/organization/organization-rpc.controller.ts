@@ -8,6 +8,7 @@ import type {
   CreateOrganizationRequest,
   FindAllOrganizationsRequest,
   OrganizationIdGatewayRequest,
+  UpdateCurrentOrganizationRequest,
 } from '@libs/interfaces/gateway';
 import { OrganizationService } from './organization.service';
 
@@ -26,6 +27,20 @@ export class OrganizationRpcController {
   @RequirePermission('platform:admin')
   findAll(@Payload() payload: RpcEnvelope<FindAllOrganizationsRequest> | FindAllOrganizationsRequest) {
     return this.organizationService.findAll(unwrapRpcPayload(payload) ?? {});
+  }
+
+  // The caller's active organization, from the context -- never an id from the payload, so neither
+  // handler can be pointed at another tenant.
+  @MessagePattern(TCP_PATTERNS.ORGANIZATION.FIND_CURRENT)
+  @RequirePermission('organization:read')
+  findCurrent() {
+    return this.organizationService.findOne(requireOrganizationId());
+  }
+
+  @MessagePattern(TCP_PATTERNS.ORGANIZATION.UPDATE_CURRENT)
+  @RequirePermission('organization:write')
+  updateCurrent(@Payload() payload: RpcEnvelope<UpdateCurrentOrganizationRequest> | UpdateCurrentOrganizationRequest) {
+    return this.organizationService.updateSettings(requireOrganizationId(), unwrapRpcPayload(payload) ?? {});
   }
 
   // invoice numbering an invoice: with an end user behind it or not (its internal API, scheduled

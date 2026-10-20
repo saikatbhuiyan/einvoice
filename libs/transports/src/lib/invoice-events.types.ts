@@ -53,7 +53,29 @@ export interface InvoiceCancelledEvent extends InvoiceEventMetadata {
   cancelledAt: string;
 }
 
-export type InvoiceEvent = InvoiceDemoEvent | InvoiceSentEvent | InvoiceCancelledEvent;
+/**
+ * A payment reminder is due for an overdue invoice: services/mail emails the client, attaching the
+ * PDF at `pdfKey`. Written by invoice's overdue scheduler (meta.systemActor = "overdue-job") in the
+ * same transaction that records the reminder, so each scheduled reminder produces exactly one event.
+ */
+export interface InvoiceReminderEvent extends InvoiceEventMetadata {
+  type: 'invoice.reminder';
+  invoiceId: string;
+  invoiceNumber: string;
+  clientName: string;
+  clientEmail: string;
+  pdfKey: string;
+  fileName: string;
+  currency: string;
+  total: number;
+  dueDate: string;
+  /** Whole days past the due date when the reminder was sent (1 on the first overdue day). */
+  daysOverdue: number;
+  /** 1 for the first reminder sent for this invoice, 2 for the second, ... */
+  reminderNumber: number;
+}
+
+export type InvoiceEvent = InvoiceDemoEvent | InvoiceSentEvent | InvoiceCancelledEvent | InvoiceReminderEvent;
 
 /** An event as its producer builds it; the outbox adds the metadata. */
 export type UnstampedInvoiceEvent<T extends InvoiceEvent> = Omit<T, keyof InvoiceEventMetadata>;

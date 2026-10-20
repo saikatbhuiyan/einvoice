@@ -111,7 +111,9 @@ services:
       PDF_GENERATOR_SERVICE_PORT: ${PDF_GENERATOR_SERVICE_PORT:-3310}
       MEDIA_SERVICE_HOST: media
       MEDIA_SERVICE_PORT: ${MEDIA_SERVICE_PORT:-3312}
-      # The organization's invoice prefix, read when an invoice is numbered.
+      # How often the overdue scheduler looks for newly overdue invoices and due payment reminders.
+      OVERDUE_SCAN_INTERVAL_MS: ${OVERDUE_SCAN_INTERVAL_MS:-900000}
+      # The organization's invoicing settings (prefix, reminder schedule).
       USER_SERVICE_HOST: user-access
       USER_SERVICE_PORT: ${USER_SERVICE_PORT:-3306}
       KAFKA_BROKERS: kafka:9092
