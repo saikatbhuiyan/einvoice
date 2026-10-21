@@ -1,18 +1,22 @@
-import { Body, Controller, Get, HttpStatus, Post, Query, Res } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpStatus, Param, Patch, Post, Query, Res } from '@nestjs/common';
 import type { Response } from 'express';
-import { ApiBearerAuth, ApiBody, ApiExtraModels, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiBody, ApiExtraModels, ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
 import { RequirePermission } from '@libs/auth';
 import {
   CreateProductDto,
+  DeactivateProductResponseDto,
   FindAllProductsDto,
   FindAllProductsResponseDto,
   ProductResponseDto,
+  UpdateProductDto,
 } from '@libs/interfaces/gateway';
 import { ResponseMessage } from '@libs/interceptors';
 import { RateLimit } from '@libs/rate-limit';
 import {
   RATE_LIMIT_DEFAULT_BURST,
   RATE_LIMIT_DEFAULT_RATE,
+  RATE_LIMIT_DELETE_BURST,
+  RATE_LIMIT_DELETE_RATE,
   RATE_LIMIT_MUTATE_BURST,
   RATE_LIMIT_MUTATE_RATE,
 } from '@libs/constants';
@@ -24,7 +28,9 @@ import {
 import {
   CREATE_PRODUCT_EXAMPLE,
   FIND_ALL_PRODUCTS_RESPONSE_EXAMPLE,
+  PRODUCT_ID_EXAMPLE,
   PRODUCT_RESPONSE_EXAMPLE,
+  UPDATE_PRODUCT_EXAMPLE,
 } from './product.examples';
 import { ProductService } from './product.service';
 
@@ -84,5 +90,73 @@ export class ProductController {
   @ApiProblemResponses(HttpStatus.UNPROCESSABLE_ENTITY, HttpStatus.BAD_GATEWAY, HttpStatus.SERVICE_UNAVAILABLE)
   findAll(@Query() query: FindAllProductsDto, @Res({ passthrough: true }) res: Response) {
     return this.productService.findAll(query, res);
+  }
+
+  @Get(':id')
+  @RequirePermission('product:read')
+  @ResponseMessage('Product retrieved successfully')
+  @ApiOperation({ summary: 'Get product', description: "Returns one of the caller organization's products." })
+  @ApiParam({ name: 'id', example: PRODUCT_ID_EXAMPLE })
+  @ApiEnvelopeResponse({
+    status: HttpStatus.OK,
+    description: 'Product retrieved.',
+    model: ProductResponseDto,
+    message: 'Product retrieved successfully',
+    dataExample: PRODUCT_RESPONSE_EXAMPLE,
+  })
+  @ApiProblemResponses(HttpStatus.BAD_REQUEST, HttpStatus.NOT_FOUND, HttpStatus.BAD_GATEWAY)
+  findOne(@Param('id') id: string) {
+    return this.productService.findOne(id);
+  }
+
+  @Patch(':id')
+  @RequirePermission('product:write')
+  @RateLimit({ burst: RATE_LIMIT_MUTATE_BURST, rate: RATE_LIMIT_MUTATE_RATE })
+  @ResponseMessage('Product updated successfully')
+  @ApiOperation({
+    summary: 'Update product',
+    description:
+      'Applies a partial update. Existing invoices keep the values their lines were created with; only new lines see the change. `isActive: true` reactivates a product.',
+  })
+  @ApiParam({ name: 'id', example: PRODUCT_ID_EXAMPLE })
+  @ApiBody({ type: UpdateProductDto, examples: { price: { summary: 'New price', value: UPDATE_PRODUCT_EXAMPLE } } })
+  @ApiEnvelopeResponse({
+    status: HttpStatus.OK,
+    description: 'Product updated.',
+    model: ProductResponseDto,
+    message: 'Product updated successfully',
+    dataExample: { ...PRODUCT_RESPONSE_EXAMPLE, ...UPDATE_PRODUCT_EXAMPLE },
+  })
+  @ApiProblemResponses(
+    HttpStatus.BAD_REQUEST,
+    HttpStatus.UNPROCESSABLE_ENTITY,
+    HttpStatus.NOT_FOUND,
+    HttpStatus.CONFLICT,
+    HttpStatus.BAD_GATEWAY,
+  )
+  update(@Param('id') id: string, @Body() payload: UpdateProductDto) {
+    return this.productService.update(id, payload);
+  }
+
+  @Delete(':id')
+  @RequirePermission('product:write')
+  @RateLimit({ burst: RATE_LIMIT_DELETE_BURST, rate: RATE_LIMIT_DELETE_RATE })
+  @ResponseMessage('Product deactivated successfully')
+  @ApiOperation({
+    summary: 'Deactivate product',
+    description:
+      'Soft-deactivates a product (isActive false): new invoice lines can no longer use it; existing invoices are unchanged.',
+  })
+  @ApiParam({ name: 'id', example: PRODUCT_ID_EXAMPLE })
+  @ApiEnvelopeResponse({
+    status: HttpStatus.OK,
+    description: 'Product deactivated.',
+    model: DeactivateProductResponseDto,
+    message: 'Product deactivated successfully',
+    dataExample: { id: PRODUCT_ID_EXAMPLE, deactivated: true },
+  })
+  @ApiProblemResponses(HttpStatus.BAD_REQUEST, HttpStatus.NOT_FOUND, HttpStatus.BAD_GATEWAY)
+  deactivate(@Param('id') id: string) {
+    return this.productService.deactivate(id);
   }
 }

@@ -1,6 +1,7 @@
 import { existsSync } from 'fs';
 import { join } from 'path';
 import * as ejs from 'ejs';
+import { invoiceView } from '../../../templates/invoice-view';
 import { PdfRendererService } from './pdf-renderer.service';
 
 // Production points PUPPETEER_EXECUTABLE_PATH at the image's system Chromium. Locally and on CI,
@@ -37,17 +38,34 @@ describe('PdfRendererService with a real Chromium', () => {
   });
 
   const invoiceHtml = () =>
-    ejs.renderFile(join(__dirname, '../../../templates/invoice.ejs'), {
-      invoiceNumber: 'INV-PDF-1',
-      client: { name: 'Acme Corp', email: 'billing@acme.test' },
-      items: [{ catalogId: 'sku-1', name: 'Widget', quantity: 2, unitPrice: 50, vatRate: 10, total: 110 }],
-      currency: 'EUR',
-      status: 'sent',
-      issueDate: '2026-10-01',
-      subtotal: 100,
-      vatTotal: 10,
-      total: 110,
-    });
+    ejs.renderFile(
+      join(__dirname, '../../../templates/invoice.ejs'),
+      invoiceView({
+        invoiceNumber: 'INV-PDF-1',
+        client: { name: 'Acme Corp', email: 'billing@acme.test' },
+        items: [
+          {
+            catalogId: 'sku-1',
+            name: 'Widget',
+            quantity: 2,
+            unitPriceMinor: 5000,
+            vatRate: 10,
+            sdRate: 0,
+            netMinor: 10_000,
+            sdMinor: 0,
+            vatMinor: 1000,
+            totalMinor: 11_000,
+          },
+        ],
+        currency: 'EUR',
+        status: 'sent',
+        issueDate: '2026-10-01',
+        netMinor: 10_000,
+        sdMinor: 0,
+        vatMinor: 1000,
+        totalMinor: 11_000,
+      }),
+    );
 
   it('reports the browser as connected after startup (the liveness signal)', () => {
     expect(renderer.isBrowserConnected()).toBe(true);

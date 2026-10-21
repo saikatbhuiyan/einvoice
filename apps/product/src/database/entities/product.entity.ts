@@ -10,9 +10,9 @@ import {
 import type { SupportedCurrency } from '@libs/interfaces/gateway';
 
 /**
- * Postgres numeric columns come back as strings (to avoid float precision loss on the
- * driver side). The rest of the codebase treats money as JS numbers (see the invoice
- * schema's rounding), so convert at the persistence boundary instead of leaking strings.
+ * Postgres numeric columns come back as strings (to avoid float precision loss on the driver
+ * side). numeric(14,2) and numeric(5,2) values are exact as JS numbers at that scale, and the API
+ * speaks decimals; invoice converts a price to exact minor units (@libs/money) when it uses it.
  */
 const decimalTransformer: ValueTransformer = {
   to: (value?: number) => value,
@@ -48,6 +48,10 @@ export class ProductEntity {
 
   @Column({ type: 'numeric', precision: 5, scale: 2, default: 0, transformer: decimalTransformer })
   vatRate!: number;
+
+  /** Bangladesh supplementary duty (percent of the net amount; VAT is charged on net + SD). */
+  @Column({ type: 'numeric', precision: 5, scale: 2, default: 0, transformer: decimalTransformer })
+  sdRate!: number;
 
   @Column({ type: 'boolean', default: true })
   isActive!: boolean;

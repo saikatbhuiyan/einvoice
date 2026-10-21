@@ -2,7 +2,7 @@ import { BadRequestException, ConflictException, Inject, Injectable } from '@nes
 import { Error as MongooseError, Types, isValidObjectId, type ClientSession } from 'mongoose';
 import { DEFAULT_LIMIT, DEFAULT_PAGE } from '@libs/constants';
 import { InvoiceDocument, InvoiceModel } from '@libs/schemas';
-import { CreateInvoiceRequest, FindAllInvoicesRequest, UpdateInvoiceRequest } from '@libs/interfaces/gateway';
+import { FindAllInvoicesRequest } from '@libs/interfaces/gateway';
 import { EDITABLE_INVOICE_STATUSES, buildPaginationMeta, type InvoiceStatus } from '@libs/shared/types';
 import { escapeRegExp } from '@libs/shared/utils';
 import { requireOrganizationId } from '@libs/logging/correlation-context';
@@ -11,6 +11,7 @@ import {
   INVOICE_READ_MODEL,
   INVOICE_WRITE_MODEL,
   InTransaction,
+  InvoiceContentUpdate,
   InvoiceRef,
   NewInvoice,
   PaginatedResult,
@@ -94,7 +95,7 @@ export class InvoiceRepository implements IInvoiceRepository {
     return this.readModel.findOne(this.activeFilter(id)).exec();
   }
 
-  async update(id: string, data: UpdateInvoiceRequest, version?: number): Promise<InvoiceDocument | null> {
+  async update(id: string, data: InvoiceContentUpdate, version?: number): Promise<InvoiceDocument | null> {
     if (!isValidObjectId(id)) return null;
 
     const invoice = await this.writeModel.findOne(this.editableFilter(id, version)).exec();
@@ -378,7 +379,7 @@ export class InvoiceRepository implements IInvoiceRepository {
    * skips it), so this is the boundary that keeps `status`, `deletedAt`, `pdfUrl`, `version` etc.
    * out of a create/update — status only ever changes through transitionStatus.
    */
-  private toContentPayload(payload: Partial<CreateInvoiceRequest | UpdateInvoiceRequest>): Record<string, unknown> {
+  private toContentPayload(payload: Partial<NewInvoice | InvoiceContentUpdate>): Record<string, unknown> {
     const result: Record<string, unknown> = {};
 
     for (const field of CONTENT_FIELDS) {

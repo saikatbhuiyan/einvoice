@@ -18,6 +18,7 @@ import (
 	"einvoice/mail/internal/events"
 	"einvoice/mail/internal/failure"
 	"einvoice/mail/internal/mail"
+	"einvoice/mail/internal/money"
 	"einvoice/mail/internal/storage"
 	"einvoice/mail/internal/template"
 )
@@ -79,7 +80,7 @@ func (h *InvoiceHandler) handleSent(ctx context.Context, e events.SentEvent, met
 			ClientName:    e.ClientName,
 			InvoiceNumber: e.InvoiceNumber,
 			Currency:      e.Currency,
-			Total:         fmt.Sprintf("%.2f", e.Total),
+			Total:         money.Format(money.FromEvent(e.TotalMinor, e.Total, e.Currency), e.Currency),
 			IssueDate:     e.IssueDate,
 			DueDate:       e.DueDate,
 		})
@@ -112,7 +113,7 @@ func (h *InvoiceHandler) handleReminder(ctx context.Context, e events.ReminderEv
 			ClientName:     e.ClientName,
 			InvoiceNumber:  e.InvoiceNumber,
 			Currency:       e.Currency,
-			Total:          fmt.Sprintf("%.2f", e.Total),
+			Total:          money.Format(money.FromEvent(e.TotalMinor, e.Total, e.Currency), e.Currency),
 			DueDate:        dateOnly(e.DueDate),
 			DaysOverdue:    e.DaysOverdue,
 			ReminderNumber: e.ReminderNumber,

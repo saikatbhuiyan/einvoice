@@ -1,6 +1,7 @@
 import { ApiPropertyOptional, PartialType } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
   ArrayMinSize,
   IsDateString,
   IsEnum,
@@ -20,7 +21,8 @@ const constraints = INVOICE_CONSTRAINTS;
 
 export class UpdateClientSnapshotDto extends PartialType(ClientSnapshotDto) implements UpdateClientSnapshotRequest {}
 
-export class UpdateInvoiceItemDto extends PartialType(InvoiceItemDto) implements UpdateInvoiceItemRequest {}
+/** Items on update replace the whole list, so each is a complete line, as on create. */
+export class UpdateInvoiceItemDto extends InvoiceItemDto implements UpdateInvoiceItemRequest {}
 
 export class UpdateInvoiceDto implements UpdateInvoiceRequest {
   @ApiPropertyOptional({
@@ -48,10 +50,11 @@ export class UpdateInvoiceDto implements UpdateInvoiceRequest {
     type: () => UpdateInvoiceItemDto,
     isArray: true,
     minItems: 1,
-    description: 'Replace invoice line items with the provided partial item set.',
+    description: 'Replaces all line items; each is a complete line (catalog-backed or free-form), as on create.',
   })
   @IsArray()
-  @ArrayMinSize(1)
+  @ArrayMinSize(INVOICE_CONSTRAINTS.items.minItems)
+  @ArrayMaxSize(INVOICE_CONSTRAINTS.items.maxItems)
   @ValidateNested({ each: true })
   @Type(() => UpdateInvoiceItemDto)
   @IsOptional()

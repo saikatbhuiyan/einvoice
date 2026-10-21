@@ -100,7 +100,8 @@ func sentMessage(eventID, pdfField string) []byte {
 	  "data": {
 	    "type": "invoice.sent", %s "invoiceId": "i1", "invoiceNumber": "INV-7",
 	    "clientName": "Acme Corp", "clientEmail": "billing@acme.test", %s,
-	    "fileName": "invoice-INV-7.pdf", "currency": "EUR", "total": 1234.5, "issueDate": "2026-10-01"
+	    "fileName": "invoice-INV-7.pdf", "currency": "BDT", "totalMinor": 12345050, "total": 123450.5,
+	    "issueDate": "2026-10-01"
 	  },
 	  "meta": {"correlationId": "c1", "traceId": "t1", "sourceService": "invoice", "timestamp": "2026-10-16T09:00:00.000Z"}
 	}`, eventField, pdfField))
@@ -122,7 +123,8 @@ func TestHandleEmailsThePdfFromTheBucketAndRecordsTheEvent(t *testing.T) {
 	if msg.To != "billing@acme.test" || msg.Subject != "Invoice INV-7" {
 		t.Fatalf("To/Subject = %q / %q", msg.To, msg.Subject)
 	}
-	if !strings.Contains(msg.HTMLBody, "1234.50 EUR") {
+	// Formatted from totalMinor: the taka sign and lakh grouping, as on the PDF.
+	if !strings.Contains(msg.HTMLBody, "৳1,23,450.50") || !strings.Contains(msg.HTMLBody, "Total due (BDT)") {
 		t.Fatalf("body is missing the formatted total")
 	}
 	if len(msg.Attachments) != 1 || msg.Attachments[0].Filename != "invoice-INV-7.pdf" ||
@@ -304,6 +306,7 @@ func TestHandleTreatsAMalformedMessageAsPermanent(t *testing.T) {
 	}
 }
 
+// Without totalMinor, as reminders produced before it existed: the decimal total is used.
 func reminderMessage(eventID, pdfKeyValue string) []byte {
 	return []byte(fmt.Sprintf(`{
 	  "data": {
@@ -331,7 +334,7 @@ func TestHandleEmailsAPaymentReminderWithThePdf(t *testing.T) {
 	if msg.To != "billing@acme.test" || msg.Subject != "Reminder: invoice INV-7 is overdue" {
 		t.Fatalf("To/Subject = %q / %q", msg.To, msg.Subject)
 	}
-	for _, want := range []string{"7 days overdue", "2026-10-10", "1234.50 EUR", "Reminder 2 for this invoice"} {
+	for _, want := range []string{"7 days overdue", "2026-10-10", "€1,234.50", "Amount due (EUR)", "Reminder 2 for this invoice"} {
 		if !strings.Contains(msg.HTMLBody, want) {
 			t.Errorf("reminder is missing %q", want)
 		}

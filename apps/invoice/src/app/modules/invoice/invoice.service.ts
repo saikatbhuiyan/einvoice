@@ -15,11 +15,14 @@ import type { Cache } from 'cache-manager';
 import { REDIS_CLIENT, tenantCacheKey } from '@libs/cache';
 import { DEFAULT_LIMIT, DEFAULT_PAGE } from '@libs/constants';
 import {
+  INVOICE_CONSTRAINTS,
   buildPaginationMeta,
   statusesTransitionableTo,
   type CursorPaginationMeta,
   type InvoiceStatus,
+  type SupportedCurrency,
 } from '@libs/shared/types';
+import { fromMinor } from '@libs/money';
 import type { InvoiceDocument } from '@libs/schemas';
 import {
   ClientSnapshotRequest,
@@ -28,6 +31,7 @@ import {
   FindAllInvoicesCursorResponse,
   FindAllInvoicesRequest,
   FindAllInvoicesResponse,
+  InvoiceItemRequest,
   InvoicePdfDownload,
   InvoiceResponse,
   SendInvoiceResponse,
@@ -47,6 +51,9 @@ import { REMINDER_CATCH_UP_MS, daysOverdue, nextReminderAt, startOfUtcDay } from
 import { PdfGeneratorClientService } from './clients/pdf-generator-client.service';
 import { MediaClientService } from './clients/media-client.service';
 import { InvoiceEventsProducerService } from './clients/invoice-events-producer.service';
+import { ProductClientService } from './clients/product-client.service';
+import { LineItemError, catalogProductIds, resolveLines, type StoredLine } from './line-items';
+import { presentInvoice } from './invoice-presenter';
 
 const SVC_PREFIX = 'svc';
 // Tenant-scoped: an invoice id cached for one organization must never be served to another.
@@ -87,6 +94,7 @@ export class InvoiceService {
     private readonly customers: CustomerService,
     private readonly numbering: InvoiceNumberingService,
     private readonly settings: OrganizationSettingsService,
+    private readonly products: ProductClientService,
   ) {
     this.redis = redis;
   }
@@ -96,19 +104,20 @@ export class InvoiceService {
    * snapshotted onto the invoice) or to a one-off client. Unnumbered until issued.
    */
   async create(createInvoiceDto: CreateInvoiceRequest): Promise<InvoiceResponse> {
-    const { customerId, client, ...rest } = createInvoiceDto;
+    const { customerId, client, items, ...rest } = createInvoiceDto;
     // Re-checked here: RPC payloads reach this service without DTO validation.
     if ((customerId === undefined) === (client === undefined)) {
       throw new UnprocessableEntityException('Give either customerId or client, not both and not neither.');
     }
     const snapshot = customerId ? await this.customers.snapshotOf(customerId) : (client as ClientSnapshotRequest);
+    const lines = await this.resolveItems(items, rest.currency);
 
     try {
       // Demo event: proves the outbox -> Kafka -> services/mail pipe end to end, independent of the
       // real invoice.sent event this same topic carries (see send below). Written in the insert's
       // transaction, so an idempotent replay (no insert) doesn't emit it again.
       const createdInvoice = await this.invoiceRepository.create(
-        { ...rest, client: snapshot, customerId },
+        { ...rest, items: lines, client: snapshot, customerId },
         (invoice, session) => this.eventsProducer.enqueueDemo(session, invoice._id.toString()).then(() => undefined),
       );
       await this.bumpListVersion();
@@ -204,21 +213,43 @@ export class InvoiceService {
 
   async update(id: string, updateInvoiceDto: UpdateInvoiceRequest, version?: number): Promise<InvoiceResponse> {
     const previous = await this.invoiceRepository.findOne(this.ensureObjectId(id));
-    const invoice = await this.invoiceRepository.update(this.ensureObjectId(id), updateInvoiceDto, version);
+    if (!previous) {
+      throw new NotFoundException(`Invoice not found for id "${id}".`);
+    }
+
+    const { items, ...rest } = updateInvoiceDto;
+    const currency = rest.currency ?? previous.currency;
+    // Prices are amounts *in* a currency: switching currency without restating the lines would
+    // silently turn 1,500 BDT into 1,500 USD.
+    if (items === undefined && currency !== previous.currency) {
+      throw new UnprocessableEntityException(
+        `Changing the currency from ${previous.currency} to ${currency} requires sending the items in ${currency} too.`,
+      );
+    }
+    const lines = items === undefined ? undefined : await this.resolveItems(items, currency);
+
+    let invoice: InvoiceDocument | null;
+    try {
+      invoice = await this.invoiceRepository.update(
+        this.ensureObjectId(id),
+        lines === undefined ? rest : { ...rest, items: lines },
+        version,
+      );
+    } catch (error) {
+      this.handlePersistenceError(error);
+    }
 
     if (!invoice) {
       throw new NotFoundException(`Invoice not found for id "${id}".`);
     }
 
     await Promise.all([this.delCacheKey(CACHE_KEY_ONE(id)), this.bumpListVersion()]);
-    const previousJson = previous ? (previous.toJSON() as unknown as Record<string, unknown>) : undefined;
+    const previousJson = previous.toJSON() as unknown as Record<string, unknown>;
     await this.auditLog.record({
       action: 'UPDATE',
       entityType: 'invoice',
       entityId: id,
-      diff: previousJson
-        ? this.diffFields(previousJson, invoice.toJSON() as unknown as Record<string, unknown>)
-        : undefined,
+      diff: this.diffFields(previousJson, invoice.toJSON() as unknown as Record<string, unknown>),
       previous: previousJson,
     });
 
@@ -338,7 +369,7 @@ export class InvoiceService {
           pdfKey: stored.pdfKey as string,
           fileName: pdfFileName(stored.pdfKey as string),
           currency: stored.currency,
-          total: stored.total,
+          ...eventAmount(stored.totalMinor, stored.currency),
           issueDate: stored.issueDate.toISOString(),
           dueDate: stored.dueDate?.toISOString(),
         })
@@ -473,7 +504,7 @@ export class InvoiceService {
             pdfKey: pdf.key,
             fileName: pdf.fileName,
             currency: stored.currency,
-            total: stored.total,
+            ...eventAmount(stored.totalMinor, stored.currency),
             dueDate: dueDate.toISOString(),
             daysOverdue: daysOverdue(dueDate, now),
             reminderNumber: stored.remindersSent,
@@ -513,18 +544,23 @@ export class InvoiceService {
         catalogId: item.catalogId,
         name: item.name,
         quantity: item.quantity,
-        unitPrice: item.unitPrice,
+        unitPriceMinor: item.unitPriceMinor,
         vatRate: item.vatRate,
-        total: item.total,
+        sdRate: item.sdRate,
+        netMinor: item.netMinor,
+        sdMinor: item.sdMinor,
+        vatMinor: item.vatMinor,
+        totalMinor: item.totalMinor,
       })),
       currency: invoice.currency,
       status: invoice.status,
       issueDate: invoice.issueDate.toISOString(),
       dueDate: invoice.dueDate?.toISOString(),
       notes: invoice.notes,
-      subtotal: invoice.subtotal,
-      vatTotal: invoice.vatTotal,
-      total: invoice.total,
+      netMinor: invoice.netMinor,
+      sdMinor: invoice.sdMinor,
+      vatMinor: invoice.vatMinor,
+      totalMinor: invoice.totalMinor,
     });
 
     const { key } = await this.mediaClient.uploadFile({ fileName, contentType, base64 });
@@ -592,7 +628,31 @@ export class InvoiceService {
   }
 
   private toInvoiceResponse(invoice: { toJSON(): unknown }): InvoiceResponse {
-    return invoice.toJSON() as InvoiceResponse;
+    return presentInvoice(invoice.toJSON());
+  }
+
+  /**
+   * Request lines -> stored lines: catalog lines filled from this organization's products (one
+   * lookup for the whole invoice; product scopes it to the caller's organization, so another
+   * organization's product is simply "not found").
+   */
+  private async resolveItems(
+    items: InvoiceItemRequest[] | undefined,
+    currency: SupportedCurrency,
+  ): Promise<StoredLine[]> {
+    // Re-checked here: RPC payloads reach this service without DTO validation.
+    const { minItems, maxItems } = INVOICE_CONSTRAINTS.items;
+    if (!Array.isArray(items) || items.length < minItems || items.length > maxItems) {
+      throw new UnprocessableEntityException(`An invoice needs between ${minItems} and ${maxItems} items.`);
+    }
+    const ids = catalogProductIds(items);
+    const products = ids.length > 0 ? await this.products.findMany(ids) : [];
+    try {
+      return resolveLines(items, currency, new Map(products.map((product) => [product.id, product])));
+    } catch (error) {
+      if (error instanceof LineItemError) throw new UnprocessableEntityException(error.message);
+      throw error;
+    }
   }
 
   private handlePersistenceError(error: unknown): never {
@@ -610,6 +670,14 @@ export class InvoiceService {
 
     return messages.length > 0 ? messages.join(' ') : error.message;
   }
+}
+
+/**
+ * Events carry the exact amount (`totalMinor`) and, for consumers that predate it, the decimal
+ * `total`. Exact for every supported currency: minor units below 2^53 survive as a double.
+ */
+function eventAmount(totalMinor: number, currency: string): { total: number; totalMinor: number } {
+  return { total: fromMinor(totalMinor, currency as SupportedCurrency), totalMinor };
 }
 
 /** Keys are `invoices/<uuid>/<fileName>`; the file name is what the browser should save it as. */

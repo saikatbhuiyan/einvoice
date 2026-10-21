@@ -8,8 +8,9 @@
     "clientEmail": "ap@globex.test",
     "pdfKey": "invoices/7c1d9a40-5e2f-4b8a-8f63-3a9e0b1d2c45/invoice-INV-2026-002.pdf",
     "fileName": "invoice-INV-2026-002.pdf",
-    "currency": "USD",
-    "total": 10,
+    "currency": "BDT",
+    "totalMinor": 138000050,
+    "total": 1380000.5,
     "issueDate": "2026-10-01T00:00:00.000Z"
   },
   "meta": {

@@ -7,6 +7,7 @@ import {
 } from '@libs/interfaces/gateway';
 import type { ClientSession } from 'mongoose';
 import type { InvoiceStatus } from '@libs/shared/types';
+import type { StoredLine } from './line-items';
 
 export const INVOICE_REPOSITORY = Symbol('INVOICE_REPOSITORY');
 
@@ -45,11 +46,18 @@ export interface PaginatedResult<T = InvoiceDocument> {
  */
 export type InTransaction = (invoice: InvoiceDocument, session: ClientSession) => Promise<void>;
 
-/** A create request whose client snapshot has been resolved (inline, or copied from a customer). */
-export type NewInvoice = Omit<CreateInvoiceRequest, 'client' | 'customerId'> & {
+/**
+ * A create request after the service resolved it: the client snapshot (inline, or copied from a
+ * customer) and the lines (catalog values filled in, amounts in minor units).
+ */
+export type NewInvoice = Omit<CreateInvoiceRequest, 'client' | 'customerId' | 'items'> & {
   client: ClientSnapshotRequest;
   customerId?: string;
+  items: StoredLine[];
 };
+
+/** An update after the service resolved its lines. */
+export type InvoiceContentUpdate = Omit<UpdateInvoiceRequest, 'items'> & { items?: StoredLine[] };
 
 export interface TransitionOptions {
   /**
@@ -74,7 +82,7 @@ export interface IInvoiceRepository {
   findOne(id: string): Promise<InvoiceDocument | null>;
 
   /** Only a draft can be edited: 409 for any other status, decided atomically with the write. */
-  update(id: string, data: UpdateInvoiceRequest, version?: number): Promise<InvoiceDocument | null>;
+  update(id: string, data: InvoiceContentUpdate, version?: number): Promise<InvoiceDocument | null>;
 
   /** Only a draft can be deleted: 409 for any other status, decided atomically with the write. */
   remove(id: string, version?: number): Promise<InvoiceDocument | null>;

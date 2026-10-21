@@ -24,6 +24,12 @@ export class ClientSnapshotResponseDto implements ClientSnapshotResponse {
 }
 
 export class InvoiceItemResponseDto implements InvoiceItemResponse {
+  @ApiPropertyOptional({
+    example: '5f1d7c1e-2b9a-4c64-9a7e-3f1c2d4b5a6e',
+    description: 'Set when the line came from the catalog.',
+  })
+  productId?: string;
+
   @ApiProperty({ example: 'SKU-SUBSCRIPTION-PRO' })
   catalogId!: string;
 
@@ -39,7 +45,19 @@ export class InvoiceItemResponseDto implements InvoiceItemResponse {
   @ApiProperty({ example: 15 })
   vatRate!: number;
 
-  @ApiProperty({ example: 34500, description: 'Line total including VAT.' })
+  @ApiProperty({ example: 0, description: 'Supplementary duty percentage (Bangladesh).' })
+  sdRate!: number;
+
+  @ApiProperty({ example: 30000, description: 'quantity x unitPrice.' })
+  net!: number;
+
+  @ApiProperty({ example: 0, description: 'Supplementary duty on net.' })
+  sd!: number;
+
+  @ApiProperty({ example: 4500, description: 'VAT on net + SD.' })
+  vat!: number;
+
+  @ApiProperty({ example: 34500, description: 'Line total: net + SD + VAT.' })
   total!: number;
 }
 
@@ -87,8 +105,11 @@ export class InvoiceResponseDto implements InvoiceResponse {
   @ApiPropertyOptional({ example: 'Payment due within 30 days.' })
   notes?: string;
 
-  @ApiProperty({ example: 30000, description: 'Invoice subtotal before VAT.' })
+  @ApiProperty({ example: 30000, description: 'Sum of line nets, before SD and VAT.' })
   subtotal!: number;
+
+  @ApiProperty({ example: 0, description: 'Sum of line supplementary duty (Bangladesh); 0 elsewhere.' })
+  sdTotal!: number;
 
   @ApiProperty({ example: 4500, description: 'Total VAT amount.' })
   vatTotal!: number;

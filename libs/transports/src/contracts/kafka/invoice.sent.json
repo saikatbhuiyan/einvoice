@@ -9,6 +9,7 @@
     "pdfKey": "invoices/2b6f0c2e-1c3a-4e3b-9a51-0d2f7b6c9e10/invoice-INV-2026-001.pdf",
     "fileName": "invoice-INV-2026-001.pdf",
     "currency": "EUR",
+    "totalMinor": 12990,
     "total": 129.9,
     "issueDate": "2026-10-01T00:00:00.000Z",
     "dueDate": "2026-10-31T00:00:00.000Z"

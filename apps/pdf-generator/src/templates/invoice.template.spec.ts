@@ -1,38 +1,66 @@
 import { join } from 'path';
 import * as ejs from 'ejs';
 import type { GenerateInvoicePdfRequest } from '@libs/transports';
+import { invoiceView } from './invoice-view';
 
 // Renders the real template file. TemplateRendererService resolves it relative to the bundled
 // main.js (dist/apps/pdf-generator/templates), so the spec points at the source copy directly.
 const TEMPLATE = join(__dirname, 'invoice.ejs');
 
-const render = (data: object) => ejs.renderFile(TEMPLATE, data);
+const render = (data: GenerateInvoicePdfRequest) => ejs.renderFile(TEMPLATE, invoiceView(data));
+
+const line = (fields: Partial<GenerateInvoicePdfRequest['items'][number]>) => ({
+  catalogId: 'sku',
+  name: 'Item',
+  quantity: 1,
+  unitPriceMinor: 0,
+  vatRate: 0,
+  sdRate: 0,
+  netMinor: 0,
+  sdMinor: 0,
+  vatMinor: 0,
+  totalMinor: 0,
+  ...fields,
+});
 
 const invoice = (): GenerateInvoicePdfRequest => ({
   invoiceNumber: 'INV-2026-001',
   client: { name: 'Acme Corp', email: 'billing@acme.test', address: '1 Infinite Loop' },
   items: [
-    { catalogId: 'sku-1', name: 'Widget', quantity: 2, unitPrice: 50, vatRate: 10, total: 110 },
-    { catalogId: 'sku-2', name: 'Gadget', quantity: 1, unitPrice: 19.9, vatRate: 0, total: 19.9 },
+    line({
+      name: 'Widget',
+      quantity: 2,
+      unitPriceMinor: 5000,
+      vatRate: 10,
+      netMinor: 10_000,
+      vatMinor: 1000,
+      totalMinor: 11_000,
+    }),
+    line({ name: 'Gadget', unitPriceMinor: 1990, netMinor: 1990, totalMinor: 1990 }),
   ],
   currency: 'EUR',
   status: 'sent',
   issueDate: '2026-10-01',
   dueDate: '2026-10-31',
   notes: 'Thank you for your business',
-  subtotal: 119.9,
-  vatTotal: 10,
-  total: 129.9,
+  netMinor: 11_990,
+  sdMinor: 0,
+  vatMinor: 1000,
+  totalMinor: 12_990,
 });
 
 describe('invoice.ejs', () => {
-  it('renders the header, every line item, and two-decimal totals', async () => {
+  it('renders the header, every line item, and amounts formatted from minor units', async () => {
     const html = await render(invoice());
 
     expect(html).toContain('<title>Invoice INV-2026-001</title>');
     expect(html.match(/<td>(Widget|Gadget)<\/td>/g)).toEqual(['<td>Widget</td>', '<td>Gadget</td>']);
-    expect(html).toContain('19.90 EUR');
-    expect(html).toContain('129.90 EUR');
+    expect(html).toContain('€19.90');
+    expect(html).toContain('€129.90');
+    expect(html).toContain('Total (EUR)');
+    // No line has supplementary duty: no SD column, no SD total.
+    expect(html).not.toContain('<th class="num">SD</th>');
+    expect(html).not.toContain('Supplementary duty');
     expect(html).toContain('Due: 2026-10-31');
     expect(html).toContain('Thank you for your business');
   });
@@ -49,6 +77,37 @@ describe('invoice.ejs', () => {
     expect(html).not.toContain('Due:');
     expect(html).not.toContain('class="notes"');
     expect(dueDate && notes).toBeTruthy();
+  });
+
+  it('formats BDT with the taka sign and lakh/crore grouping, and shows SD when a line has it', async () => {
+    // 10 x ৳1,00,000 with SD 20% then VAT 15% on net + SD.
+    const html = await render({
+      ...invoice(),
+      currency: 'BDT',
+      items: [
+        line({
+          name: 'Air conditioner',
+          quantity: 10,
+          unitPriceMinor: 10_000_000,
+          vatRate: 15,
+          sdRate: 20,
+          netMinor: 100_000_000,
+          sdMinor: 20_000_000,
+          vatMinor: 18_000_000,
+          totalMinor: 138_000_000,
+        }),
+      ],
+      netMinor: 100_000_000,
+      sdMinor: 20_000_000,
+      vatMinor: 18_000_000,
+      totalMinor: 138_000_000,
+    });
+
+    expect(html).toContain('৳1,00,000.00'); // unit price
+    expect(html).toContain('৳13,80,000.00'); // line and grand total
+    expect(html).toContain('<th class="num">SD</th>');
+    expect(html).toContain('<td class="num">20%</td>');
+    expect(html).toContain('Supplementary duty</span><span>৳2,00,000.00');
   });
 
   it('omits the address line for a client without one', async () => {

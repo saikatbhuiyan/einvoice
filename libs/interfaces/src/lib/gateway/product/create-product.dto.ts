@@ -2,6 +2,7 @@ import { Type } from 'class-transformer';
 import { IsBoolean, IsEnum, IsNumber, IsOptional, IsString, Length, Max, MaxLength, Min } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Sanitize } from '@libs/decorators';
+import { INVOICE_CONSTRAINTS } from '@libs/shared/types';
 import { PRODUCT_CONSTRAINTS, SUPPORTED_CURRENCIES } from './product.types';
 import type { CreateProductRequest, SupportedCurrency } from './product.types';
 
@@ -73,6 +74,21 @@ export class CreateProductDto implements CreateProductRequest {
   @Min(constraints.vatRate.min)
   @Max(constraints.vatRate.max)
   vatRate!: number;
+
+  @ApiPropertyOptional({
+    example: 0,
+    default: 0,
+    minimum: INVOICE_CONSTRAINTS.item.sdRate.min,
+    maximum: INVOICE_CONSTRAINTS.item.sdRate.max,
+    description:
+      'Bangladesh supplementary duty percentage, charged on the net amount; VAT is then charged on net + SD. Defaults to 0.',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: INVOICE_CONSTRAINTS.item.sdRate.maxDecimalPlaces })
+  @Min(INVOICE_CONSTRAINTS.item.sdRate.min)
+  @Max(INVOICE_CONSTRAINTS.item.sdRate.max)
+  sdRate?: number;
 
   @ApiPropertyOptional({
     example: true,

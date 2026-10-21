@@ -37,6 +37,9 @@ export interface InvoiceSentEvent extends InvoiceEventMetadata {
   pdfKey: string;
   fileName: string;
   currency: string;
+  /** The total in the currency's minor unit (poisha, cents): exact. Format from this. */
+  totalMinor: number;
+  /** The same total as a decimal, for consumers that predate totalMinor. */
   total: number;
   issueDate: string;
   dueDate?: string;
@@ -67,6 +70,9 @@ export interface InvoiceReminderEvent extends InvoiceEventMetadata {
   pdfKey: string;
   fileName: string;
   currency: string;
+  /** The total in the currency's minor unit (poisha, cents): exact. Format from this. */
+  totalMinor: number;
+  /** The same total as a decimal, for consumers that predate totalMinor. */
   total: number;
   dueDate: string;
   /** Whole days past the due date when the reminder was sent (1 on the first overdue day). */

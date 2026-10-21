@@ -96,6 +96,9 @@ services:
       MEDIA_SERVICE_PORT: ${MEDIA_SERVICE_PORT:-3312}
       # How often the overdue scheduler looks for newly overdue invoices and due payment reminders.
       OVERDUE_SCAN_INTERVAL_MS: ${OVERDUE_SCAN_INTERVAL_MS:-900000}
+      # Catalog-backed invoice lines read the organization's products.
+      PRODUCT_SERVICE_HOST: product
+      PRODUCT_SERVICE_PORT: ${PRODUCT_SERVICE_PORT:-3304}
       # The organization's invoicing settings (prefix, reminder schedule).
       USER_SERVICE_HOST: user-access
       USER_SERVICE_PORT: ${USER_SERVICE_PORT:-3306}

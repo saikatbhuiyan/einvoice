@@ -10,7 +10,33 @@ export interface CreateProductRequest {
   unitPrice: number;
   currency: SupportedCurrency;
   vatRate: number;
+  /** Bangladesh supplementary duty percentage; defaults to 0. */
+  sdRate?: number;
   isActive?: boolean;
+}
+
+/**
+ * Any subset of a product's fields. Existing invoices keep the values they were created with (lines
+ * are snapshots); only new lines see the change.
+ */
+export type UpdateProductRequest = Partial<CreateProductRequest>;
+
+export interface ProductIdGatewayRequest {
+  id: string;
+}
+
+export interface UpdateProductGatewayRequest extends ProductIdGatewayRequest {
+  data: UpdateProductRequest;
+}
+
+/** invoice resolving catalog-backed lines (organization-scoped; unknown ids are simply absent). */
+export interface FindManyProductsRequest {
+  ids: string[];
+}
+
+export interface DeactivateProductResponse {
+  id: string;
+  deactivated: true;
 }
 
 export interface FindAllProductsRequest {
@@ -28,6 +54,8 @@ export interface ProductResponse {
   unitPrice: number;
   currency: SupportedCurrency;
   vatRate: number;
+  /** Bangladesh supplementary duty percentage; 0 elsewhere. */
+  sdRate: number;
   isActive: boolean;
   createdAt: string | Date;
   updatedAt: string | Date;
