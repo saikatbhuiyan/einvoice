@@ -124,7 +124,7 @@ describe('transactional outbox (real Mongo replica set, Kafka, Redis)', () => {
     ({
       reference: `OBX-${++counter}`,
       client: { name: 'Acme Corp', email: 'billing@acme.test', address: '1 Main St' },
-      items: [{ catalogId: 'sku-1', name: 'Widget', quantity: 1, unitPrice: 100, vatRate: 0 }],
+      items: [{ catalogId: 'sku-1', name: 'Widget', quantity: 1, unitPriceMinor: 10_000, vatRate: 0, sdRate: 0 }],
       currency: 'USD',
     }) as NewInvoice;
 

@@ -1,6 +1,7 @@
-import { ConflictException, Inject, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { QueryFailedError } from 'typeorm';
 import { createHash } from 'crypto';
+import { isUUID } from 'class-validator';
 import Redis from 'ioredis';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import type { Cache } from 'cache-manager';
@@ -9,18 +10,20 @@ import { DEFAULT_LIMIT, DEFAULT_PAGE } from '@libs/constants';
 import { buildPaginationMeta } from '@libs/shared/types';
 import {
   CreateProductRequest,
+  DeactivateProductResponse,
   FindAllProductsRequest,
   FindAllProductsResponse,
   ProductResponse,
+  UpdateProductRequest,
 } from '@libs/interfaces/gateway';
 import { ProductEntity } from '../../../database/entities/product.entity';
 import { IProductRepository, PRODUCT_REPOSITORY } from './product.repository.interface';
 
 const POSTGRES_UNIQUE_VIOLATION = '23505';
 
-// Same shape as invoice.service.ts's own caching (svc prefix, version+hash keyed list cache,
-// version bumped on write) — product only exposes create + list today, so there's no per-item
-// cache key yet, only the list one.
+// Same shape as invoice.service.ts's list caching (svc prefix, version+hash keyed list cache,
+// version bumped on write). Single products aren't cached: invoice must see a deactivation or price
+// change at once, and a primary-key lookup is cheap.
 const SVC_PREFIX = 'svc';
 // Catalogs are per organization: list keys and the version counter are tenant-scoped.
 const CACHE_KEY_LIST = (version: number, hash: string) => tenantCacheKey(SVC_PREFIX, 'product', 'list', version, hash);
@@ -49,6 +52,42 @@ export class ProductService {
     } catch (error) {
       this.handlePersistenceError(error, createProductDto.sku);
     }
+  }
+
+  async findOne(id: string): Promise<ProductResponse> {
+    const product = await this.productRepository.findOne(this.ensureUuid(id));
+    if (!product) throw new NotFoundException(`Product not found for id "${id}".`);
+    return this.toProductResponse(product);
+  }
+
+  /**
+   * For invoice's catalog-backed lines: the organization's products among `ids`, inactive ones
+   * included (invoice reports those as inactive rather than missing). Malformed ids match nothing.
+   */
+  async findMany(ids: unknown): Promise<ProductResponse[]> {
+    const valid = Array.isArray(ids) ? ids.filter((id): id is string => typeof id === 'string' && isUUID(id)) : [];
+    const products = await this.productRepository.findMany([...new Set(valid)]);
+    return products.map((product) => this.toProductResponse(product));
+  }
+
+  async update(id: string, data: UpdateProductRequest): Promise<ProductResponse> {
+    let updated: ProductEntity | null;
+    try {
+      updated = await this.productRepository.update(this.ensureUuid(id), data ?? {});
+    } catch (error) {
+      this.handlePersistenceError(error, data?.sku ?? '');
+    }
+    if (!updated) throw new NotFoundException(`Product not found for id "${id}".`);
+    await this.bumpListVersion();
+    return this.toProductResponse(updated);
+  }
+
+  /** Soft: invoices keep their lines' snapshot of it; new catalog lines can't use it. */
+  async deactivate(id: string): Promise<DeactivateProductResponse> {
+    const updated = await this.productRepository.update(this.ensureUuid(id), { isActive: false });
+    if (!updated) throw new NotFoundException(`Product not found for id "${id}".`);
+    await this.bumpListVersion();
+    return { id, deactivated: true };
   }
 
   async findAll(query: FindAllProductsRequest): Promise<FindAllProductsResponse> {
@@ -112,10 +151,19 @@ export class ProductService {
       unitPrice: product.unitPrice,
       currency: product.currency,
       vatRate: product.vatRate,
+      sdRate: product.sdRate,
       isActive: product.isActive,
       createdAt: product.createdAt,
       updatedAt: product.updatedAt,
     };
+  }
+
+  /** Re-checked here: RPC payloads skip DTO validation, and Postgres rejects a malformed uuid with a 500. */
+  private ensureUuid(id: string): string {
+    if (typeof id !== 'string' || !isUUID(id)) {
+      throw new BadRequestException(`"${id}" is not a valid product id.`);
+    }
+    return id;
   }
 
   private handlePersistenceError(error: unknown, sku: string): never {

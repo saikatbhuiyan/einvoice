@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
 import { InvoiceModelName, InvoiceSchema } from './invoice.schema';
 
-describe('Invoice schema - recalculateTotals pre-validate hook', () => {
+describe('Invoice schema - pre-validate tax computation', () => {
   const Invoice = mongoose.model(InvoiceModelName, InvoiceSchema);
 
   const ORG = '00000000-0000-4000-8000-000000000001';
@@ -11,44 +11,101 @@ describe('Invoice schema - recalculateTotals pre-validate hook', () => {
     address: '1 Infinite Loop, Cupertino',
   };
 
-  it('rounds and sums per-item and invoice-level subtotal/vatTotal/total across multiple items', async () => {
+  it('computes every line in exact minor units and totals as the sums of the lines', async () => {
     const invoice = new Invoice({
       organizationId: ORG,
       client,
       currency: 'USD',
       items: [
-        { catalogId: 'sku-1', name: 'Widget', quantity: 2, unitPrice: 10, vatRate: 20 },
-        { catalogId: 'sku-2', name: 'Gadget', quantity: 1, unitPrice: 5.5, vatRate: 10 },
+        { catalogId: 'sku-1', name: 'Widget', quantity: 2, unitPriceMinor: 1000, vatRate: 20 },
+        { catalogId: 'sku-2', name: 'Gadget', quantity: 1, unitPriceMinor: 550, vatRate: 10 },
       ],
     });
 
     await invoice.validate();
 
-    // item 1: subtotal 2*10=20, vat 20% => 4, total 24
-    expect(invoice.items[0].total).toBe(24);
-    // item 2: subtotal 5.5, vat 10% => 0.55, total 6.05
-    expect(invoice.items[1].total).toBeCloseTo(6.05, 2);
-
-    expect(invoice.subtotal).toBeCloseTo(25.5, 2);
-    expect(invoice.vatTotal).toBeCloseTo(4.55, 2);
-    expect(invoice.total).toBeCloseTo(30.05, 2);
+    // 2 x 10.00 = 20.00, VAT 20% = 4.00
+    expect(invoice.items[0]).toMatchObject({ netMinor: 2000, sdMinor: 0, vatMinor: 400, totalMinor: 2400 });
+    // 5.50, VAT 10% = 0.55
+    expect(invoice.items[1]).toMatchObject({ netMinor: 550, sdMinor: 0, vatMinor: 55, totalMinor: 605 });
+    expect(invoice).toMatchObject({ netMinor: 2550, sdMinor: 0, vatMinor: 455, totalMinor: 3005 });
   });
 
-  it('rounds fractional cent results to 2 decimal places', async () => {
+  it('rounds each line half-up at the minor unit', async () => {
     const invoice = new Invoice({
       organizationId: ORG,
       client,
       currency: 'USD',
-      items: [{ catalogId: 'sku-1', name: 'Widget', quantity: 3, unitPrice: 0.1, vatRate: 15 }],
+      items: [{ catalogId: 'sku-1', name: 'Widget', quantity: 3, unitPriceMinor: 10, vatRate: 15 }],
     });
 
     await invoice.validate();
 
-    // subtotal 3*0.1=0.3, vat 15% of 0.3 = 0.045 -> rounds to 0.05, total 0.35
-    expect(invoice.items[0].total).toBeCloseTo(0.35, 2);
-    expect(invoice.subtotal).toBeCloseTo(0.3, 2);
-    expect(invoice.vatTotal).toBeCloseTo(0.05, 2);
-    expect(invoice.total).toBeCloseTo(0.35, 2);
+    // 3 x 0.10 = 0.30; 15% of 0.30 = 0.045 -> 0.05
+    expect(invoice).toMatchObject({ netMinor: 30, vatMinor: 5, totalMinor: 35 });
+  });
+
+  // Bangladesh: VAT is charged on the value including supplementary duty.
+  it('charges SD on the net amount and VAT on net + SD', async () => {
+    const invoice = new Invoice({
+      organizationId: ORG,
+      client,
+      currency: 'BDT',
+      items: [
+        {
+          catalogId: 'AC-1',
+          name: 'Air conditioner',
+          quantity: 10,
+          unitPriceMinor: 10_000_000,
+          vatRate: 15,
+          sdRate: 20,
+        },
+      ],
+    });
+
+    await invoice.validate();
+
+    expect(invoice.items[0]).toMatchObject({
+      netMinor: 100_000_000,
+      sdMinor: 20_000_000,
+      vatMinor: 18_000_000,
+      totalMinor: 138_000_000,
+    });
+    expect(invoice.totalMinor).toBe(138_000_000);
+  });
+
+  // Totals are never taken from the caller: the hook overwrites whatever was set.
+  it('recomputes totals that were set directly', async () => {
+    const invoice = new Invoice({
+      organizationId: ORG,
+      client,
+      currency: 'USD',
+      items: [{ catalogId: 'sku-1', name: 'Widget', quantity: 1, unitPriceMinor: 1000, vatRate: 0, totalMinor: 1 }],
+      totalMinor: 1,
+    });
+
+    await invoice.validate();
+
+    expect(invoice.items[0].totalMinor).toBe(1000);
+    expect(invoice.totalMinor).toBe(1000);
+  });
+
+  it('rejects a fractional minor-unit price and a quantity with more than two decimals', async () => {
+    const fractionalPrice = new Invoice({
+      organizationId: ORG,
+      client,
+      currency: 'USD',
+      items: [{ catalogId: 'sku-1', name: 'Widget', quantity: 1, unitPriceMinor: 10.5, vatRate: 0 }],
+    });
+    await expect(fractionalPrice.validate()).rejects.toThrow(/unitPriceMinor/);
+
+    const fineQuantity = new Invoice({
+      organizationId: ORG,
+      client,
+      currency: 'USD',
+      items: [{ catalogId: 'sku-1', name: 'Widget', quantity: 1.005, unitPriceMinor: 1000, vatRate: 0 }],
+    });
+    await expect(fineQuantity.validate()).rejects.toThrow(/at most 2 decimal places/);
   });
 
   // Every invoice belongs to an organization: tenancy is enforced at the schema too, not only by
@@ -57,7 +114,7 @@ describe('Invoice schema - recalculateTotals pre-validate hook', () => {
     const invoice = new Invoice({
       client,
       currency: 'USD',
-      items: [{ catalogId: 'sku-1', name: 'Widget', quantity: 1, unitPrice: 10, vatRate: 0 }],
+      items: [{ catalogId: 'sku-1', name: 'Widget', quantity: 1, unitPriceMinor: 1000, vatRate: 0 }],
     });
 
     await expect(invoice.validate()).rejects.toMatchObject({ errors: { organizationId: expect.anything() } });
@@ -71,7 +128,7 @@ describe('Invoice schema - recalculateTotals pre-validate hook', () => {
       currency: 'USD',
       issueDate: new Date('2026-10-20T10:30:00.000Z'),
       dueDate: new Date('2026-10-20T00:00:00.000Z'),
-      items: [{ catalogId: 'sku-1', name: 'Widget', quantity: 1, unitPrice: 10, vatRate: 0 }],
+      items: [{ catalogId: 'sku-1', name: 'Widget', quantity: 1, unitPriceMinor: 1000, vatRate: 0 }],
     });
 
     await expect(invoice.validate()).resolves.toBeUndefined();
@@ -84,7 +141,7 @@ describe('Invoice schema - recalculateTotals pre-validate hook', () => {
       currency: 'USD',
       issueDate: new Date('2024-02-01'),
       dueDate: new Date('2024-01-01'),
-      items: [{ catalogId: 'sku-1', name: 'Widget', quantity: 1, unitPrice: 10, vatRate: 0 }],
+      items: [{ catalogId: 'sku-1', name: 'Widget', quantity: 1, unitPriceMinor: 1000, vatRate: 0 }],
     });
 
     await expect(invoice.validate()).rejects.toThrow(/dueDate cannot be earlier than issueDate/);
@@ -97,7 +154,7 @@ describe('Invoice schema - recalculateTotals pre-validate hook', () => {
       currency: 'USD',
       issueDate: new Date('2024-01-01'),
       dueDate: new Date('2024-01-01'),
-      items: [{ catalogId: 'sku-1', name: 'Widget', quantity: 1, unitPrice: 10, vatRate: 0 }],
+      items: [{ catalogId: 'sku-1', name: 'Widget', quantity: 1, unitPriceMinor: 1000, vatRate: 0 }],
     });
 
     await expect(invoice.validate()).resolves.toBeUndefined();

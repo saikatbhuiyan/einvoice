@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { join } from 'path';
 import * as ejs from 'ejs';
 import type { GenerateInvoicePdfRequest } from '@libs/transports';
+import { invoiceView } from '../../../templates/invoice-view';
 
 // dist/apps/pdf-generator/templates at runtime — the same __dirname-resolves-inside-the-bundled-
 // app pattern documented in libs/transports/src/lib/grpc.config.ts for .proto files, applied here
@@ -11,6 +12,6 @@ const TEMPLATES_DIR = join(__dirname, 'templates');
 @Injectable()
 export class TemplateRendererService {
   async renderInvoiceHtml(invoice: GenerateInvoicePdfRequest): Promise<string> {
-    return ejs.renderFile(join(TEMPLATES_DIR, 'invoice.ejs'), invoice);
+    return ejs.renderFile(join(TEMPLATES_DIR, 'invoice.ejs'), invoiceView(invoice));
   }
 }

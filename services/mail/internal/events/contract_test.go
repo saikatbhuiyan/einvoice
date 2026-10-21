@@ -59,6 +59,15 @@ func TestContractDemoEvent(t *testing.T) {
 	wantMeta(t, meta, contractOrganization)
 }
 
+// totalMinor decodes to a pointer (nil when absent, as in events produced before it existed), which
+// struct equality would compare by address: check its value, then drop it so the rest compares.
+func takeTotalMinor(t *testing.T, got *int64, want int64) {
+	t.Helper()
+	if got == nil || *got != want {
+		t.Fatalf("totalMinor = %v, want %d", got, want)
+	}
+}
+
 // The fields every invoice.sent fixture shares; each test adds what differs (eventId, pdfKey/pdfUrl).
 func baseSentEvent(eventType string) SentEvent {
 	return SentEvent{
@@ -90,6 +99,8 @@ func decodeSent(t *testing.T, name string) (SentEvent, Meta) {
 
 func TestContractSentEvent(t *testing.T) {
 	got, meta := decodeSent(t, "invoice.sent.json")
+	takeTotalMinor(t, got.TotalMinor, 12990)
+	got.TotalMinor = nil
 
 	want := baseSentEvent(TypeSent)
 	want.EventID = "6710000000000000000000e2"
@@ -104,7 +115,8 @@ func TestContractSentEvent(t *testing.T) {
 func TestContractSentWithoutDueDate(t *testing.T) {
 	got, _ := decodeSent(t, "invoice.sent.no-due-date.json")
 
-	if got.DueDate != "" || got.Total != 10 || got.Currency != "USD" || got.EventID != "6710000000000000000000e3" ||
+	takeTotalMinor(t, got.TotalMinor, 138000050)
+	if got.DueDate != "" || got.Total != 1380000.5 || got.Currency != "BDT" || got.EventID != "6710000000000000000000e3" ||
 		got.PdfKey != "invoices/7c1d9a40-5e2f-4b8a-8f63-3a9e0b1d2c45/invoice-INV-2026-002.pdf" {
 		t.Fatalf("event = %+v", got)
 	}
@@ -157,6 +169,8 @@ func TestContractReminderEvent(t *testing.T) {
 	if !isReminder {
 		t.Fatalf("event type = %T, want ReminderEvent", event)
 	}
+	takeTotalMinor(t, got.TotalMinor, 12990)
+	got.TotalMinor = nil
 	want := ReminderEvent{
 		Type:           TypeReminder,
 		EventID:        "6710000000000000000000e5",

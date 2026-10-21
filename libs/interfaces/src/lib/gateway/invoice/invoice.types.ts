@@ -9,12 +9,20 @@ export interface ClientSnapshotRequest {
   address: string;
 }
 
+/**
+ * A line is either **catalog-backed** -- `productId` and `quantity` only; the server takes name,
+ * SKU, price and rates from the product (no overrides) -- or **free-form**, with every field given.
+ * Amounts are decimals in the invoice currency (e.g. 1500.5); stored exactly as minor units.
+ */
 export interface InvoiceItemRequest {
-  catalogId: string;
-  name: string;
+  productId?: string;
+  catalogId?: string;
+  name?: string;
   quantity: number;
-  unitPrice: number;
-  vatRate: number;
+  unitPrice?: number;
+  vatRate?: number;
+  /** Bangladesh supplementary duty, percent; VAT is charged on net + SD. Defaults to 0. */
+  sdRate?: number;
 }
 
 /**
@@ -39,13 +47,8 @@ export interface UpdateClientSnapshotRequest {
   address?: string;
 }
 
-export interface UpdateInvoiceItemRequest {
-  catalogId?: string;
-  name?: string;
-  quantity?: number;
-  unitPrice?: number;
-  vatRate?: number;
-}
+/** Items on update replace the whole list, so each is a complete line, as on create. */
+export type UpdateInvoiceItemRequest = InvoiceItemRequest;
 
 export interface UpdateInvoiceRequest {
   reference?: string;
@@ -90,7 +93,21 @@ export interface UpdateInvoiceGatewayRequest extends InvoiceIdGatewayRequest {
 
 export type ClientSnapshotResponse = ClientSnapshotRequest;
 
-export interface InvoiceItemResponse extends InvoiceItemRequest {
+export interface InvoiceItemResponse {
+  productId?: string;
+  catalogId: string;
+  name: string;
+  quantity: number;
+  unitPrice: number;
+  vatRate: number;
+  sdRate: number;
+  /** quantity x unitPrice */
+  net: number;
+  /** supplementary duty on net */
+  sd: number;
+  /** VAT on net + sd */
+  vat: number;
+  /** net + sd + vat */
   total: number;
 }
 
@@ -108,7 +125,10 @@ export interface InvoiceResponse {
   issueDate: string | Date;
   dueDate?: string | Date;
   notes?: string;
+  /** Sum of line nets (before SD and VAT). */
   subtotal: number;
+  /** Sum of line supplementary duty (Bangladesh); 0 elsewhere. */
+  sdTotal: number;
   vatTotal: number;
   total: number;
   version: number;
