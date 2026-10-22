@@ -1,5 +1,5 @@
 import { BaseConfiguration, loadEnvironmentFiles, PostgresConfiguration } from '@libs/configuration';
-import { IsNotEmpty, IsString, ValidateNested } from 'class-validator';
+import { IsNotEmpty, IsOptional, IsString, IsUrl, Matches, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 
 loadEnvironmentFiles();
@@ -29,6 +29,30 @@ class StripeConfiguration {
   }
 }
 
+/**
+ * Organizations' own SSLCommerz stores. Both optional: without them payment still boots and takes
+ * Stripe payments; connecting a store or starting an SSLCommerz checkout then answers 503.
+ */
+class SslCommerzConfiguration {
+  /** 32 random bytes, base64: encrypts stored provider secrets (CredentialCipher). */
+  @IsOptional()
+  @Matches(/^[A-Za-z0-9+/]{43}=$/, { message: 'PAYMENT_CREDENTIALS_KEY must be 32 bytes, base64-encoded' })
+  PAYMENT_CREDENTIALS_KEY?: string;
+
+  /**
+   * bff's public API base (e.g. https://api.example.com/api/v1): SSLCommerz sends the payer's
+   * browser back to it and posts IPNs to it, so it must be reachable from outside.
+   */
+  @IsOptional()
+  @IsUrl({ require_tld: false, require_protocol: true })
+  PAYMENT_PUBLIC_BASE_URL?: string;
+
+  constructor() {
+    this.PAYMENT_CREDENTIALS_KEY = process.env['PAYMENT_CREDENTIALS_KEY'] || undefined;
+    this.PAYMENT_PUBLIC_BASE_URL = process.env['PAYMENT_PUBLIC_BASE_URL']?.replace(/\/+$/, '') || undefined;
+  }
+}
+
 class Configuration extends BaseConfiguration {
   @ValidateNested()
   @Type(() => PostgresConfiguration)
@@ -37,6 +61,10 @@ class Configuration extends BaseConfiguration {
   @ValidateNested()
   @Type(() => StripeConfiguration)
   STRIPE_CONFIG: StripeConfiguration = new StripeConfiguration();
+
+  @ValidateNested()
+  @Type(() => SslCommerzConfiguration)
+  SSLCOMMERZ_CONFIG: SslCommerzConfiguration = new SslCommerzConfiguration();
 }
 
 // Validated eagerly at module load time

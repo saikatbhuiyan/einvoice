@@ -12,10 +12,17 @@ import {
 
 @Injectable()
 export class StripePaymentProvider implements PaymentProvider {
+  readonly name = 'stripe' as const;
+  readonly canExpireSessions = true;
   private readonly stripe: Stripe;
 
   constructor() {
     this.stripe = new Stripe(CONFIGURATION.STRIPE_CONFIG.STRIPE_SECRET_KEY);
+  }
+
+  /** Stripe's per-checkout limits vary by currency and account; none is enforced here. */
+  amountLimits(): null {
+    return null;
   }
 
   async createCheckoutSession(params: CheckoutSessionParams): Promise<CheckoutSession> {

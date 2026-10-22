@@ -33,6 +33,10 @@ export class PaymentRepository implements IPaymentRepository {
     });
   }
 
+  async setCheckout(id: string, checkoutUrl: string, expiresAt: Date): Promise<void> {
+    await this.repository.update({ id, organizationId: requireOrganizationId() }, { checkoutUrl, expiresAt });
+  }
+
   async updateStatus(id: string, status: PaymentStatus): Promise<PaymentEntity | null> {
     const scope = { id, organizationId: requireOrganizationId() };
     await this.repository.update(scope, { status });

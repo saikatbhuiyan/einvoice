@@ -7,6 +7,8 @@ export interface ClientSnapshotRequest {
   name: string;
   email: string;
   address: string;
+  /** Billing contact phone, handed to payment gateways that ask for one. */
+  phone?: string;
   /** Bangladesh BIN of a registered buyer (13 digits); omit for an unregistered one. */
   bin?: string;
 }
@@ -49,6 +51,7 @@ export interface UpdateClientSnapshotRequest {
   name?: string;
   email?: string;
   address?: string;
+  phone?: string;
   bin?: string;
 }
 

@@ -5,6 +5,8 @@ export interface CreateCustomerRequest {
   email: string;
   address: string;
   taxId?: string;
+  /** Billing contact phone, copied onto invoices and handed to payment gateways that ask for one. */
+  phone?: string;
   /** Bangladesh BIN of a registered buyer (13 digits), printed on its Mushak-6.3 tax invoices. */
   bin?: string;
   notes?: string;
@@ -26,6 +28,7 @@ export interface CustomerResponse {
   email: string;
   address: string;
   taxId?: string;
+  phone?: string;
   bin?: string;
   notes?: string;
   createdAt: string | Date;

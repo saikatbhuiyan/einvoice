@@ -23,6 +23,9 @@ export class ClientSnapshotResponseDto implements ClientSnapshotResponse {
   @ApiProperty({ example: 'House 12, Road 8, Gulshan, Dhaka 1212' })
   address!: string;
 
+  @ApiPropertyOptional({ example: '+880 1711-111111' })
+  phone?: string;
+
   @ApiPropertyOptional({ example: '0098765430202', description: 'Bangladesh BIN of a registered buyer.' })
   bin?: string;
 }

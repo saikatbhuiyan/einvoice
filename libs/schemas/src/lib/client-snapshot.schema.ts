@@ -29,6 +29,15 @@ export class ClientSnapshot {
   })
   address?: string;
 
+  /** Billing contact phone; handed to payment gateways that ask for one (SSLCommerz). */
+  @Prop({
+    type: String,
+    default: undefined,
+    trim: true,
+    match: [INVOICE_CONSTRAINTS.client.phone.pattern, 'phone must be a phone number, e.g. +880 1711-111111.'],
+  })
+  phone?: string;
+
   /** Bangladesh BIN of a registered buyer ("BIN of Purchaser" on a Mushak-6.3). */
   @Prop({ type: String, default: undefined, match: [BIN_PATTERN, 'bin must be exactly 13 digits.'] })
   bin?: string;
