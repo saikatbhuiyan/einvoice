@@ -10,9 +10,11 @@ import type { CircuitBreakerFactory } from '@libs/circuit-breaker';
 import { ServiceName } from '@libs/transports';
 import {
   CreateProductRequest,
+  DeactivateProductResponse,
   FindAllProductsRequest,
   FindAllProductsResponse,
   ProductResponse,
+  UpdateProductRequest,
 } from '@libs/interfaces/gateway';
 import { ProductClientService } from './product-client.service';
 
@@ -39,6 +41,23 @@ export class ProductService {
     const product = await this.productClient.createProduct(payload);
     await this.bumpListVersion();
     return product;
+  }
+
+  /** Not cached: a product's price or status must be current when someone is about to invoice it. */
+  async findOne(id: string): Promise<ProductResponse> {
+    return this.productClient.findProduct(id);
+  }
+
+  async update(id: string, payload: UpdateProductRequest): Promise<ProductResponse> {
+    const product = await this.productClient.updateProduct(id, payload);
+    await this.bumpListVersion();
+    return product;
+  }
+
+  async deactivate(id: string): Promise<DeactivateProductResponse> {
+    const result = await this.productClient.deactivateProduct(id);
+    await this.bumpListVersion();
+    return result;
   }
 
   async findAll(query: FindAllProductsRequest, res?: express.Response): Promise<FindAllProductsResponse> {

@@ -75,6 +75,13 @@
         "command": "SWC_NODE_PROJECT=apps/invoice/tsconfig.app.json node -r @swc-node/register apps/invoice/src/database/scripts/backfill-tenancy.ts",
         "cwd": "{workspaceRoot}"
       }
+    },
+    "backfill-minor-units": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "SWC_NODE_PROJECT=apps/invoice/tsconfig.app.json node -r @swc-node/register apps/invoice/src/database/scripts/backfill-minor-units.ts",
+        "cwd": "{workspaceRoot}"
+      }
     }
   }
 }

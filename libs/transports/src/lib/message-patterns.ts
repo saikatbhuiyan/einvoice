@@ -25,6 +25,12 @@ export const CUSTOMER_PATTERNS = {
 export const PRODUCT_PATTERNS = {
   CREATE: 'product.create',
   FIND_ALL: 'product.findAll',
+  FIND_ONE: 'product.findOne',
+  UPDATE: 'product.update',
+  /** Deactivate (soft): existing invoices keep their snapshot; new lines can't use it. */
+  DEACTIVATE: 'product.deactivate',
+  /** invoice resolving catalog-backed lines: the caller organization's products with these ids. */
+  FIND_MANY: 'product.findMany',
 } as const;
 
 export const USER_PATTERNS = {

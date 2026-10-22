@@ -45,7 +45,7 @@ describe('InvoiceRepository against real MongoDB', () => {
     ({
       reference: `REF-${++counter}`,
       client: { name: 'Acme Corp', email: 'billing@acme.test', address: '1 Main St' },
-      items: [{ catalogId: 'sku-1', name: 'Widget', quantity: 2, unitPrice: 50, vatRate: 10 }],
+      items: [{ catalogId: 'sku-1', name: 'Widget', quantity: 2, unitPriceMinor: 5000, vatRate: 10, sdRate: 0 }],
       currency: 'USD',
       ...overrides,
     }) as NewInvoice;
@@ -58,7 +58,7 @@ describe('InvoiceRepository against real MongoDB', () => {
     it('computes totals server-side via the pre-validate hook', async () => {
       const invoice = await repository.create(payload());
 
-      expect(invoice.toObject()).toMatchObject({ subtotal: 100, vatTotal: 10, total: 110 });
+      expect(invoice.toObject()).toMatchObject({ netMinor: 10_000, sdMinor: 0, vatMinor: 1000, totalMinor: 11_000 });
     });
 
     // A last line of defence behind the counter: a number can never be issued twice in one
@@ -140,11 +140,11 @@ describe('InvoiceRepository against real MongoDB', () => {
 
       const updated = await repository.update(
         created.id,
-        { items: [{ catalogId: 'sku-2', name: 'Gizmo', quantity: 1, unitPrice: 200, vatRate: 0 }] },
+        { items: [{ catalogId: 'sku-2', name: 'Gizmo', quantity: 1, unitPriceMinor: 20_000, vatRate: 0, sdRate: 20 }] },
         created.version,
       );
 
-      expect(updated?.toObject()).toMatchObject({ subtotal: 200, vatTotal: 0, total: 200 });
+      expect(updated?.toObject()).toMatchObject({ netMinor: 20_000, sdMinor: 4000, vatMinor: 0, totalMinor: 24_000 });
     });
   });
 

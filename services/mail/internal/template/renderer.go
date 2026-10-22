@@ -26,9 +26,10 @@ type InvoiceEmailData struct {
 	ClientName    string
 	InvoiceNumber string
 	Currency      string
-	Total         string
-	IssueDate     string
-	DueDate       string
+	// Total is already formatted for display, symbol included (money.Format).
+	Total     string
+	IssueDate string
+	DueDate   string
 }
 
 func RenderInvoiceEmail(data InvoiceEmailData) (string, error) {

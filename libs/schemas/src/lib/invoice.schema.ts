@@ -11,8 +11,7 @@ import {
   SUPPORTED_CURRENCIES,
   SupportedCurrency,
 } from '@libs/shared/types';
-
-const roundCurrency = (value: number): number => Math.round((value + Number.EPSILON) * 100) / 100;
+import { MoneyError, computeLine, sumAmounts } from '@libs/money';
 
 const startOfUtcDay = (date: Date): Date =>
   new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
@@ -91,16 +90,20 @@ export class Invoice extends BaseSchema {
   notes?: string;
 
   /**
-   * Derived totals
+   * Derived totals, in the currency's minor units (exact integers): the sums of the line amounts.
+   * netMinor was `subtotal`, vatMinor `vatTotal`, totalMinor `total` (the API keeps those names).
    */
   @Prop({ required: true, min: 0, default: 0 })
-  subtotal!: number;
+  netMinor!: number;
 
   @Prop({ required: true, min: 0, default: 0 })
-  vatTotal!: number;
+  sdMinor!: number;
 
   @Prop({ required: true, min: 0, default: 0 })
-  total!: number;
+  vatMinor!: number;
+
+  @Prop({ required: true, min: 0, default: 0 })
+  totalMinor!: number;
 
   /** Soft-delete timestamp. Null = active record. */
   @Prop({ type: Date, default: null, index: true })
@@ -154,23 +157,24 @@ export const InvoiceSchema = SchemaFactory.createForClass(Invoice);
 InvoiceSchema.pre('validate', function recalculateTotals() {
   const invoice = this as InvoiceDocument;
 
-  let subtotal = 0;
-  let vatTotal = 0;
-
-  for (const item of invoice.items ?? []) {
-    const lineSubtotal = roundCurrency(item.quantity * item.unitPrice);
-    const lineVat = roundCurrency((lineSubtotal * item.vatRate) / 100);
-    const lineTotal = roundCurrency(lineSubtotal + lineVat);
-
-    item.total = lineTotal;
-
-    subtotal += lineSubtotal;
-    vatTotal += lineVat;
+  // Exact integer arithmetic, half-up per line; totals are the sums of the lines (@libs/money).
+  // A line too large or too precise to compute exactly is invalid input (422), not a server error.
+  try {
+    const lines = (invoice.items ?? []).map((item) => {
+      const amounts = computeLine({
+        quantity: item.quantity,
+        unitPriceMinor: item.unitPriceMinor,
+        vatRate: item.vatRate,
+        sdRate: item.sdRate,
+      });
+      Object.assign(item, amounts);
+      return amounts;
+    });
+    Object.assign(invoice, sumAmounts(lines));
+  } catch (error) {
+    if (!(error instanceof MoneyError)) throw error;
+    invoice.invalidate('items', error.message);
   }
-
-  invoice.subtotal = roundCurrency(subtotal);
-  invoice.vatTotal = roundCurrency(vatTotal);
-  invoice.total = roundCurrency(invoice.subtotal + invoice.vatTotal);
 
   // Compared as calendar days: a due date is a date (midnight UTC of the due day) while issueDate is
   // an instant (it defaults to now), so comparing instants would reject an invoice due today.

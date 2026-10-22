@@ -38,12 +38,16 @@ export const INVOICE_CONSTRAINTS = {
     email: { maxLength: 320 },
     address: { minLength: 5, maxLength: 300 },
   },
+  // Bounds the document size and the catalog lookup an invoice makes (one product RPC for all lines).
+  items: { minItems: 1, maxItems: 500 },
   item: {
     catalogId: { minLength: 1, maxLength: 64 },
     name: { minLength: 1, maxLength: 160 },
     quantity: { min: 1, max: 1_000_000, maxDecimalPlaces: 2 },
     unitPrice: { min: 0, max: 1_000_000_000, maxDecimalPlaces: 2 },
     vatRate: { min: 0, max: 100, maxDecimalPlaces: 2 },
+    // Bangladesh supplementary duty: reported to run up to 500% on luxury/demerit goods. 0 elsewhere.
+    sdRate: { min: 0, max: 500, maxDecimalPlaces: 2 },
   },
   notes: { maxLength: 1000 },
   reference: { maxLength: 64 },

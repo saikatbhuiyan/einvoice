@@ -1,6 +1,11 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { PaginationMetaDto, SUPPORTED_CURRENCIES } from '@libs/shared/types';
-import type { FindAllProductsResponse, ProductResponse, SupportedCurrency } from './product.types';
+import type {
+  DeactivateProductResponse,
+  FindAllProductsResponse,
+  ProductResponse,
+  SupportedCurrency,
+} from './product.types';
 
 export class ProductResponseDto implements ProductResponse {
   @ApiProperty({
@@ -27,6 +32,9 @@ export class ProductResponseDto implements ProductResponse {
   @ApiProperty({ example: 15 })
   vatRate!: number;
 
+  @ApiProperty({ example: 0, description: 'Supplementary duty percentage (Bangladesh); 0 elsewhere.' })
+  sdRate!: number;
+
   @ApiProperty({ example: true })
   isActive!: boolean;
 
@@ -35,6 +43,14 @@ export class ProductResponseDto implements ProductResponse {
 
   @ApiProperty({ example: '2026-04-28T10:30:00.000Z', format: 'date-time' })
   updatedAt!: string | Date;
+}
+
+export class DeactivateProductResponseDto implements DeactivateProductResponse {
+  @ApiProperty({ example: '3f1b3c9a-7e3d-4a2c-9c1e-6b1a4a9c2f10' })
+  id!: string;
+
+  @ApiProperty({ example: true, enum: [true] })
+  deactivated!: true;
 }
 
 export class FindAllProductsResponseDto implements FindAllProductsResponse {

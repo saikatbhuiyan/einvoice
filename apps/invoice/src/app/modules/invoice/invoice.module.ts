@@ -23,6 +23,7 @@ import { INVOICE_READ_MODEL, INVOICE_REPOSITORY, INVOICE_WRITE_MODEL } from './i
 import { InvoiceRepository } from './invoice.repository';
 import { PdfGeneratorClientService } from './clients/pdf-generator-client.service';
 import { MediaClientService } from './clients/media-client.service';
+import { ProductClientService } from './clients/product-client.service';
 import { InvoiceEventsProducerService } from './clients/invoice-events-producer.service';
 
 @Module({})
@@ -37,7 +38,13 @@ export class InvoiceModule {
       imports: [
         CacheModule.forRoot('svc'),
         // USER: user-access, for the organization's invoicing settings (prefix, reminder schedule).
-        TcpClientModule.forServices([ServiceName.PDF_GENERATOR, ServiceName.MEDIA, ServiceName.USER]),
+        // PRODUCT: the organization's catalog, for catalog-backed lines.
+        TcpClientModule.forServices([
+          ServiceName.PDF_GENERATOR,
+          ServiceName.MEDIA,
+          ServiceName.USER,
+          ServiceName.PRODUCT,
+        ]),
         MongooseModule.forFeature([INVOICE_COUNTER_MODEL_DEFINITION]),
         CustomerModule,
         // Events go through the transactional outbox; its relay is the only thing that talks to Kafka.
@@ -48,6 +55,7 @@ export class InvoiceModule {
         InvoiceService,
         PdfGeneratorClientService,
         MediaClientService,
+        ProductClientService,
         InvoiceEventsProducerService,
         InvoiceNumberingService,
         OrganizationClientService,

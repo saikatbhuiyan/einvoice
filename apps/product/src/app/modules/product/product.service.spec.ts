@@ -1,4 +1,4 @@
-import { ConflictException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { QueryFailedError } from 'typeorm';
 import { itInOrganization as it, TEST_ORGANIZATION_ID as ORG } from '@libs/logging/testing';
 import { ProductService } from './product.service';
@@ -17,6 +17,7 @@ const buildProduct = (overrides: Partial<ProductEntity> = {}): ProductEntity =>
     unitPrice: 100,
     currency: 'USD',
     vatRate: 10,
+    sdRate: 0,
     isActive: true,
     createdAt: new Date('2026-01-01'),
     updatedAt: new Date('2026-01-01'),
@@ -33,6 +34,9 @@ describe('ProductService', () => {
     repository = {
       create: jest.fn(),
       findAll: jest.fn(),
+      findOne: jest.fn(),
+      findMany: jest.fn(),
+      update: jest.fn(),
     };
     cacheManager = { get: jest.fn(), set: jest.fn(), del: jest.fn() };
     redis = { get: jest.fn().mockResolvedValue(null), incr: jest.fn().mockResolvedValue(1) };
@@ -63,6 +67,7 @@ describe('ProductService', () => {
         unitPrice: 100,
         currency: 'USD',
         vatRate: 10,
+        sdRate: 0,
         isActive: true,
         createdAt: created.createdAt,
         updatedAt: created.updatedAt,
@@ -88,6 +93,82 @@ describe('ProductService', () => {
       await expect(
         service.create({ sku: 'SKU-1', name: 'Widget', unitPrice: 100, currency: 'USD', vatRate: 10 }),
       ).rejects.toBe(unexpected);
+    });
+  });
+
+  describe('findOne / update / deactivate', () => {
+    const UUID = '3f1b3c9a-7e3d-4a2c-9c1e-6b1a4a9c2f10';
+
+    it('returns the product', async () => {
+      repository.findOne.mockResolvedValue(buildProduct({ id: UUID, sdRate: 20 }));
+
+      await expect(service.findOne(UUID)).resolves.toMatchObject({ id: UUID, sdRate: 20 });
+      expect(repository.findOne).toHaveBeenCalledWith(UUID);
+    });
+
+    // The repository scopes by organization: another organization's product is "not found".
+    it("is a 404 for a product that isn't the organization's", async () => {
+      repository.findOne.mockResolvedValue(null);
+      repository.update.mockResolvedValue(null);
+
+      await expect(service.findOne(UUID)).rejects.toBeInstanceOf(NotFoundException);
+      await expect(service.update(UUID, { name: 'x' })).rejects.toBeInstanceOf(NotFoundException);
+      await expect(service.deactivate(UUID)).rejects.toBeInstanceOf(NotFoundException);
+      expect(redis.incr).not.toHaveBeenCalled();
+    });
+
+    // Postgres would answer a malformed uuid with a 500; RPC payloads skip DTO validation.
+    it('is a 400 for a malformed id, without touching the database', async () => {
+      await expect(service.findOne('nope')).rejects.toBeInstanceOf(BadRequestException);
+      await expect(service.update('nope', {})).rejects.toBeInstanceOf(BadRequestException);
+      await expect(service.deactivate('nope')).rejects.toBeInstanceOf(BadRequestException);
+      expect(repository.findOne).not.toHaveBeenCalled();
+      expect(repository.update).not.toHaveBeenCalled();
+    });
+
+    it('update returns the updated product and invalidates the lists', async () => {
+      repository.update.mockResolvedValue(buildProduct({ id: UUID, unitPrice: 165 }));
+
+      await expect(service.update(UUID, { unitPrice: 165 })).resolves.toMatchObject({ unitPrice: 165 });
+      expect(repository.update).toHaveBeenCalledWith(UUID, { unitPrice: 165 });
+      expect(redis.incr).toHaveBeenCalledWith(`svc:org:${ORG}:product:list:version`);
+    });
+
+    it('update maps a SKU clash to a 409', async () => {
+      const error = new QueryFailedError('update', [], new Error('duplicate key'));
+      (error as unknown as { driverError: { code: string } }).driverError = { code: '23505' };
+      repository.update.mockRejectedValue(error);
+
+      await expect(service.update(UUID, { sku: 'TAKEN' })).rejects.toThrow(
+        new ConflictException('Product with sku "TAKEN" already exists.'),
+      );
+    });
+
+    it('deactivate is a soft isActive: false', async () => {
+      repository.update.mockResolvedValue(buildProduct({ id: UUID, isActive: false }));
+
+      await expect(service.deactivate(UUID)).resolves.toEqual({ id: UUID, deactivated: true });
+      expect(repository.update).toHaveBeenCalledWith(UUID, { isActive: false });
+    });
+  });
+
+  describe('findMany (for invoice lines)', () => {
+    it('looks up the distinct well-formed ids, ignoring anything else', async () => {
+      const a = '3f1b3c9a-7e3d-4a2c-9c1e-6b1a4a9c2f10';
+      const b = '9e2b1d4c-1a2b-4c3d-8e4f-5a6b7c8d9e0f';
+      repository.findMany.mockResolvedValue([buildProduct({ id: a })]);
+
+      const result = await service.findMany([a, a, b, 'nope', 42]);
+
+      expect(repository.findMany).toHaveBeenCalledWith([a, b]);
+      expect(result).toEqual([expect.objectContaining({ id: a })]);
+    });
+
+    it('treats a payload without a list as no ids', async () => {
+      repository.findMany.mockResolvedValue([]);
+
+      await expect(service.findMany(undefined)).resolves.toEqual([]);
+      expect(repository.findMany).toHaveBeenCalledWith([]);
     });
   });
 
