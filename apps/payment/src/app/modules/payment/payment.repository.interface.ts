@@ -10,8 +10,9 @@ export interface CreatePaymentRecord {
   status: PaymentStatus;
   amount: number;
   currency: string;
-  checkoutUrl: string;
-  expiresAt: Date;
+  /** Unset when the row is recorded before its session exists (SSLCommerz); see setCheckout. */
+  checkoutUrl?: string;
+  expiresAt?: Date;
 }
 
 export interface IPaymentRepository {
@@ -31,4 +32,7 @@ export interface IPaymentRepository {
   hasOtherPaidPayment(invoiceId: string, excludeId: string): Promise<boolean>;
 
   updateStatus(id: string, status: PaymentStatus): Promise<PaymentEntity | null>;
+
+  /** Records the checkout link once the provider session exists. */
+  setCheckout(id: string, checkoutUrl: string, expiresAt: Date): Promise<void>;
 }

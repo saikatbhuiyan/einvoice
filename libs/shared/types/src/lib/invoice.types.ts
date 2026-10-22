@@ -37,6 +37,8 @@ export const INVOICE_CONSTRAINTS = {
     name: { minLength: 3, maxLength: 120 },
     email: { maxLength: 320 },
     address: { minLength: 5, maxLength: 300 },
+    // Digits with an optional leading +, spaces, dashes, brackets: "+880 1711-111111".
+    phone: { maxLength: 20, pattern: /^\+?[0-9][0-9 ()-]{5,18}$/ },
   },
   // Bounds the document size and the catalog lookup an invoice makes (one product RPC for all lines).
   items: { minItems: 1, maxItems: 500 },

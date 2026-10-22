@@ -3,7 +3,10 @@ import { join } from 'path';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { DataSource, type MigrationInterface } from 'typeorm';
 import { PaymentEntity } from './entities/payment.entity';
+import { ProviderCredentialEntity } from './entities/provider-credential.entity';
+import { randomBytes } from 'crypto';
 import { PaymentRepository } from '../app/modules/payment/payment.repository';
+import { ProviderCredentialsService } from '../app/modules/payment/credentials/provider-credentials.service';
 import { DEFAULT_ORGANIZATION_ID } from '@libs/shared/types';
 import { runInOrganization } from '@libs/logging/correlation-context';
 import { itInOrganization as it, TEST_ORGANIZATION_ID as ORG } from '@libs/logging/testing';
@@ -50,7 +53,7 @@ describe('payment database (real Postgres)', () => {
     const dataSource = new DataSource({
       type: 'postgres',
       url: url.toString(),
-      entities: [PaymentEntity],
+      entities: [PaymentEntity, ProviderCredentialEntity],
       migrations: applied,
     });
     await dataSource.initialize();
@@ -250,6 +253,93 @@ describe('payment database (real Postgres)', () => {
       expect(await repository.findByProviderSessionId('cs_theirs')).toMatchObject({
         organizationId: '11111111-1111-4111-8111-111111111111',
       });
+    } finally {
+      await dataSource.destroy();
+    }
+  });
+
+  // The store password must never be readable from the database; a reconnect replaces the one row;
+  // a disconnect keeps it (disabled) so payments already started can still be confirmed.
+  it('stores SSLCommerz store passwords only encrypted, one row per organization, kept when disconnected', async () => {
+    const dataSource = await freshDataSource('credentials');
+    try {
+      await dataSource.runMigrations();
+      const key = randomBytes(32).toString('base64');
+      const accepts = { checkCredentials: async () => true };
+      const service = new ProviderCredentialsService(
+        dataSource.getRepository(ProviderCredentialEntity),
+        accepts as never,
+        { credentialsKey: key },
+      );
+
+      await service.setSslCommerz({ storeId: 'testbox', storePassword: 'qwerty-secret', sandbox: true });
+      await service.setSslCommerz({ storeId: 'acmeltd', storePassword: 'live-secret', sandbox: false });
+
+      const rows = await dataSource.query(`SELECT * FROM provider_credentials`);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({
+        organizationId: ORG,
+        provider: 'sslcommerz',
+        accountId: 'acmeltd',
+        sandbox: false,
+      });
+      expect(JSON.stringify(rows)).not.toMatch(/qwerty-secret|live-secret/);
+      await expect(service.resolveSslCommerz()).resolves.toEqual({
+        storeId: 'acmeltd',
+        storePassword: 'live-secret',
+        sandbox: false,
+      });
+
+      await service.deleteSslCommerz();
+      expect(await service.hasSslCommerz()).toBe(false);
+      await expect(service.resolveSslCommerz()).rejects.toThrow('No SSLCommerz store is connected');
+      await expect(service.resolveSslCommerz({ forSettlement: true })).resolves.toMatchObject({ storeId: 'acmeltd' });
+
+      // Another organization sees none of it.
+      await runInOrganization('11111111-1111-4111-8111-111111111111', async () => {
+        expect(await service.hasSslCommerz()).toBe(false);
+        await expect(service.resolveSslCommerz({ forSettlement: true })).rejects.toThrow('No SSLCommerz store');
+      });
+
+      // Reconnecting re-enables the same row.
+      await service.setSslCommerz({ storeId: 'acmeltd', storePassword: 'rotated', sandbox: false });
+      expect(await service.hasSslCommerz()).toBe(true);
+      expect(await dataSource.query(`SELECT count(*)::int AS n FROM provider_credentials`)).toEqual([{ n: 1 }]);
+    } finally {
+      await dataSource.destroy();
+    }
+  });
+
+  // An SSLCommerz payment is recorded before its session exists (no link yet), then gets its link.
+  it('records an SSLCommerz payment without a link, then stores the link', async () => {
+    const dataSource = await freshDataSource('recorded');
+    try {
+      await dataSource.runMigrations();
+      const repository = new PaymentRepository(dataSource.getRepository(PaymentEntity));
+      const payment = await repository.create({
+        invoiceId: 'inv-bdt',
+        provider: 'sslcommerz',
+        providerSessionId: 'einv0123456789abcdef0123456789',
+        status: 'pending',
+        amount: 1380.5,
+        currency: 'BDT',
+      });
+      expect(payment).toMatchObject({ checkoutUrl: null, expiresAt: null });
+
+      await repository.setCheckout(
+        payment.id,
+        'https://sandbox.sslcommerz.com/EasyCheckOut/x',
+        new Date('2026-10-22T12:00:00Z'),
+      );
+      await repository.updateStatus(payment.id, 'superseded');
+
+      expect(await repository.findByProviderSessionId('einv0123456789abcdef0123456789')).toMatchObject({
+        checkoutUrl: 'https://sandbox.sslcommerz.com/EasyCheckOut/x',
+        status: 'superseded',
+        amount: 1380.5,
+      });
+      // superseded is not open: a new session for the invoice may be recorded.
+      expect(await repository.findOpenByInvoiceId('inv-bdt')).toBeNull();
     } finally {
       await dataSource.destroy();
     }

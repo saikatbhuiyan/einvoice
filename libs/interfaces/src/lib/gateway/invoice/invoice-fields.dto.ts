@@ -77,6 +77,17 @@ export class ClientSnapshotDto implements ClientSnapshotRequest {
   address!: string;
 
   @ApiPropertyOptional({
+    example: '+880 1711-111111',
+    maxLength: 20,
+    description: 'Billing contact phone. Payment gateways that ask for one (SSLCommerz) receive it.',
+  })
+  @IsOptional()
+  @Sanitize()
+  @MaxLength(20)
+  @Matches(INVOICE_CONSTRAINTS.client.phone.pattern, { message: 'phone must be a phone number, e.g. +880 1711-111111' })
+  phone?: string;
+
+  @ApiPropertyOptional({
     example: '0098765430202',
     pattern: '^\\d{13}$',
     description:
