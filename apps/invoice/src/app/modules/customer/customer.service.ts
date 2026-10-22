@@ -65,6 +65,7 @@ export class CustomerService {
       name: customer.name,
       email: customer.email,
       address: customer.address,
+      ...(customer.phone ? { phone: customer.phone } : {}),
       ...(customer.bin ? { bin: customer.bin } : {}),
     };
   }

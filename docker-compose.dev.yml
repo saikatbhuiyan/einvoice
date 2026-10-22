@@ -471,6 +471,10 @@ services:
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-whsec_placeholder}
       STRIPE_SUCCESS_URL: ${STRIPE_SUCCESS_URL:-http://localhost:3300/api/v1/payments/success}
       STRIPE_CANCEL_URL: ${STRIPE_CANCEL_URL:-http://localhost:3300/api/v1/payments/cancel}
+      # Organizations' own SSLCommerz stores (BDT payments). Dev-only key: never reuse it anywhere real.
+      PAYMENT_CREDENTIALS_KEY: ${PAYMENT_CREDENTIALS_KEY:-uM83caWEnvemXRTcvTCqt4yHJC6h+EfxANq0dQdmSBA=}
+      # bff as SSLCommerz sends the payer back to it (the browser, so localhost works); its IPNs can't reach localhost.
+      PAYMENT_PUBLIC_BASE_URL: ${PAYMENT_PUBLIC_BASE_URL:-http://localhost:3300/api/v1}
       CHOKIDAR_USEPOLLING: "true"
       WATCHPACK_POLLING: "true"
     depends_on:

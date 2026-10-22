@@ -3,7 +3,9 @@ import { MessagePattern, Payload, Transport } from '@nestjs/microservices';
 import { TCP_PATTERNS, unwrapRpcPayload, type RpcEnvelope } from '@libs/transports';
 import { RequirePermission } from '@libs/auth/require-permission.decorator';
 import { Public } from '@libs/auth/public.decorator';
+import type { SslCommerzCredentialsRequest, SslCommerzNotification } from '@libs/interfaces/gateway';
 import { PaymentService } from './payment.service';
+import { ProviderCredentialsService } from './credentials/provider-credentials.service';
 
 interface CreateCheckoutSessionPayload {
   invoiceId: string;
@@ -21,7 +23,10 @@ interface WebhookPayload {
  */
 @Controller()
 export class PaymentRpcController {
-  constructor(private readonly paymentService: PaymentService) {}
+  constructor(
+    private readonly paymentService: PaymentService,
+    private readonly credentials: ProviderCredentialsService,
+  ) {}
 
   // Reuses invoice:write rather than a new payment:write permission -- creating a checkout
   // session is, from the caller's point of view, an action against one specific invoice, the same
@@ -45,5 +50,34 @@ export class PaymentRpcController {
     const data = unwrapRpcPayload(payload);
     await this.paymentService.handleWebhookEvent(data.rawBodyBase64, data.signature);
     return { received: true };
+  }
+
+  // @Public(): bff relaying an SSLCommerz IPN or a payer's browser coming back -- neither carries a
+  // user identity. Nothing in the payload is trusted beyond the tran_id: payment asks SSLCommerz
+  // itself, with the organization's credentials (PaymentService.handleSslCommerzNotification).
+  @Public()
+  @MessagePattern(TCP_PATTERNS.PAYMENT.SSLCOMMERZ_NOTIFY, Transport.TCP)
+  sslcommerzNotify(@Payload() payload: RpcEnvelope<SslCommerzNotification> | SslCommerzNotification) {
+    return this.paymentService.handleSslCommerzNotification(unwrapRpcPayload(payload));
+  }
+
+  @RequirePermission('organization:read')
+  @MessagePattern(TCP_PATTERNS.PAYMENT.SSLCOMMERZ_CREDENTIALS_GET, Transport.TCP)
+  getSslCommerzCredentials() {
+    return this.credentials.getSslCommerz();
+  }
+
+  @RequirePermission('organization:write')
+  @MessagePattern(TCP_PATTERNS.PAYMENT.SSLCOMMERZ_CREDENTIALS_SET, Transport.TCP)
+  setSslCommerzCredentials(
+    @Payload() payload: RpcEnvelope<SslCommerzCredentialsRequest> | SslCommerzCredentialsRequest,
+  ) {
+    return this.credentials.setSslCommerz(unwrapRpcPayload(payload));
+  }
+
+  @RequirePermission('organization:write')
+  @MessagePattern(TCP_PATTERNS.PAYMENT.SSLCOMMERZ_CREDENTIALS_DELETE, Transport.TCP)
+  deleteSslCommerzCredentials() {
+    return this.credentials.deleteSslCommerz();
   }
 }

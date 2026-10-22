@@ -45,6 +45,15 @@ export class Customer extends BaseSchema {
   @Prop({ trim: true, maxlength: CUSTOMER_CONSTRAINTS.taxId.maxLength })
   taxId?: string;
 
+  /** Billing contact phone; handed to payment gateways that ask for one (SSLCommerz). */
+  @Prop({
+    type: String,
+    default: undefined,
+    trim: true,
+    match: [INVOICE_CONSTRAINTS.client.phone.pattern, 'phone must be a phone number, e.g. +880 1711-111111.'],
+  })
+  phone?: string;
+
   /** Bangladesh BIN of a registered buyer; copied onto each invoice billed to this customer. */
   @Prop({ type: String, default: undefined, match: [BIN_PATTERN, 'bin must be exactly 13 digits.'] })
   bin?: string;
