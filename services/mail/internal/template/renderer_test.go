@@ -10,7 +10,7 @@ func TestRenderInvoiceEmailIncludesTheInvoiceDetails(t *testing.T) {
 		ClientName:    "Acme Corp",
 		InvoiceNumber: "INV-2026-001",
 		Currency:      "EUR",
-		Total:         "129.90",
+		Total:         "€129.90",
 		IssueDate:     "2026-10-01",
 		DueDate:       "2026-10-31",
 	})
@@ -18,7 +18,7 @@ func TestRenderInvoiceEmailIncludesTheInvoiceDetails(t *testing.T) {
 		t.Fatalf("render: %v", err)
 	}
 
-	for _, want := range []string{"Hi Acme Corp,", "INVOICE INV-2026-001", "129.90 EUR", "2026-10-31"} {
+	for _, want := range []string{"Hi Acme Corp,", "INVOICE INV-2026-001", "Total due (EUR)", "€129.90", "2026-10-31"} {
 		if !strings.Contains(html, want) {
 			t.Errorf("email is missing %q", want)
 		}
@@ -55,13 +55,13 @@ func TestRenderInvoiceEmailEscapesUserSuppliedText(t *testing.T) {
 
 func TestRenderReminderEmailSaysHowOverdueTheInvoiceIs(t *testing.T) {
 	html, err := RenderReminderEmail(ReminderEmailData{
-		ClientName: "Acme Corp", InvoiceNumber: "INV-7", Currency: "EUR", Total: "10.00",
+		ClientName: "Acme Corp", InvoiceNumber: "INV-7", Currency: "BDT", Total: "৳1,00,000.00",
 		DueDate: "2026-10-10", DaysOverdue: 1, ReminderNumber: 1,
 	})
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}
-	for _, want := range []string{"Hi Acme Corp,", "INV-7", "1 day overdue", "10.00 EUR", "Reminder 1 for this invoice"} {
+	for _, want := range []string{"Hi Acme Corp,", "INV-7", "1 day overdue", "Amount due (BDT)", "৳1,00,000.00", "Reminder 1 for this invoice"} {
 		if !strings.Contains(html, want) {
 			t.Errorf("reminder is missing %q", want)
 		}

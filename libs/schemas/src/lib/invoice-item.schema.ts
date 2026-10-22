@@ -27,12 +27,17 @@ export class InvoiceItem {
   })
   quantity!: number;
 
+  /** Set when the line was filled from the product catalog (name, price and rates are its values then). */
+  @Prop({ type: String, default: undefined })
+  productId?: string;
+
+  /** Unit price in the invoice currency's minor units (poisha, cents): an exact integer. */
   @Prop({
     required: true,
-    min: INVOICE_CONSTRAINTS.item.unitPrice.min,
-    max: INVOICE_CONSTRAINTS.item.unitPrice.max,
+    min: 0,
+    validate: { validator: Number.isSafeInteger, message: 'unitPriceMinor must be an integer.' },
   })
-  unitPrice!: number;
+  unitPriceMinor!: number;
 
   @Prop({
     required: true,
@@ -41,11 +46,27 @@ export class InvoiceItem {
   })
   vatRate!: number;
 
-  /**
-   * Derived field. Recalculated from quantity, unitPrice, and vatRate.
-   */
+  /** Supplementary duty rate (Bangladesh); VAT is charged on net + SD. 0 where there is none. */
+  @Prop({
+    required: true,
+    default: 0,
+    min: INVOICE_CONSTRAINTS.item.sdRate.min,
+    max: INVOICE_CONSTRAINTS.item.sdRate.max,
+  })
+  sdRate!: number;
+
+  // Derived (the invoice's pre-validate hook, via @libs/money's computeLine), all in minor units.
   @Prop({ required: true, min: 0, default: 0 })
-  total!: number;
+  netMinor!: number;
+
+  @Prop({ required: true, min: 0, default: 0 })
+  sdMinor!: number;
+
+  @Prop({ required: true, min: 0, default: 0 })
+  vatMinor!: number;
+
+  @Prop({ required: true, min: 0, default: 0 })
+  totalMinor!: number;
 }
 
 export const InvoiceItemSchema = SchemaFactory.createForClass(InvoiceItem);

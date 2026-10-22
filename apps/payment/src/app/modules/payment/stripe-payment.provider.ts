@@ -1,5 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import Stripe from 'stripe';
+import type { SupportedCurrency } from '@libs/shared/types';
+import { toMinor } from '@libs/money';
 import { CONFIGURATION } from '../../../configuration';
 import {
   CheckoutSession,
@@ -26,8 +28,9 @@ export class StripePaymentProvider implements PaymentProvider {
           price_data: {
             currency: params.currency.toLowerCase(),
             product_data: { name: `Invoice ${params.invoiceNumber}` },
-            // Stripe amounts are in the currency's smallest unit (cents for USD/EUR, etc.).
-            unit_amount: Math.round(params.amount * 100),
+            // Stripe amounts are in the currency's smallest unit, by its ISO 4217 exponent (poisha,
+            // cents). toMinor refuses an amount with more decimals than the currency has.
+            unit_amount: toMinor(params.amount, params.currency as SupportedCurrency),
           },
           quantity: 1,
         },

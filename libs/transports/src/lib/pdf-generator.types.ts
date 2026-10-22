@@ -9,13 +9,18 @@ export interface GenerateInvoicePdfClientSnapshot {
   address?: string;
 }
 
+/** Amounts are integers in the currency's minor unit (poisha, cents); the renderer formats them. */
 export interface GenerateInvoicePdfItem {
   catalogId: string;
   name: string;
   quantity: number;
-  unitPrice: number;
+  unitPriceMinor: number;
   vatRate: number;
-  total: number;
+  sdRate: number;
+  netMinor: number;
+  sdMinor: number;
+  vatMinor: number;
+  totalMinor: number;
 }
 
 export interface GenerateInvoicePdfRequest {
@@ -27,9 +32,10 @@ export interface GenerateInvoicePdfRequest {
   issueDate: string;
   dueDate?: string;
   notes?: string;
-  subtotal: number;
-  vatTotal: number;
-  total: number;
+  netMinor: number;
+  sdMinor: number;
+  vatMinor: number;
+  totalMinor: number;
 }
 
 export interface GenerateInvoicePdfResponse {

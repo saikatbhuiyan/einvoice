@@ -1,4 +1,5 @@
 import Stripe from 'stripe';
+import { exponentOf } from '@libs/money';
 import { SUPPORTED_CURRENCIES } from '@libs/shared/types';
 
 const WEBHOOK_SECRET = 'whsec_test_secret';
@@ -123,8 +124,8 @@ describe('StripePaymentProvider', () => {
       );
     });
 
-    // Totals reaching here are already rounded to 2 decimals by the Invoice schema's pre-validate
-    // hook; this only guards that the *100 step can't produce a fractional amount Stripe rejects.
+    // Invoice totals are exact minor units turned into decimals; this guards that converting back
+    // can't produce a fractional amount Stripe rejects.
     it('sends an integer minor-unit amount even when the total carries float noise', async () => {
       const create = jest
         .spyOn(stripeFor(provider).checkout.sessions, 'create')
@@ -133,6 +134,25 @@ describe('StripePaymentProvider', () => {
       await provider.createCheckoutSession({ invoiceId: 'i', invoiceNumber: 'n', amount: 0.1 + 0.2, currency: 'USD' });
 
       expect(create.mock.calls[0][0]?.line_items?.[0].price_data?.unit_amount).toBe(30);
+    });
+
+    it('charges BDT in poisha and refuses an amount finer than the currency allows', async () => {
+      const create = jest
+        .spyOn(stripeFor(provider).checkout.sessions, 'create')
+        .mockResolvedValue({ id: 'cs_1', url: 'u' } as never);
+
+      await provider.createCheckoutSession({
+        invoiceId: 'i',
+        invoiceNumber: 'n',
+        amount: 1_380_000.5,
+        currency: 'BDT',
+      });
+      expect(create.mock.calls[0][0]?.line_items?.[0].price_data?.unit_amount).toBe(138_000_050);
+
+      await expect(
+        provider.createCheckoutSession({ invoiceId: 'i', invoiceNumber: 'n', amount: 1.005, currency: 'BDT' }),
+      ).rejects.toThrow('1.005 BDT has more than 2 decimal places.');
+      expect(create).toHaveBeenCalledTimes(1);
     });
 
     it('fails loudly when Stripe returns a session without a URL', async () => {
@@ -164,10 +184,11 @@ describe('StripePaymentProvider', () => {
     });
   });
 
-  // Tripwire: unit_amount = amount * 100 is only right for two-decimal currencies. Stripe's
-  // zero-decimal currencies (JPY, KRW, ...) take whole units — adding one to SUPPORTED_CURRENCIES
-  // without changing the conversion would overcharge by 100x.
-  it('only supports currencies the *100 minor-unit conversion is correct for', () => {
+  // Tripwire: unit_amount uses the ISO 4217 exponent (@libs/money). Stripe agrees with ISO for
+  // two-decimal currencies; its zero-decimal ones (JPY, KRW, ...) take whole units, and a few
+  // (ISK, HUF, TWD, UGX) and the three-decimal ones have their own rules. Adding such a currency
+  // needs a look at Stripe's docs, not just an exponent.
+  it('only supports currencies whose Stripe minor unit is the ISO exponent of 2', () => {
     const zeroDecimal = [
       'BIF',
       'CLP',
@@ -188,5 +209,6 @@ describe('StripePaymentProvider', () => {
     ];
 
     expect(SUPPORTED_CURRENCIES.filter((currency) => zeroDecimal.includes(currency))).toEqual([]);
+    expect(SUPPORTED_CURRENCIES.map((currency) => exponentOf(currency))).toEqual(SUPPORTED_CURRENCIES.map(() => 2));
   });
 });

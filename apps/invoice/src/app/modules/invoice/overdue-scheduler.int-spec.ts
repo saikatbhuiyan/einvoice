@@ -94,6 +94,7 @@ describe('overdue scheduler against real MongoDB and Redis', () => {
       {} as never,
       {} as never,
       settings as never,
+      {} as never,
     );
   });
 
@@ -133,7 +134,7 @@ describe('overdue scheduler against real MongoDB and Redis', () => {
         invoiceNumber: `INV-2026-${String(++n).padStart(6, '0')}`,
         issueDate: day('2026-09-01'),
         client: { name: 'Acme Corp', email: 'ap@acme.test', address: '1 Main St' },
-        items: [{ catalogId: 'S', name: 'Work', quantity: 1, unitPrice: 100, vatRate: 0 }],
+        items: [{ catalogId: 'S', name: 'Work', quantity: 1, unitPriceMinor: 10_000, vatRate: 0 }],
         currency: 'USD',
         pdfKey: 'orgs/a/invoices/u/invoice.pdf',
         ...fields,

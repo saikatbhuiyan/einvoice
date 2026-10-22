@@ -44,6 +44,8 @@
       "@libs/health/*": ["libs/health/src/lib/*"],
       "@libs/telemetry": ["libs/telemetry/src/index.ts"],
       "@libs/telemetry/*": ["libs/telemetry/src/lib/*"],
+      "@libs/money": ["libs/money/src/index.ts"],
+      "@libs/money/*": ["libs/money/src/lib/*"],
       "@libs/saga": ["libs/saga/src/index.ts"],
       "@libs/saga/*": ["libs/saga/src/lib/*"],
       "@libs/circuit-breaker": ["libs/circuit-breaker/src/index.ts"],

@@ -1,7 +1,9 @@
 import { ConflictException, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { Error as MongooseError } from 'mongoose';
 import { itInOrganization as it, TEST_ORGANIZATION_ID as ORG } from '@libs/logging/testing';
+import type { ProductResponse } from '@libs/interfaces/gateway';
 import { InvoiceService } from './invoice.service';
+import { presentInvoice } from './invoice-presenter';
 import { IInvoiceRepository, TransitionOptions } from './invoice.repository.interface';
 
 type MockCache = { get: jest.Mock; set: jest.Mock; del: jest.Mock };
@@ -17,21 +19,55 @@ type MockEventsProducer = {
 };
 type MockCustomers = { snapshotOf: jest.Mock };
 type MockNumbering = { prepare: jest.Mock; next: jest.Mock };
+type MockProducts = { findMany: jest.Mock };
 
 // Stands in for the transaction's ClientSession: events must be enqueued with exactly this object.
 const SESSION = { id: 'txn-session' };
 
+// Like a Mongoose document: fields readable as properties and through toJSON(), stored as minor
+// units (the presenter turns them into the API's decimals).
 const buildInvoiceDoc = (overrides: Record<string, unknown> = {}) => {
-  const base = {
-    _id: { toString: () => overrides['id'] ?? 'invoice-1' },
-    toJSON: () => ({ id: overrides['id'] ?? 'invoice-1', invoiceNumber: 'INV-0001', ...overrides }),
+  const fields = {
+    id: overrides['id'] ?? 'invoice-1',
+    invoiceNumber: 'INV-0001',
+    currency: 'USD',
+    items: [],
+    netMinor: 0,
+    sdMinor: 0,
+    vatMinor: 0,
+    totalMinor: 0,
+    ...overrides,
   };
-  return base as unknown as Awaited<ReturnType<IInvoiceRepository['create']>>;
+  return { ...fields, _id: { toString: () => fields.id }, toJSON: () => fields } as unknown as Awaited<
+    ReturnType<IInvoiceRepository['create']>
+  >;
 };
 
 const ID = '507f1f77bcf86cd799439011';
 const CLIENT = { name: 'Acme Corp', email: 'billing@acme.test', address: '1 Main St' };
 const PREPARED = { organizationId: ORG, prefix: 'ACME', year: 2026 };
+
+// A free-form line as requested, and as the service stores it.
+const ITEMS = [{ catalogId: 'sku-1', name: 'Widget', quantity: 2, unitPrice: 10.5, vatRate: 15 }];
+const STORED_ITEMS = [
+  { catalogId: 'sku-1', name: 'Widget', quantity: 2, unitPriceMinor: 1050, vatRate: 15, sdRate: 0 },
+];
+const NEW_INVOICE = { client: CLIENT, currency: 'USD', items: ITEMS };
+
+const PRODUCT_ID = '3f1b3c9a-7e3d-4a2c-9c1e-6b1a4a9c2f10';
+const product = (overrides: Partial<ProductResponse> = {}): ProductResponse => ({
+  id: PRODUCT_ID,
+  sku: 'AC-1',
+  name: 'Air conditioner',
+  unitPrice: 100_000,
+  currency: 'BDT',
+  vatRate: 15,
+  sdRate: 20,
+  isActive: true,
+  createdAt: '2026-10-01T00:00:00.000Z',
+  updatedAt: '2026-10-01T00:00:00.000Z',
+  ...overrides,
+});
 
 // A document with everything PDF rendering and the invoice.sent event read.
 const buildFullInvoiceDoc = (status: string) => {
@@ -40,14 +76,28 @@ const buildFullInvoiceDoc = (status: string) => {
     invoiceNumber: 'INV-0001',
     status,
     client: { name: 'Acme Corp', email: 'billing@acme.test', address: '1 Main St' },
-    items: [{ catalogId: 'sku-1', name: 'Widget', quantity: 1, unitPrice: 100, vatRate: 20, total: 120 }],
+    items: [
+      {
+        catalogId: 'sku-1',
+        name: 'Widget',
+        quantity: 1,
+        unitPriceMinor: 10_000,
+        vatRate: 20,
+        sdRate: 0,
+        netMinor: 10_000,
+        sdMinor: 0,
+        vatMinor: 2000,
+        totalMinor: 12_000,
+      },
+    ],
     currency: 'EUR',
     issueDate: new Date('2026-10-01T00:00:00.000Z'),
     dueDate: undefined,
     notes: undefined,
-    subtotal: 100,
-    vatTotal: 20,
-    total: 120,
+    netMinor: 10_000,
+    sdMinor: 0,
+    vatMinor: 2000,
+    totalMinor: 12_000,
   };
   return { ...fields, _id: { toString: () => ID }, toJSON: () => fields } as unknown as Awaited<
     ReturnType<IInvoiceRepository['create']>
@@ -65,6 +115,7 @@ describe('InvoiceService', () => {
   let customers: MockCustomers;
   let numbering: MockNumbering;
   let settings: { current: jest.Mock };
+  let products: MockProducts;
   let service: InvoiceService;
 
   beforeEach(() => {
@@ -93,6 +144,7 @@ describe('InvoiceService', () => {
     };
     settings = { current: jest.fn().mockResolvedValue({ invoicePrefix: 'ACME', reminderOffsetsDays: [1, 7, 14] }) };
     customers = { snapshotOf: jest.fn() };
+    products = { findMany: jest.fn().mockResolvedValue([]) };
     numbering = {
       prepare: jest.fn().mockResolvedValue(PREPARED),
       next: jest.fn().mockResolvedValue('ACME-2026-000007'),
@@ -109,6 +161,7 @@ describe('InvoiceService', () => {
       customers as never,
       numbering as never,
       settings as never,
+      products as never,
     );
   });
 
@@ -117,9 +170,9 @@ describe('InvoiceService', () => {
       const created = buildInvoiceDoc({ id: 'invoice-1' });
       repository.create.mockResolvedValue(created);
 
-      const result = await service.create({ client: CLIENT } as never);
+      const result = await service.create(NEW_INVOICE as never);
 
-      expect(result).toEqual(created.toJSON());
+      expect(result).toEqual(presentInvoice(created.toJSON()));
       expect(redis.incr).toHaveBeenCalledWith(`svc:org:${ORG}:invoice:list:version`);
       expect(auditLog.record).toHaveBeenCalledWith(
         expect.objectContaining({ action: 'CREATE', entityType: 'invoice', entityId: 'invoice-1' }),
@@ -133,7 +186,7 @@ describe('InvoiceService', () => {
         return created;
       });
 
-      await service.create({ client: CLIENT } as never);
+      await service.create(NEW_INVOICE as never);
 
       expect(eventsProducer.enqueueDemo).toHaveBeenCalledWith(SESSION, 'invoice-1');
     });
@@ -143,11 +196,11 @@ describe('InvoiceService', () => {
       customers.snapshotOf.mockResolvedValue(CLIENT);
       repository.create.mockResolvedValue(buildInvoiceDoc());
 
-      await service.create({ customerId: 'cust-1', currency: 'EUR', items: [] } as never);
+      await service.create({ customerId: 'cust-1', currency: 'USD', items: ITEMS } as never);
 
       expect(customers.snapshotOf).toHaveBeenCalledWith('cust-1');
       expect(repository.create).toHaveBeenCalledWith(
-        { currency: 'EUR', items: [], client: CLIENT, customerId: 'cust-1' },
+        { currency: 'USD', items: STORED_ITEMS, client: CLIENT, customerId: 'cust-1' },
         expect.any(Function),
       );
     });
@@ -180,14 +233,181 @@ describe('InvoiceService', () => {
       };
       repository.create.mockRejectedValue(validationError);
 
-      await expect(service.create({ client: CLIENT } as never)).rejects.toBeInstanceOf(UnprocessableEntityException);
+      await expect(service.create(NEW_INVOICE as never)).rejects.toBeInstanceOf(UnprocessableEntityException);
     });
 
     it('rethrows unrecognized errors as-is', async () => {
       const unexpected = new Error('boom');
       repository.create.mockRejectedValue(unexpected);
 
-      await expect(service.create({ client: CLIENT } as never)).rejects.toBe(unexpected);
+      await expect(service.create(NEW_INVOICE as never)).rejects.toBe(unexpected);
+    });
+  });
+
+  describe('line items', () => {
+    it('stores free-form lines in minor units without asking product', async () => {
+      repository.create.mockResolvedValue(buildInvoiceDoc());
+
+      await service.create(NEW_INVOICE as never);
+
+      expect(products.findMany).not.toHaveBeenCalled();
+      expect(repository.create).toHaveBeenCalledWith(
+        expect.objectContaining({ items: STORED_ITEMS }),
+        expect.any(Function),
+      );
+    });
+
+    it("fills catalog lines from the organization's products, in one lookup for every line", async () => {
+      products.findMany.mockResolvedValue([product()]);
+      repository.create.mockResolvedValue(buildInvoiceDoc());
+
+      await service.create({
+        client: CLIENT,
+        currency: 'BDT',
+        items: [
+          { productId: PRODUCT_ID, quantity: 1 },
+          { productId: PRODUCT_ID, quantity: 3 },
+        ],
+      } as never);
+
+      expect(products.findMany).toHaveBeenCalledTimes(1);
+      expect(products.findMany).toHaveBeenCalledWith([PRODUCT_ID]);
+      const line = {
+        productId: PRODUCT_ID,
+        catalogId: 'AC-1',
+        name: 'Air conditioner',
+        unitPriceMinor: 10_000_000,
+        vatRate: 15,
+        sdRate: 20,
+      };
+      expect(repository.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          items: [
+            { ...line, quantity: 1 },
+            { ...line, quantity: 3 },
+          ],
+        }),
+        expect.any(Function),
+      );
+    });
+
+    // product only returns the caller organization's products: another organization's id is absent.
+    it.each([
+      ['missing (or in another organization)', [], `items[0]: product "${PRODUCT_ID}" was not found.`],
+      ['inactive', [product({ isActive: false })], 'items[0]: product "AC-1" is inactive.'],
+      [
+        'priced in another currency',
+        [product({ currency: 'USD' })],
+        'items[0]: product "AC-1" is priced in USD, the invoice in BDT.',
+      ],
+    ])('refuses a catalog line whose product is %s with a 422, writing nothing', async (_label, found, message) => {
+      products.findMany.mockResolvedValue(found);
+
+      await expect(
+        service.create({ client: CLIENT, currency: 'BDT', items: [{ productId: PRODUCT_ID, quantity: 1 }] } as never),
+      ).rejects.toThrow(new UnprocessableEntityException(message));
+      expect(repository.create).not.toHaveBeenCalled();
+    });
+
+    it('refuses a price finer than the currency allows with a 422', async () => {
+      await expect(
+        service.create({ ...NEW_INVOICE, items: [{ ...ITEMS[0], unitPrice: 10.005 }] } as never),
+      ).rejects.toThrow(new UnprocessableEntityException('items[0]: 10.005 USD has more than 2 decimal places.'));
+      expect(repository.create).not.toHaveBeenCalled();
+    });
+
+    // Re-checked in the service: RPC payloads skip DTO validation.
+    it.each([
+      ['no items', []],
+      ['more than 500 items', Array.from({ length: 501 }, () => ITEMS[0])],
+      ['items that are not a list', 'nope'],
+    ])('refuses %s with a 422', async (_label, items) => {
+      await expect(service.create({ ...NEW_INVOICE, items } as never)).rejects.toThrow(
+        new UnprocessableEntityException('An invoice needs between 1 and 500 items.'),
+      );
+    });
+
+    it('update re-resolves sent items in the currency the invoice will have', async () => {
+      repository.findOne.mockResolvedValue(buildInvoiceDoc({ currency: 'USD' }));
+      repository.update.mockResolvedValue(buildInvoiceDoc({ currency: 'BDT' }));
+      products.findMany.mockResolvedValue([product()]);
+
+      await service.update(ID, { currency: 'BDT', items: [{ productId: PRODUCT_ID, quantity: 1 }] }, 4);
+
+      expect(repository.update).toHaveBeenCalledWith(
+        ID,
+        { currency: 'BDT', items: [expect.objectContaining({ productId: PRODUCT_ID, unitPriceMinor: 10_000_000 })] },
+        4,
+      );
+    });
+
+    it('update without items leaves the lines alone', async () => {
+      repository.findOne.mockResolvedValue(buildInvoiceDoc());
+      repository.update.mockResolvedValue(buildInvoiceDoc({ notes: 'n' }));
+
+      await service.update(ID, { notes: 'n' });
+
+      expect(repository.update).toHaveBeenCalledWith(ID, { notes: 'n' }, undefined);
+      expect(products.findMany).not.toHaveBeenCalled();
+    });
+
+    // 1,500 BDT is not 1,500 USD: prices are restated, never silently reinterpreted.
+    it('refuses a currency change without items with a 422', async () => {
+      repository.findOne.mockResolvedValue(buildInvoiceDoc({ currency: 'BDT' }));
+
+      await expect(service.update(ID, { currency: 'USD' })).rejects.toThrow(
+        new UnprocessableEntityException(
+          'Changing the currency from BDT to USD requires sending the items in USD too.',
+        ),
+      );
+      expect(repository.update).not.toHaveBeenCalled();
+    });
+
+    it('presents stored minor units as the decimals the API has always returned', async () => {
+      const stored = buildInvoiceDoc({
+        currency: 'BDT',
+        items: [
+          {
+            productId: PRODUCT_ID,
+            catalogId: 'AC-1',
+            name: 'Air conditioner',
+            quantity: 10,
+            unitPriceMinor: 10_000_050,
+            vatRate: 15,
+            sdRate: 20,
+            netMinor: 100_000_500,
+            sdMinor: 20_000_100,
+            vatMinor: 18_000_090,
+            totalMinor: 138_000_690,
+          },
+        ],
+        netMinor: 100_000_500,
+        sdMinor: 20_000_100,
+        vatMinor: 18_000_090,
+        totalMinor: 138_000_690,
+      });
+      repository.findOne.mockResolvedValue(stored);
+      cacheManager.get.mockResolvedValue(undefined);
+
+      const result = await service.findOne(ID);
+
+      expect(result.items).toEqual([
+        {
+          productId: PRODUCT_ID,
+          catalogId: 'AC-1',
+          name: 'Air conditioner',
+          quantity: 10,
+          unitPrice: 100_000.5,
+          vatRate: 15,
+          sdRate: 20,
+          net: 1_000_005,
+          sd: 200_001,
+          vat: 180_000.9,
+          total: 1_380_006.9,
+        },
+      ]);
+      expect(result).toMatchObject({ subtotal: 1_000_005, sdTotal: 200_001, vatTotal: 180_000.9, total: 1_380_006.9 });
+      expect(result).not.toHaveProperty('totalMinor');
     });
   });
 
@@ -223,7 +443,7 @@ describe('InvoiceService', () => {
 
       const result = await service.findAll({ page: 1, limit: 20 });
 
-      expect(result.items).toEqual([doc.toJSON()]);
+      expect(result.items).toEqual([presentInvoice(doc.toJSON())]);
       expect('cursor' in result.meta).toBe(false);
       expect(cacheManager.set).toHaveBeenCalled();
     });
@@ -295,9 +515,13 @@ describe('InvoiceService', () => {
 
       const result = await service.findOne(ID);
 
-      expect(result).toEqual(doc.toJSON());
+      expect(result).toEqual(presentInvoice(doc.toJSON()));
       expect(cacheManager.get).toHaveBeenCalledWith(`svc:org:${ORG}:invoice:one:${ID}`);
-      expect(cacheManager.set).toHaveBeenCalledWith(`svc:org:${ORG}:invoice:one:${ID}`, doc.toJSON(), 30_000);
+      expect(cacheManager.set).toHaveBeenCalledWith(
+        `svc:org:${ORG}:invoice:one:${ID}`,
+        presentInvoice(doc.toJSON()),
+        30_000,
+      );
     });
   });
 
@@ -310,7 +534,7 @@ describe('InvoiceService', () => {
 
       const result = await service.update('507f1f77bcf86cd799439011', {}, 3);
 
-      expect(result).toEqual(updated.toJSON());
+      expect(result).toEqual(presentInvoice(updated.toJSON()));
       expect(cacheManager.del).toHaveBeenCalled();
       expect(redis.incr).toHaveBeenCalled();
       expect(auditLog.record).toHaveBeenCalledWith(expect.objectContaining({ action: 'UPDATE' }));
@@ -354,7 +578,7 @@ describe('InvoiceService', () => {
       expect(repository.transitionStatus).toHaveBeenCalledWith(ID, ['draft'], 'issued', {
         prepare: expect.any(Function),
       });
-      expect(result).toEqual(issued.toJSON());
+      expect(result).toEqual(presentInvoice(issued.toJSON()));
       expect(cacheManager.del).toHaveBeenCalled();
       expect(redis.incr).toHaveBeenCalled();
       expect(auditLog.record).toHaveBeenCalledWith({
@@ -470,7 +694,7 @@ describe('InvoiceService', () => {
       const paid = buildFullInvoiceDoc('paid');
       repository.transitionStatus.mockResolvedValue({ outcome: 'rejected', invoice: paid });
 
-      await expect(service.markPaid(ID)).resolves.toEqual(paid.toJSON());
+      await expect(service.markPaid(ID)).resolves.toEqual(presentInvoice(paid.toJSON()));
       expect(auditLog.record).not.toHaveBeenCalled();
       expect(redis.incr).not.toHaveBeenCalled();
     });
@@ -511,8 +735,17 @@ describe('InvoiceService', () => {
 
       const result = await service.generatePdf(ID);
 
+      // Exact minor units: the renderer formats them for the currency.
       expect(pdfGeneratorClient.generateInvoicePdf).toHaveBeenCalledWith(
-        expect.objectContaining({ invoiceNumber: 'INV-0001' }),
+        expect.objectContaining({
+          invoiceNumber: 'INV-0001',
+          currency: 'EUR',
+          items: [expect.objectContaining({ unitPriceMinor: 10_000, sdRate: 0, sdMinor: 0, totalMinor: 12_000 })],
+          netMinor: 10_000,
+          sdMinor: 0,
+          vatMinor: 2000,
+          totalMinor: 12_000,
+        }),
       );
       expect(repository.setPdfMetadata).toHaveBeenCalledWith(ID, KEY, expect.any(Date), undefined);
       expect(mediaClient.getDownloadUrl).toHaveBeenCalledWith({ key: KEY, fileName: 'invoice-INV-0001.pdf' });
@@ -569,6 +802,7 @@ describe('InvoiceService', () => {
         pdfKey: KEY,
         fileName: 'invoice-INV-0001.pdf',
         currency: 'EUR',
+        totalMinor: 12_000,
         total: 120,
         issueDate: '2026-10-01T00:00:00.000Z',
         dueDate: undefined,
@@ -721,6 +955,7 @@ describe('InvoiceService', () => {
           pdfKey: KEY,
           fileName: 'invoice-INV-0001.pdf',
           currency: 'EUR',
+          totalMinor: 12_000,
           total: 120,
           dueDate: DUE.toISOString(),
           daysOverdue: 1,

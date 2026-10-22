@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
   ArrayMinSize,
   IsMongoId,
   Validate,
@@ -78,7 +79,8 @@ export class CreateInvoiceDto implements CreateInvoiceRequest {
     description: 'One or more billable invoice line items.',
   })
   @IsArray()
-  @ArrayMinSize(1)
+  @ArrayMinSize(INVOICE_CONSTRAINTS.items.minItems)
+  @ArrayMaxSize(INVOICE_CONSTRAINTS.items.maxItems)
   @ValidateNested({ each: true })
   @Type(() => InvoiceItemDto)
   items!: InvoiceItemDto[];

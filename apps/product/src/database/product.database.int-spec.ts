@@ -20,6 +20,16 @@ const migrations = readdirSync(MIGRATIONS_DIR)
   .flatMap((file) => Object.values(require(join(MIGRATIONS_DIR, file)) as Record<string, unknown>))
   .filter((exported): exported is new () => object => typeof exported === 'function');
 
+/**
+ * Reverts every migration from `name` (inclusive) onwards, newest first: tests about one migration
+ * stay correct as later ones are added (undoing "the last migration" stops meaning that one).
+ */
+async function revertThrough(dataSource: DataSource, name: string): Promise<void> {
+  const index = migrations.findIndex((migration) => migration.name === name);
+  if (index < 0) throw new Error(`No migration named ${name}.`);
+  for (let i = migrations.length - 1; i >= index; i--) await dataSource.undoLastMigration();
+}
+
 /** Integration test: product's migrations and repository against a real Postgres. */
 describe('product database (real Postgres)', () => {
   let container: StartedPostgreSqlContainer;
@@ -66,7 +76,7 @@ describe('product database (real Postgres)', () => {
 
     // Pre-tenancy products join the default organization, and nothing is lost on the way.
     it('move existing products into the default organization', async () => {
-      await dataSource.undoLastMigration();
+      await revertThrough(dataSource, 'AddOrganizationToProducts1792431483786');
       await dataSource.query(
         `INSERT INTO "products" ("sku", "name", "unitPrice", "currency") VALUES ('LEGACY-1', 'Old widget', 12.5, 'EUR')`,
       );
@@ -82,7 +92,25 @@ describe('product database (real Postgres)', () => {
       await createProduct({ sku: 'SHARED' });
       await inOrganization(OTHER_ORG, () => createProduct({ sku: 'SHARED' }));
 
-      await expect(dataSource.undoLastMigration()).rejects.toThrow(/SHARED/);
+      await expect(revertThrough(dataSource, 'AddOrganizationToProducts1792431483786')).rejects.toThrow(/SHARED/);
+      // Leave the schema complete for the next test (the failed revert rolled back only itself).
+      await dataSource.runMigrations();
+    });
+
+    // Bangladesh supplementary duty: existing products get 0, so their invoices' arithmetic is unchanged.
+    it('give existing products an SD rate of 0, keeping their prices', async () => {
+      await revertThrough(dataSource, 'AddSdRateToProducts1792577019000');
+      // Raw SQL: the entity already has the column this schema lacks.
+      await dataSource.query(
+        `INSERT INTO "products" ("organizationId", "sku", "name", "unitPrice", "currency") VALUES ($1, 'BEFORE-SD', 'Old', 1500.55, 'BDT')`,
+        [ORG],
+      );
+
+      await dataSource.runMigrations();
+
+      expect(await dataSource.query(`SELECT "sku", "unitPrice", "sdRate" FROM "products"`)).toEqual([
+        { sku: 'BEFORE-SD', unitPrice: '1500.55', sdRate: '0.00' },
+      ]);
     });
 
     it('revert cleanly and re-apply', async () => {
@@ -121,6 +149,52 @@ describe('product database (real Postgres)', () => {
     expect(await inOrganization(OTHER_ORG, async () => (await products.findAll({})).items.map((p) => p.name))).toEqual([
       'Theirs',
     ]);
+  });
+
+  describe('findOne / findMany / update (catalog-backed invoice lines)', () => {
+    it("finds only the current organization's products", async () => {
+      const mine = await createProduct();
+      const theirs = await inOrganization(OTHER_ORG, () => createProduct());
+
+      expect((await products.findOne(mine.id))?.id).toBe(mine.id);
+      await expect(products.findOne(theirs.id)).resolves.toBeNull();
+      expect((await products.findMany([mine.id, theirs.id])).map((p) => p.id)).toEqual([mine.id]);
+      await expect(products.findMany([])).resolves.toEqual([]);
+    });
+
+    it('updates only the given fields, and returns the stored row', async () => {
+      const created = await createProduct({ name: 'Widget', unitPrice: 19.99 });
+
+      const updated = await products.update(created.id, { unitPrice: 1500.55, sdRate: 20, name: undefined });
+
+      expect(updated).toMatchObject({ id: created.id, name: 'Widget', unitPrice: 1500.55, sdRate: 20, vatRate: 7.5 });
+    });
+
+    // An id, an organizationId or a timestamp in the payload is not a product field: RPC payloads skip DTO validation.
+    it("can't move a product to another organization or change its id", async () => {
+      const created = await createProduct();
+
+      await products.update(created.id, { organizationId: OTHER_ORG, id: 'x', name: 'Renamed' } as never);
+
+      expect(await products.findOne(created.id)).toMatchObject({ organizationId: ORG, name: 'Renamed' });
+    });
+
+    it("is null for another organization's product, which stays unchanged", async () => {
+      const theirs = await inOrganization(OTHER_ORG, () => createProduct({ name: 'Theirs' }));
+
+      await expect(products.update(theirs.id, { name: 'Hijacked' })).resolves.toBeNull();
+      await expect(products.update(theirs.id, {})).resolves.toBeNull();
+      expect(await inOrganization(OTHER_ORG, () => products.findOne(theirs.id))).toMatchObject({ name: 'Theirs' });
+    });
+
+    it('rejects a SKU another product of the organization has', async () => {
+      await createProduct({ sku: 'TAKEN' });
+      const other = await createProduct({ sku: 'FREE' });
+
+      await expect(products.update(other.id, { sku: 'TAKEN' })).rejects.toMatchObject({
+        driverError: expect.objectContaining({ code: '23505' }),
+      });
+    });
   });
 
   // numeric columns come back from pg as strings; the entity's transformer must turn them back

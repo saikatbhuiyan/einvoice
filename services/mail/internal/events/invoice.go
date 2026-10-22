@@ -62,19 +62,22 @@ type DemoEvent struct {
 // of the PDF in the private bucket. Messages produced before PDFs became private carry PdfURL (a
 // public object URL) instead, and no EventID -- still handled, just without dedupe.
 type SentEvent struct {
-	Type          string  `json:"type"`
-	EventID       string  `json:"eventId,omitempty"`
-	InvoiceID     string  `json:"invoiceId"`
-	InvoiceNumber string  `json:"invoiceNumber"`
-	ClientName    string  `json:"clientName"`
-	ClientEmail   string  `json:"clientEmail"`
-	PdfKey        string  `json:"pdfKey,omitempty"`
-	PdfURL        string  `json:"pdfUrl,omitempty"`
-	FileName      string  `json:"fileName"`
-	Currency      string  `json:"currency"`
-	Total         float64 `json:"total"`
-	IssueDate     string  `json:"issueDate"`
-	DueDate       string  `json:"dueDate,omitempty"`
+	Type          string `json:"type"`
+	EventID       string `json:"eventId,omitempty"`
+	InvoiceID     string `json:"invoiceId"`
+	InvoiceNumber string `json:"invoiceNumber"`
+	ClientName    string `json:"clientName"`
+	ClientEmail   string `json:"clientEmail"`
+	PdfKey        string `json:"pdfKey,omitempty"`
+	PdfURL        string `json:"pdfUrl,omitempty"`
+	FileName      string `json:"fileName"`
+	Currency      string `json:"currency"`
+	// TotalMinor is the exact total in the currency's minor unit; absent from events produced
+	// before it existed, which only carry the decimal Total. money.FromEvent picks one.
+	TotalMinor *int64  `json:"totalMinor,omitempty"`
+	Total      float64 `json:"total"`
+	IssueDate  string  `json:"issueDate"`
+	DueDate    string  `json:"dueDate,omitempty"`
 }
 
 // ReminderEvent means a payment reminder is due for an overdue invoice: email ClientEmail, with the
@@ -89,6 +92,7 @@ type ReminderEvent struct {
 	PdfKey         string  `json:"pdfKey"`
 	FileName       string  `json:"fileName"`
 	Currency       string  `json:"currency"`
+	TotalMinor     *int64  `json:"totalMinor,omitempty"`
 	Total          float64 `json:"total"`
 	DueDate        string  `json:"dueDate"`
 	DaysOverdue    int     `json:"daysOverdue"`

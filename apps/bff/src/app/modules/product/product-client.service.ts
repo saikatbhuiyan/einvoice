@@ -4,9 +4,12 @@ import { CIRCUIT_BREAKER_FACTORY } from '@libs/circuit-breaker';
 import type { CircuitBreakerFactory } from '@libs/circuit-breaker';
 import {
   CreateProductRequest,
+  DeactivateProductResponse,
   FindAllProductsRequest,
   FindAllProductsResponse,
   ProductResponse,
+  UpdateProductGatewayRequest,
+  UpdateProductRequest,
 } from '@libs/interfaces/gateway';
 import { BaseTcpClient, ServiceName, TCP_CLIENT_TOKENS, TCP_PATTERNS } from '@libs/transports';
 
@@ -30,5 +33,17 @@ export class ProductClientService extends BaseTcpClient {
 
   async findAllProducts(query: FindAllProductsRequest): Promise<FindAllProductsResponse> {
     return this.send<FindAllProductsResponse, FindAllProductsRequest>(TCP_PATTERNS.PRODUCT.FIND_ALL, query);
+  }
+
+  async findProduct(id: string): Promise<ProductResponse> {
+    return this.send<ProductResponse, { id: string }>(TCP_PATTERNS.PRODUCT.FIND_ONE, { id });
+  }
+
+  async updateProduct(id: string, data: UpdateProductRequest): Promise<ProductResponse> {
+    return this.send<ProductResponse, UpdateProductGatewayRequest>(TCP_PATTERNS.PRODUCT.UPDATE, { id, data });
+  }
+
+  async deactivateProduct(id: string): Promise<DeactivateProductResponse> {
+    return this.send<DeactivateProductResponse, { id: string }>(TCP_PATTERNS.PRODUCT.DEACTIVATE, { id });
   }
 }

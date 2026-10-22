@@ -6,7 +6,12 @@ import { itInOrganization as it } from '@libs/logging/testing';
 
 type MockCache = { get: jest.Mock; set: jest.Mock };
 type MockRedis = { get: jest.Mock; incr: jest.Mock };
-type MockClient = jest.Mocked<Pick<ProductClientService, 'createProduct' | 'findAllProducts'>>;
+type MockClient = jest.Mocked<
+  Pick<
+    ProductClientService,
+    'createProduct' | 'findAllProducts' | 'findProduct' | 'updateProduct' | 'deactivateProduct'
+  >
+>;
 type MockCbFactory = { get: jest.Mock };
 
 describe('BFF ProductService', () => {
@@ -17,7 +22,13 @@ describe('BFF ProductService', () => {
   let service: ProductService;
 
   beforeEach(() => {
-    client = { createProduct: jest.fn(), findAllProducts: jest.fn() };
+    client = {
+      createProduct: jest.fn(),
+      findAllProducts: jest.fn(),
+      findProduct: jest.fn(),
+      updateProduct: jest.fn(),
+      deactivateProduct: jest.fn(),
+    };
     cacheManager = { get: jest.fn(), set: jest.fn() };
     redis = { get: jest.fn().mockResolvedValue(null), incr: jest.fn().mockResolvedValue(1) };
     cbFactory = { get: jest.fn() };
@@ -32,6 +43,35 @@ describe('BFF ProductService', () => {
       await service.create({ sku: 'SKU-1' } as never);
 
       expect(redis.incr).toHaveBeenCalled();
+    });
+  });
+
+  describe('findOne / update / deactivate', () => {
+    // Someone about to invoice a product must see its current price and status.
+    it('reads one product fresh, never from cache', async () => {
+      client.findProduct.mockResolvedValue({ id: 'product-1' } as never);
+
+      await expect(service.findOne('product-1')).resolves.toEqual({ id: 'product-1' });
+      expect(cacheManager.get).not.toHaveBeenCalled();
+    });
+
+    it('invalidates the cached lists after an update or a deactivation', async () => {
+      client.updateProduct.mockResolvedValue({ id: 'product-1' } as never);
+      client.deactivateProduct.mockResolvedValue({ id: 'product-1', deactivated: true });
+
+      await service.update('product-1', { unitPrice: 165 });
+      await service.deactivate('product-1');
+
+      expect(client.updateProduct).toHaveBeenCalledWith('product-1', { unitPrice: 165 });
+      expect(client.deactivateProduct).toHaveBeenCalledWith('product-1');
+      expect(redis.incr).toHaveBeenCalledTimes(2);
+    });
+
+    it('leaves the lists alone when the update fails', async () => {
+      client.updateProduct.mockRejectedValue(new Error('boom'));
+
+      await expect(service.update('product-1', {})).rejects.toThrow('boom');
+      expect(redis.incr).not.toHaveBeenCalled();
     });
   });
 

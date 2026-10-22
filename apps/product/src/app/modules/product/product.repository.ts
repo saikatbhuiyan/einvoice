@@ -1,12 +1,23 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { containsPattern } from '@libs/shared/utils';
 import { DEFAULT_LIMIT, DEFAULT_PAGE } from '@libs/constants';
 import { requireOrganizationId } from '@libs/logging/correlation-context';
-import { CreateProductRequest, FindAllProductsRequest } from '@libs/interfaces/gateway';
+import { CreateProductRequest, FindAllProductsRequest, UpdateProductRequest } from '@libs/interfaces/gateway';
 import { ProductEntity } from '../../../database/entities/product.entity';
 import { IProductRepository, PaginatedResult } from './product.repository.interface';
+
+const UPDATABLE_FIELDS = [
+  'sku',
+  'name',
+  'description',
+  'unitPrice',
+  'currency',
+  'vatRate',
+  'sdRate',
+  'isActive',
+] as const satisfies readonly (keyof UpdateProductRequest)[];
 
 /** The current organization's catalog (requireOrganizationId()); other organizations' products don't exist here. */
 @Injectable()
@@ -25,11 +36,35 @@ export class ProductRepository implements IProductRepository {
       unitPrice: data.unitPrice,
       currency: data.currency,
       vatRate: data.vatRate,
+      sdRate: data.sdRate ?? 0,
       isActive: data.isActive ?? true,
       organizationId: requireOrganizationId(),
     });
 
     return this.repository.save(product);
+  }
+
+  async findOne(id: string): Promise<ProductEntity | null> {
+    return this.repository.findOneBy({ id, organizationId: requireOrganizationId() });
+  }
+
+  async findMany(ids: string[]): Promise<ProductEntity[]> {
+    if (ids.length === 0) return [];
+    return this.repository.findBy({ id: In(ids), organizationId: requireOrganizationId() });
+  }
+
+  async update(id: string, data: UpdateProductRequest): Promise<ProductEntity | null> {
+    const organizationId = requireOrganizationId();
+    // Allow-listed for the same reason as create; an undefined field is left as it is.
+    const changes = Object.fromEntries(
+      UPDATABLE_FIELDS.filter((field) => data[field] !== undefined).map((field) => [field, data[field]]),
+    ) as Partial<ProductEntity>;
+
+    if (Object.keys(changes).length > 0) {
+      const { affected } = await this.repository.update({ id, organizationId }, changes);
+      if (!affected) return null;
+    }
+    return this.repository.findOneBy({ id, organizationId });
   }
 
   async findAll(query: FindAllProductsRequest): Promise<PaginatedResult<ProductEntity>> {
