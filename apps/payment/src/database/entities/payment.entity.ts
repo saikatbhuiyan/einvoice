@@ -14,7 +14,18 @@ const decimalTransformer: ValueTransformer = {
  * left silently as 'paid' (which would claim invoice agrees when it might not). See
  * PaymentService's saga in handleWebhookEvent.
  */
-export type PaymentStatus = 'pending' | 'paid' | 'failed' | 'reconciliation_required';
+export type PaymentStatus =
+  | 'pending'
+  | 'paid'
+  | 'failed'
+  | 'reconciliation_required'
+  /**
+   * Replaced by a newer session, but possibly still payable: SSLCommerz sessions can't be closed
+   * from our side. A payment made through one is still settled.
+   */
+  | 'superseded'
+  /** The provider flagged the payment as high risk (SSLCommerz risk_level=1): held until a human decides. */
+  | 'review_required';
 
 /**
  * At most one open (pending) checkout session per invoice: PaymentService reuses it rather than

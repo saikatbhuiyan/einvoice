@@ -3,6 +3,7 @@ import { exponentOf } from '@libs/money';
 import { SUPPORTED_CURRENCIES } from '@libs/shared/types';
 
 const WEBHOOK_SECRET = 'whsec_test_secret';
+const CUSTOMER = { name: 'Acme Corp', email: 'billing@acme.test' };
 
 jest.mock('../../../configuration', () => ({
   CONFIGURATION: {
@@ -101,6 +102,7 @@ describe('StripePaymentProvider', () => {
         invoiceNumber: 'INV-1',
         amount: 129.9,
         currency: 'EUR',
+        customer: CUSTOMER,
       });
 
       expect(session).toEqual({
@@ -131,7 +133,13 @@ describe('StripePaymentProvider', () => {
         .spyOn(stripeFor(provider).checkout.sessions, 'create')
         .mockResolvedValue({ id: 'cs_1', url: 'u' } as never);
 
-      await provider.createCheckoutSession({ invoiceId: 'i', invoiceNumber: 'n', amount: 0.1 + 0.2, currency: 'USD' });
+      await provider.createCheckoutSession({
+        invoiceId: 'i',
+        invoiceNumber: 'n',
+        amount: 0.1 + 0.2,
+        currency: 'USD',
+        customer: CUSTOMER,
+      });
 
       expect(create.mock.calls[0][0]?.line_items?.[0].price_data?.unit_amount).toBe(30);
     });
@@ -146,11 +154,18 @@ describe('StripePaymentProvider', () => {
         invoiceNumber: 'n',
         amount: 1_380_000.5,
         currency: 'BDT',
+        customer: CUSTOMER,
       });
       expect(create.mock.calls[0][0]?.line_items?.[0].price_data?.unit_amount).toBe(138_000_050);
 
       await expect(
-        provider.createCheckoutSession({ invoiceId: 'i', invoiceNumber: 'n', amount: 1.005, currency: 'BDT' }),
+        provider.createCheckoutSession({
+          invoiceId: 'i',
+          invoiceNumber: 'n',
+          amount: 1.005,
+          currency: 'BDT',
+          customer: CUSTOMER,
+        }),
       ).rejects.toThrow('1.005 BDT has more than 2 decimal places.');
       expect(create).toHaveBeenCalledTimes(1);
     });
@@ -159,7 +174,13 @@ describe('StripePaymentProvider', () => {
       jest.spyOn(stripeFor(provider).checkout.sessions, 'create').mockResolvedValue({ id: 'cs_9', url: null } as never);
 
       await expect(
-        provider.createCheckoutSession({ invoiceId: 'i', invoiceNumber: 'n', amount: 1, currency: 'USD' }),
+        provider.createCheckoutSession({
+          invoiceId: 'i',
+          invoiceNumber: 'n',
+          amount: 1,
+          currency: 'USD',
+          customer: CUSTOMER,
+        }),
       ).rejects.toThrow('Stripe did not return a checkout URL for session "cs_9".');
     });
   });

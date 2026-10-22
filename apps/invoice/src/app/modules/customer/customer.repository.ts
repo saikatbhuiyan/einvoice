@@ -7,7 +7,7 @@ import { escapeRegExp } from '@libs/shared/utils';
 import { requireOrganizationId } from '@libs/logging/correlation-context';
 import type { CreateCustomerRequest, FindAllCustomersRequest, UpdateCustomerRequest } from '@libs/interfaces/gateway';
 
-const CONTENT_FIELDS = ['name', 'email', 'address', 'taxId', 'bin', 'notes'] as const;
+const CONTENT_FIELDS = ['name', 'email', 'address', 'taxId', 'phone', 'bin', 'notes'] as const;
 
 /** The current organization's customers (requireOrganizationId()); others' are "not found". */
 @Injectable()

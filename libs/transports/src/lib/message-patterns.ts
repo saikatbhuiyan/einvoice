@@ -74,6 +74,12 @@ export const PAYMENT_PATTERNS = {
   VERIFY: 'payment.verify',
   REFUND: 'payment.refund',
   WEBHOOK: 'payment.handleWebhookEvent',
+  /** bff relaying an SSLCommerz IPN or the payer's return redirect: "go and check this tran_id". */
+  SSLCOMMERZ_NOTIFY: 'payment.sslcommerz.notify',
+  /** The active organization's SSLCommerz store (organization:read / organization:write). */
+  SSLCOMMERZ_CREDENTIALS_GET: 'payment.sslcommerz.credentials.get',
+  SSLCOMMERZ_CREDENTIALS_SET: 'payment.sslcommerz.credentials.set',
+  SSLCOMMERZ_CREDENTIALS_DELETE: 'payment.sslcommerz.credentials.delete',
 } as const;
 
 export const PDF_GENERATOR_PATTERNS = {
