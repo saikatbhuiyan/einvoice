@@ -3,6 +3,7 @@ import { ModelDefinition } from '@nestjs/mongoose/dist/interfaces/model-definiti
 import { HydratedDocument, Model } from 'mongoose';
 import { BASE_SCHEMA_OPTIONS, BaseSchema } from './base.schema';
 import { ClientSnapshotSchema, ClientSnapshot } from './client-snapshot.schema';
+import { SellerSnapshotSchema, SellerSnapshot } from './seller-snapshot.schema';
 import { InvoiceItemSchema, InvoiceItem } from './invoice-item.schema';
 import {
   INVOICE_CONSTRAINTS,
@@ -51,6 +52,10 @@ export class Invoice extends BaseSchema {
    */
   @Prop({ type: ClientSnapshotSchema, required: true })
   client!: ClientSnapshot;
+
+  /** The issuing organization as of the moment of issue (see SellerSnapshot). Unset on drafts. */
+  @Prop({ type: SellerSnapshotSchema, default: undefined })
+  seller?: SellerSnapshot;
 
   @Prop({
     type: [InvoiceItemSchema],

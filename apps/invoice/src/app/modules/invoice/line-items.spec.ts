@@ -36,6 +36,26 @@ describe('resolveLines', () => {
     ).toEqual([{ catalogId: 'X', name: 'Work', quantity: 1.5, unitPriceMinor: 3333, vatRate: 7.5, sdRate: 0 }]);
   });
 
+  it('takes the unit of supply from the product, and refuses one sent with productId', () => {
+    const counted = new Map([[PRODUCT.id, { ...PRODUCT, unit: 'carton' }]]);
+
+    expect(resolveLines([{ productId: PRODUCT.id, quantity: 1 }], 'BDT', counted)[0]).toMatchObject({ unit: 'carton' });
+    expect(() => resolveLines([{ productId: PRODUCT.id, quantity: 1, unit: 'pcs' }], 'BDT', counted)).toThrow(
+      /takes unit from the product/,
+    );
+  });
+
+  it('keeps a free-form unit, trimmed, and refuses an empty or over-long one', () => {
+    const line = { catalogId: 'X', name: 'Work', quantity: 1, unitPrice: 10, vatRate: 0 };
+
+    expect(resolveLines([{ ...line, unit: ' hour ' }], 'USD', new Map())[0]).toMatchObject({ unit: 'hour' });
+    expect(resolveLines([line], 'USD', new Map())[0]).not.toHaveProperty('unit');
+    expect(() => resolveLines([{ ...line, unit: '  ' }], 'USD', new Map())).toThrow(
+      'items[0]: unit must be 1-16 characters.',
+    );
+    expect(() => resolveLines([{ ...line, unit: 'x'.repeat(17) }], 'USD', new Map())).toThrow(LineItemError);
+  });
+
   it.each([
     [
       'sends product fields with productId (no overrides)',

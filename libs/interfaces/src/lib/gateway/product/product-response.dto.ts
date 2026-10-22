@@ -35,6 +35,9 @@ export class ProductResponseDto implements ProductResponse {
   @ApiProperty({ example: 0, description: 'Supplementary duty percentage (Bangladesh); 0 elsewhere.' })
   sdRate!: number;
 
+  @ApiPropertyOptional({ example: 'pcs', description: 'Unit of supply.' })
+  unit?: string;
+
   @ApiProperty({ example: true })
   isActive!: boolean;
 
