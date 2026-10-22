@@ -152,6 +152,7 @@ export class ProductService {
       currency: product.currency,
       vatRate: product.vatRate,
       sdRate: product.sdRate,
+      ...(product.unit ? { unit: product.unit } : {}),
       isActive: product.isActive,
       createdAt: product.createdAt,
       updatedAt: product.updatedAt,

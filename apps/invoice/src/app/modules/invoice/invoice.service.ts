@@ -17,13 +17,15 @@ import { DEFAULT_LIMIT, DEFAULT_PAGE } from '@libs/constants';
 import {
   INVOICE_CONSTRAINTS,
   buildPaginationMeta,
+  localDateTime,
   statusesTransitionableTo,
   type CursorPaginationMeta,
   type InvoiceStatus,
   type SupportedCurrency,
 } from '@libs/shared/types';
 import { fromMinor } from '@libs/money';
-import type { InvoiceDocument } from '@libs/schemas';
+import type { DocumentFormat } from '@libs/transports';
+import type { InvoiceDocument, SellerSnapshot } from '@libs/schemas';
 import {
   ClientSnapshotRequest,
   CreateInvoiceRequest,
@@ -32,6 +34,7 @@ import {
   FindAllInvoicesRequest,
   FindAllInvoicesResponse,
   InvoiceItemRequest,
+  OrganizationInvoiceSettings,
   InvoicePdfDownload,
   InvoiceResponse,
   SendInvoiceResponse,
@@ -47,7 +50,7 @@ import {
 import { CustomerService } from '../customer/customer.service';
 import { InvoiceNumberingService } from './invoice-numbering.service';
 import { OrganizationSettingsService } from './organization-settings.service';
-import { REMINDER_CATCH_UP_MS, daysOverdue, nextReminderAt, startOfUtcDay } from './reminder-schedule';
+import { REMINDER_CATCH_UP_MS, daysOverdue, nextReminderAt } from './reminder-schedule';
 import { PdfGeneratorClientService } from './clients/pdf-generator-client.service';
 import { MediaClientService } from './clients/media-client.service';
 import { InvoiceEventsProducerService } from './clients/invoice-events-producer.service';
@@ -392,15 +395,22 @@ export class InvoiceService {
   private async issueInvoice(id: string): Promise<InvoiceDocument> {
     const issuedAt = new Date();
     const numbering = await this.numbering.prepare(issuedAt);
+    // "Today" is the organization's: in Dhaka, 03:00 on the 21st is the 21st, though UTC says the 20th.
+    const today = localDateTime(issuedAt, numbering.settings.timeZone).date;
+    const seller = sellerSnapshot(numbering.settings);
 
     return this.transition(id, 'issued', {
       prepare: async (current, session) => {
-        if (current.dueDate && current.dueDate < startOfUtcDay(issuedAt)) {
-          throw new UnprocessableEntityException(
-            `The due date (${current.dueDate.toISOString().slice(0, 10)}) is before today; change it before issuing.`,
-          );
+        // A due date is a calendar date, stored as midnight UTC of that date.
+        const due = current.dueDate?.toISOString().slice(0, 10);
+        if (due && due < today) {
+          throw new UnprocessableEntityException(`The due date (${due}) is before today; change it before issuing.`);
         }
-        return { invoiceNumber: await this.numbering.next(numbering, session), issueDate: issuedAt };
+        return {
+          invoiceNumber: await this.numbering.next(numbering, session),
+          issueDate: issuedAt,
+          ...(seller ? { seller } : {}),
+        };
       },
     });
   }
@@ -532,17 +542,36 @@ export class InvoiceService {
     inTransaction?: InTransaction,
   ): Promise<{ key: string; fileName: string }> {
     const id = invoice._id.toString();
+    // Issued invoices print the seller as it was when issued; a draft, the organization as it is now.
+    // An invoice issued before seller snapshots existed has none and gets none: borrowing today's
+    // details could turn an old issued invoice into a tax challan it never was.
+    const seller =
+      invoice.seller ?? (invoice.status === 'draft' ? sellerSnapshot(await this.settings.current()) : undefined);
     const { base64, contentType, fileName } = await this.pdfGeneratorClient.generateInvoicePdf({
+      format: documentFormat(invoice.currency, seller),
       // Drafts have no number yet; their PDF says so.
       invoiceNumber: invoice.invoiceNumber ?? 'DRAFT',
+      seller: seller
+        ? {
+            name: seller.name,
+            bin: seller.bin,
+            address: seller.address,
+            authorizedSignatory: seller.authorizedSignatory
+              ? { name: seller.authorizedSignatory.name, designation: seller.authorizedSignatory.designation }
+              : undefined,
+          }
+        : undefined,
+      timeZone: seller?.timeZone ?? 'UTC',
       client: {
         name: invoice.client.name,
         email: invoice.client.email,
         address: invoice.client.address,
+        bin: invoice.client.bin,
       },
       items: invoice.items.map((item) => ({
         catalogId: item.catalogId,
         name: item.name,
+        unit: item.unit,
         quantity: item.quantity,
         unitPriceMinor: item.unitPriceMinor,
         vatRate: item.vatRate,
@@ -670,6 +699,30 @@ export class InvoiceService {
 
     return messages.length > 0 ? messages.join(' ') : error.message;
   }
+}
+
+/**
+ * The issuer as a tax invoice records it. None when user-access can't say who the organization is
+ * (an older user-access mid-rollout): the invoice then simply has no seller block, as before.
+ */
+function sellerSnapshot(settings: OrganizationInvoiceSettings): SellerSnapshot | undefined {
+  const { issuer, timeZone } = settings;
+  if (!issuer?.name) return undefined;
+  return {
+    name: issuer.name,
+    timeZone,
+    ...(issuer.bin ? { bin: issuer.bin } : {}),
+    ...(issuer.address ? { address: issuer.address } : {}),
+    ...(issuer.authorizedSignatory ? { authorizedSignatory: { ...issuer.authorizedSignatory } } : {}),
+  };
+}
+
+/**
+ * Mushak-6.3, the Bangladesh tax invoice, for a BDT invoice from a VAT-registered (BIN-holding)
+ * organization; the standard layout for everything else.
+ */
+export function documentFormat(currency: string, seller: Pick<SellerSnapshot, 'bin'> | undefined): DocumentFormat {
+  return currency === 'BDT' && seller?.bin ? 'mushak-6.3' : 'standard';
 }
 
 /**

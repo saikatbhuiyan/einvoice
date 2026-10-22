@@ -7,7 +7,7 @@ import { escapeRegExp } from '@libs/shared/utils';
 import { requireOrganizationId } from '@libs/logging/correlation-context';
 import type { CreateCustomerRequest, FindAllCustomersRequest, UpdateCustomerRequest } from '@libs/interfaces/gateway';
 
-const CONTENT_FIELDS = ['name', 'email', 'address', 'taxId', 'notes'] as const;
+const CONTENT_FIELDS = ['name', 'email', 'address', 'taxId', 'bin', 'notes'] as const;
 
 /** The current organization's customers (requireOrganizationId()); others' are "not found". */
 @Injectable()
@@ -24,7 +24,7 @@ export class CustomerRepository {
     const filter: Record<string, unknown> = { organizationId: requireOrganizationId(), deletedAt: null };
     const search = query.search ? escapeRegExp(query.search.trim()) : '';
     if (search) {
-      filter.$or = ['name', 'email', 'taxId'].map((field) => ({ [field]: { $regex: search, $options: 'i' } }));
+      filter.$or = ['name', 'email', 'taxId', 'bin'].map((field) => ({ [field]: { $regex: search, $options: 'i' } }));
     }
     const [items, total] = await Promise.all([
       this.model
@@ -64,7 +64,7 @@ export class CustomerRepository {
   }
 
   // Allow-listed: RPC payloads skip DTO validation, so organizationId/deletedAt can't ride along.
-  private content(data: Partial<CreateCustomerRequest>): Record<string, unknown> {
+  private content(data: Partial<CreateCustomerRequest> | UpdateCustomerRequest): Record<string, unknown> {
     const result: Record<string, unknown> = {};
     for (const field of CONTENT_FIELDS) {
       if (data[field] !== undefined) result[field] = data[field];

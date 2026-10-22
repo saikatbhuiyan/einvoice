@@ -61,7 +61,8 @@ describe('invoice.ejs', () => {
     // No line has supplementary duty: no SD column, no SD total.
     expect(html).not.toContain('<th class="num">SD</th>');
     expect(html).not.toContain('Supplementary duty');
-    expect(html).toContain('Due: 2026-10-31');
+    expect(html).toContain('Issued: 01 Oct 2026');
+    expect(html).toContain('Due: 31 Oct 2026');
     expect(html).toContain('Thank you for your business');
   });
 
@@ -108,6 +109,32 @@ describe('invoice.ejs', () => {
     expect(html).toContain('<th class="num">SD</th>');
     expect(html).toContain('<td class="num">20%</td>');
     expect(html).toContain('Supplementary duty</span><span>৳2,00,000.00');
+  });
+
+  // Issued 20:30 UTC on 31 Dec = 02:30 on 1 Jan in Dhaka: the printed date is the issuer's.
+  it("prints the date of issue in the issuer's time zone, and a due date as the calendar date it is", async () => {
+    const html = await render({
+      ...invoice(),
+      issueDate: '2026-12-31T20:30:00.000Z',
+      dueDate: '2027-01-31T00:00:00.000Z',
+      timeZone: 'Asia/Dhaka',
+    });
+
+    expect(html).toContain('Issued: 01 Jan 2027');
+    expect(html).toContain('Due: 31 Jan 2027');
+  });
+
+  it('shows the seller and both BINs when there are any', async () => {
+    const html = await render({
+      ...invoice(),
+      seller: { name: 'Acme Ltd.', bin: '0012345670101', address: 'Road 8, Dhaka' },
+      client: { ...invoice().client, bin: '0098765430202' },
+    });
+
+    expect(html).toContain('<strong>Acme Ltd.</strong>');
+    expect(html).toContain('BIN: 0012345670101');
+    expect(html).toContain('BIN: 0098765430202');
+    await expect(render(invoice())).resolves.not.toContain('BIN:');
   });
 
   it('omits the address line for a client without one', async () => {

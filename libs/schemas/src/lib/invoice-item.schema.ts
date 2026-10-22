@@ -1,5 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { INVOICE_CONSTRAINTS } from '@libs/shared/types';
+import { INVOICE_CONSTRAINTS, TAX_IDENTITY_CONSTRAINTS } from '@libs/shared/types';
 import { EMBEDDED_SCHEMA_OPTIONS } from './base.schema';
 
 @Schema(EMBEDDED_SCHEMA_OPTIONS)
@@ -26,6 +26,10 @@ export class InvoiceItem {
     max: INVOICE_CONSTRAINTS.item.quantity.max,
   })
   quantity!: number;
+
+  /** Unit of supply ("pcs", "kg", "service"): a column of the Mushak-6.3. */
+  @Prop({ type: String, default: undefined, trim: true, maxlength: TAX_IDENTITY_CONSTRAINTS.unit.maxLength })
+  unit?: string;
 
   /** Set when the line was filled from the product catalog (name, price and rates are its values then). */
   @Prop({ type: String, default: undefined })

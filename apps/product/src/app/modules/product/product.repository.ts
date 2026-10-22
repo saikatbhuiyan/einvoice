@@ -16,6 +16,7 @@ const UPDATABLE_FIELDS = [
   'currency',
   'vatRate',
   'sdRate',
+  'unit',
   'isActive',
 ] as const satisfies readonly (keyof UpdateProductRequest)[];
 
@@ -37,6 +38,7 @@ export class ProductRepository implements IProductRepository {
       currency: data.currency,
       vatRate: data.vatRate,
       sdRate: data.sdRate ?? 0,
+      unit: data.unit ?? null,
       isActive: data.isActive ?? true,
       organizationId: requireOrganizationId(),
     });

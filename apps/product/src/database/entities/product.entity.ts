@@ -53,6 +53,10 @@ export class ProductEntity {
   @Column({ type: 'numeric', precision: 5, scale: 2, default: 0, transformer: decimalTransformer })
   sdRate!: number;
 
+  /** Unit of supply ("pcs", "kg", "service"): copied onto invoice lines, printed on tax invoices. */
+  @Column({ type: 'varchar', length: 16, nullable: true })
+  unit!: string | null;
+
   @Column({ type: 'boolean', default: true })
   isActive!: boolean;
 

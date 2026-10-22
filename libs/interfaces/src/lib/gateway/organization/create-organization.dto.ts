@@ -15,7 +15,14 @@ import {
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Sanitize } from '@libs/decorators';
-import { DEFAULT_REMINDER_OFFSETS_DAYS, reminderScheduleProblem } from '@libs/shared/types';
+import {
+  BIN_PATTERN,
+  DEFAULT_REMINDER_OFFSETS_DAYS,
+  TAX_IDENTITY_CONSTRAINTS,
+  reminderScheduleProblem,
+  timeZoneProblem,
+  type AuthorizedSignatory,
+} from '@libs/shared/types';
 import type {
   CreateOrganizationAdminRequest,
   CreateOrganizationRequest,
@@ -23,6 +30,35 @@ import type {
 } from './organization.types';
 
 const INVOICE_PREFIX = /^[A-Z0-9]{1,10}$/;
+
+/** The same rule user-access re-checks (RPC payloads skip DTO validation). */
+@ValidatorConstraint({ name: 'timeZone' })
+class TimeZoneConstraint implements ValidatorConstraintInterface {
+  validate(value: unknown): boolean {
+    return timeZoneProblem(value) === null;
+  }
+
+  defaultMessage(args: ValidationArguments): string {
+    return timeZoneProblem(args.value) ?? '';
+  }
+}
+
+export class AuthorizedSignatoryInputDto implements AuthorizedSignatory {
+  @ApiProperty({ example: 'Rahim Uddin', minLength: 2, maxLength: 120 })
+  @Sanitize()
+  @IsString()
+  @Length(TAX_IDENTITY_CONSTRAINTS.signatory.name.minLength, TAX_IDENTITY_CONSTRAINTS.signatory.name.maxLength)
+  name!: string;
+
+  @ApiProperty({ example: 'Accounts Manager', minLength: 2, maxLength: 80 })
+  @Sanitize()
+  @IsString()
+  @Length(
+    TAX_IDENTITY_CONSTRAINTS.signatory.designation.minLength,
+    TAX_IDENTITY_CONSTRAINTS.signatory.designation.maxLength,
+  )
+  designation!: string;
+}
 
 /** The same rule user-access re-checks (RPC payloads skip DTO validation). */
 @ValidatorConstraint({ name: 'reminderSchedule' })
@@ -101,4 +137,46 @@ export class UpdateCurrentOrganizationDto implements UpdateCurrentOrganizationRe
   @IsOptional()
   @Validate(ReminderScheduleConstraint)
   reminderOffsetsDays?: number[];
+
+  @ApiPropertyOptional({
+    example: '0012345670101',
+    nullable: true,
+    type: String,
+    description:
+      'Bangladesh Business Identification Number, 13 digits; null removes it. With a BIN, BDT invoices are issued as Mushak-6.3 tax invoices, and the organization needs an address. Setting one also sets timeZone to Asia/Dhaka unless a zone is already set or given.',
+  })
+  @IsOptional()
+  @Matches(BIN_PATTERN, { message: 'bin must be exactly 13 digits' })
+  bin?: string | null;
+
+  @ApiPropertyOptional({
+    example: 'House 12, Road 8, Gulshan-1, Dhaka 1212',
+    nullable: true,
+    type: String,
+    description: 'The challan-issuing address printed on tax invoices; null removes it.',
+  })
+  @IsOptional()
+  @Sanitize()
+  @IsString()
+  @Length(TAX_IDENTITY_CONSTRAINTS.address.minLength, TAX_IDENTITY_CONSTRAINTS.address.maxLength)
+  address?: string | null;
+
+  @ApiPropertyOptional({
+    example: 'Asia/Dhaka',
+    description:
+      'IANA time zone: printed dates and times of issue, and which year an invoice is numbered in. Applies to invoices issued from now on.',
+  })
+  @IsOptional()
+  @Validate(TimeZoneConstraint)
+  timeZone?: string;
+
+  @ApiPropertyOptional({
+    type: () => AuthorizedSignatoryInputDto,
+    nullable: true,
+    description: 'Printed as the officer-in-charge on tax invoices issued from now on; null removes it.',
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => AuthorizedSignatoryInputDto)
+  authorizedSignatory?: AuthorizedSignatoryInputDto | null;
 }

@@ -25,9 +25,10 @@ ENV NODE_ENV=development
 # referenced below), so this didn't reintroduce a separate full rebuild per app. Confirmed live:
 # before this, invoice/media/payment's dev images were 2.2GB each (same unconditional install as
 # pdf-generator's, despite never touching Puppeteer) vs. ~1.04GB for bff/product/user-access.
+# font-noto-bengali (17 MiB): the taka sign and Bengali text on invoices (Mushak-6.3).
 ARG APP_NAME
 RUN if [ "$APP_NAME" = "pdf-generator" ]; then \
-      apk add --no-cache chromium nss freetype harfbuzz ca-certificates ttf-freefont; \
+      apk add --no-cache chromium nss freetype harfbuzz ca-certificates ttf-freefont font-noto-bengali; \
     fi
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
 
@@ -58,7 +59,7 @@ ENV NODE_ENV=production
 # Chromium is only installed into pdf-generator's image, keeping every other service's prod image
 # exactly as lean as it was before this app existed.
 RUN if [ "$APP_NAME" = "pdf-generator" ]; then \
-      apk add --no-cache chromium nss freetype harfbuzz ca-certificates ttf-freefont; \
+      apk add --no-cache chromium nss freetype harfbuzz ca-certificates ttf-freefont font-noto-bengali; \
     fi
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
 
