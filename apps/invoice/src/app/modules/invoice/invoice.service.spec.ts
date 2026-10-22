@@ -2,7 +2,7 @@ import { ConflictException, NotFoundException, UnprocessableEntityException } fr
 import { Error as MongooseError } from 'mongoose';
 import { itInOrganization as it, TEST_ORGANIZATION_ID as ORG } from '@libs/logging/testing';
 import type { ProductResponse } from '@libs/interfaces/gateway';
-import { InvoiceService } from './invoice.service';
+import { InvoiceService, documentFormat } from './invoice.service';
 import { presentInvoice } from './invoice-presenter';
 import { IInvoiceRepository, TransitionOptions } from './invoice.repository.interface';
 
@@ -45,7 +45,9 @@ const buildInvoiceDoc = (overrides: Record<string, unknown> = {}) => {
 
 const ID = '507f1f77bcf86cd799439011';
 const CLIENT = { name: 'Acme Corp', email: 'billing@acme.test', address: '1 Main St' };
-const PREPARED = { organizationId: ORG, prefix: 'ACME', year: 2026 };
+const ISSUER = { name: 'Acme Ltd.', bin: null, address: null, authorizedSignatory: null };
+const SETTINGS = { invoicePrefix: 'ACME', reminderOffsetsDays: [1, 7, 14], timeZone: 'UTC', issuer: ISSUER };
+const PREPARED = { organizationId: ORG, prefix: 'ACME', year: 2026, settings: SETTINGS };
 
 // A free-form line as requested, and as the service stores it.
 const ITEMS = [{ catalogId: 'sku-1', name: 'Widget', quantity: 2, unitPrice: 10.5, vatRate: 15 }];
@@ -142,7 +144,7 @@ describe('InvoiceService', () => {
       enqueueCancelled: jest.fn().mockResolvedValue('evt'),
       enqueueReminder: jest.fn().mockResolvedValue('evt'),
     };
-    settings = { current: jest.fn().mockResolvedValue({ invoicePrefix: 'ACME', reminderOffsetsDays: [1, 7, 14] }) };
+    settings = { current: jest.fn().mockResolvedValue(SETTINGS) };
     customers = { snapshotOf: jest.fn() };
     products = { findMany: jest.fn().mockResolvedValue([]) };
     numbering = {
@@ -616,7 +618,74 @@ describe('InvoiceService', () => {
           { dueDate: undefined } as never,
           SESSION as never,
         );
-        expect(extra).toEqual({ invoiceNumber: 'ACME-2026-000007', issueDate: NOW });
+        // The seller as it is right now: the issued tax invoice keeps saying this.
+        expect(extra).toEqual({
+          invoiceNumber: 'ACME-2026-000007',
+          issueDate: NOW,
+          seller: { name: 'Acme Ltd.', timeZone: 'UTC' },
+        });
+      });
+
+      it("snapshots a VAT-registered seller's BIN, address, signatory and time zone", async () => {
+        numbering.prepare.mockResolvedValue({
+          ...PREPARED,
+          settings: {
+            ...SETTINGS,
+            timeZone: 'Asia/Dhaka',
+            issuer: {
+              name: 'Acme Ltd.',
+              bin: '0012345670101',
+              address: 'Road 8, Dhaka',
+              authorizedSignatory: { name: 'Rahim Uddin', designation: 'Accounts Manager' },
+            },
+          },
+        });
+        runPrepare({ status: 'draft' });
+
+        await service.issue(ID);
+
+        const extra = await (repository.transitionStatus.mock.calls[0][3] as TransitionOptions).prepare?.(
+          {} as never,
+          SESSION as never,
+        );
+        expect(extra?.['seller']).toEqual({
+          name: 'Acme Ltd.',
+          bin: '0012345670101',
+          address: 'Road 8, Dhaka',
+          authorizedSignatory: { name: 'Rahim Uddin', designation: 'Accounts Manager' },
+          timeZone: 'Asia/Dhaka',
+        });
+      });
+
+      // A user-access from before tax identities can't name the issuer: no seller block, as before.
+      it('records no seller when the organization has no name to give', async () => {
+        numbering.prepare.mockResolvedValue({
+          ...PREPARED,
+          settings: { ...SETTINGS, issuer: { ...ISSUER, name: '' } },
+        });
+        runPrepare({ status: 'draft' });
+
+        await service.issue(ID);
+
+        const extra = await (repository.transitionStatus.mock.calls[0][3] as TransitionOptions).prepare?.(
+          {} as never,
+          SESSION as never,
+        );
+        expect(extra).not.toHaveProperty('seller');
+      });
+
+      // 20:00 UTC on 19 Oct is 02:00 on 20 Oct in Dhaka: a draft due on the 19th is already late there.
+      it("judges 'today' on the organization's clock", async () => {
+        jest.setSystemTime(new Date('2026-10-19T20:00:00.000Z'));
+        numbering.prepare.mockResolvedValue({ ...PREPARED, settings: { ...SETTINGS, timeZone: 'Asia/Dhaka' } });
+        runPrepare({ status: 'draft', dueDate: new Date('2026-10-19T00:00:00.000Z') });
+
+        await expect(service.issue(ID)).rejects.toThrow(
+          new UnprocessableEntityException('The due date (2026-10-19) is before today; change it before issuing.'),
+        );
+
+        numbering.prepare.mockResolvedValue(PREPARED);
+        await expect(service.issue(ID)).resolves.toBeDefined();
       });
 
       it('accepts a due date of today', async () => {
@@ -752,6 +821,102 @@ describe('InvoiceService', () => {
       expect(result).toEqual(DOWNLOAD);
       expect(eventsProducer.enqueueSent).not.toHaveBeenCalled();
       expect(auditLog.record).toHaveBeenCalledWith(expect.objectContaining({ action: 'GENERATE_PDF' }));
+    });
+
+    describe('document format and seller', () => {
+      const MUSHAK_SELLER = {
+        name: 'Acme Ltd.',
+        bin: '0012345670101',
+        address: 'Road 8, Dhaka',
+        authorizedSignatory: { name: 'Rahim Uddin', designation: 'Accounts Manager' },
+        timeZone: 'Asia/Dhaka',
+      };
+      const bdtInvoice = (status: string, fields: Record<string, unknown> = {}) =>
+        ({
+          ...buildFullInvoiceDoc(status),
+          currency: 'BDT',
+          client: {
+            name: 'Dhaka Traders Ltd',
+            email: 'ap@dhaka.test',
+            address: 'Tejgaon, Dhaka',
+            bin: '0098765430202',
+          },
+          items: [{ ...buildFullInvoiceDoc(status).items[0], unit: 'pcs' }],
+          ...fields,
+        }) as never;
+
+      it('renders an issued BDT invoice of a VAT-registered seller as Mushak-6.3, from its snapshot', async () => {
+        repository.findOne.mockResolvedValue(bdtInvoice('issued', { seller: MUSHAK_SELLER }));
+
+        await service.generatePdf(ID);
+
+        expect(pdfGeneratorClient.generateInvoicePdf).toHaveBeenCalledWith(
+          expect.objectContaining({
+            format: 'mushak-6.3',
+            seller: {
+              name: 'Acme Ltd.',
+              bin: '0012345670101',
+              address: 'Road 8, Dhaka',
+              authorizedSignatory: { name: 'Rahim Uddin', designation: 'Accounts Manager' },
+            },
+            timeZone: 'Asia/Dhaka',
+            client: expect.objectContaining({ bin: '0098765430202' }),
+            items: [expect.objectContaining({ unit: 'pcs' })],
+          }),
+        );
+        // The snapshot is the record: the organization's current settings aren't consulted.
+        expect(settings.current).not.toHaveBeenCalled();
+      });
+
+      it("renders a draft with the organization's current details", async () => {
+        settings.current.mockResolvedValue({
+          ...SETTINGS,
+          timeZone: 'Asia/Dhaka',
+          issuer: { name: 'Acme Ltd.', bin: '0012345670101', address: 'Road 8, Dhaka', authorizedSignatory: null },
+        });
+        repository.findOne.mockResolvedValue(bdtInvoice('draft'));
+
+        await service.generatePdf(ID);
+
+        expect(pdfGeneratorClient.generateInvoicePdf).toHaveBeenCalledWith(
+          expect.objectContaining({
+            format: 'mushak-6.3',
+            invoiceNumber: 'INV-0001',
+            seller: { name: 'Acme Ltd.', bin: '0012345670101', address: 'Road 8, Dhaka' },
+            timeZone: 'Asia/Dhaka',
+          }),
+        );
+      });
+
+      // Issued before seller snapshots existed: today's BIN must not turn it into a tax challan retroactively.
+      it('never borrows current details for an issued invoice that has no snapshot', async () => {
+        settings.current.mockResolvedValue({
+          ...SETTINGS,
+          issuer: { name: 'Acme Ltd.', bin: '0012345670101', address: 'Road 8, Dhaka', authorizedSignatory: null },
+        });
+        repository.findOne.mockResolvedValue(bdtInvoice('issued'));
+
+        await service.generatePdf(ID);
+
+        expect(pdfGeneratorClient.generateInvoicePdf).toHaveBeenCalledWith(
+          expect.objectContaining({ format: 'standard', seller: undefined, timeZone: 'UTC' }),
+        );
+        expect(settings.current).not.toHaveBeenCalled();
+      });
+
+      it('keeps the standard layout without a BIN, or for another currency', async () => {
+        repository.findOne.mockResolvedValue(bdtInvoice('issued', { seller: { name: 'Acme Ltd.', timeZone: 'UTC' } }));
+        await service.generatePdf(ID);
+        expect(pdfGeneratorClient.generateInvoicePdf).toHaveBeenLastCalledWith(
+          expect.objectContaining({ format: 'standard', timeZone: 'UTC' }),
+        );
+
+        repository.findOne.mockResolvedValue({ ...buildFullInvoiceDoc('issued'), seller: MUSHAK_SELLER } as never);
+        await service.generatePdf(ID);
+        expect(pdfGeneratorClient.generateInvoicePdf).toHaveBeenLastCalledWith(
+          expect.objectContaining({ format: 'standard', currency: 'EUR' }),
+        );
+      });
     });
 
     describe('getPdfDownloadUrl', () => {
@@ -1029,5 +1194,19 @@ describe('InvoiceService', () => {
         expect(auditLog.record).not.toHaveBeenCalled();
       });
     });
+  });
+});
+
+describe('documentFormat', () => {
+  it.each([
+    ['BDT', '0012345670101', 'mushak-6.3'],
+    ['BDT', undefined, 'standard'],
+    ['USD', '0012345670101', 'standard'],
+  ] as const)('%s with BIN %s -> %s', (currency, bin, format) => {
+    expect(documentFormat(currency, { bin })).toBe(format);
+  });
+
+  it('is standard without a seller', () => {
+    expect(documentFormat('BDT', undefined)).toBe('standard');
   });
 });

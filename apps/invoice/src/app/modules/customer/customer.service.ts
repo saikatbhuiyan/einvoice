@@ -61,7 +61,12 @@ export class CustomerService {
    */
   async snapshotOf(id: string): Promise<ClientSnapshotRequest> {
     const customer = await this.getOrThrow(id);
-    return { name: customer.name, email: customer.email, address: customer.address };
+    return {
+      name: customer.name,
+      email: customer.email,
+      address: customer.address,
+      ...(customer.bin ? { bin: customer.bin } : {}),
+    };
   }
 
   private async getOrThrow(id: string): Promise<CustomerDocument> {

@@ -24,6 +24,15 @@ import { InvoiceService } from './invoice.service';
  * taken by an aborted transaction is given back, and that concurrent issues serialize on the
  * counter instead of sharing or skipping a number.
  */
+// What user-access answers for the organization; a test may change it before issuing.
+const UTC_ORGANIZATION = {
+  invoicePrefix: 'ACME',
+  reminderOffsetsDays: [1, 7, 14],
+  timeZone: 'UTC',
+  issuer: { name: 'Acme Ltd.', bin: null as string | null, address: null as string | null, authorizedSignatory: null },
+};
+let organization = { ...UTC_ORGANIZATION };
+
 describe('invoice numbering against real MongoDB', () => {
   let container: StartedMongoDBContainer;
   let connection: Connection;
@@ -46,7 +55,7 @@ describe('invoice numbering against real MongoDB', () => {
 
     repository = new InvoiceRepository(invoices, invoices);
     const noCache = { get: async () => undefined, set: async () => undefined, del: async () => undefined };
-    const settings = { current: async () => ({ invoicePrefix: 'ACME', reminderOffsetsDays: [1, 7, 14] }) };
+    const settings = { current: async () => ({ ...organization }) };
     numbering = new InvoiceNumberingService(counters, settings as never);
     service = new InvoiceService(
       repository,
@@ -68,7 +77,10 @@ describe('invoice numbering against real MongoDB', () => {
     await container?.stop();
   });
 
-  beforeEach(() => Promise.all([invoices.deleteMany({}), counters.deleteMany({})]));
+  beforeEach(() => {
+    organization = { ...UTC_ORGANIZATION };
+    return Promise.all([invoices.deleteMany({}), counters.deleteMany({})]);
+  });
 
   const draft = (overrides: Partial<NewInvoice> = {}) =>
     repository.create({
@@ -153,5 +165,33 @@ describe('invoice numbering against real MongoDB', () => {
     expect(await counterValue()).toBe(0);
     expect(await invoices.findById(lapsed.id).lean()).toMatchObject({ status: 'draft' });
     expect((await service.issue((await draft()).id)).invoiceNumber).toBe(number(1));
+  });
+
+  // A tax invoice keeps saying what it said: the issuer is stored on the invoice, through the real schema.
+  it('stores the seller as of the moment of issue, and keeps it when the organization changes', async () => {
+    organization = {
+      ...UTC_ORGANIZATION,
+      timeZone: 'Asia/Dhaka',
+      issuer: {
+        name: 'Acme Ltd.',
+        bin: '0012345670101',
+        address: 'House 12, Road 8, Dhaka',
+        authorizedSignatory: { name: 'Rahim Uddin', designation: 'Accounts Manager' } as never,
+      },
+    };
+    const issued = await service.issue((await draft({ currency: 'BDT' })).id);
+
+    organization = { ...UTC_ORGANIZATION, issuer: { ...UTC_ORGANIZATION.issuer, name: 'Renamed Ltd.' } };
+    const stored = await invoices.findById(issued.id).orFail();
+
+    expect(stored.toObject().seller).toEqual({
+      name: 'Acme Ltd.',
+      bin: '0012345670101',
+      address: 'House 12, Road 8, Dhaka',
+      authorizedSignatory: { name: 'Rahim Uddin', designation: 'Accounts Manager' },
+      timeZone: 'Asia/Dhaka',
+    });
+    expect(issued.seller).toMatchObject({ bin: '0012345670101', timeZone: 'Asia/Dhaka' });
+    await expect(stored.validate()).resolves.toBeUndefined();
   });
 });

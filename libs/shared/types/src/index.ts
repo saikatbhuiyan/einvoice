@@ -8,3 +8,4 @@ export * from './lib/invoice.types';
 export * from './lib/http-request.types';
 export * from './lib/tenancy.types';
 export * from './lib/reminder.types';
+export * from './lib/tax-identity.types';

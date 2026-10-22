@@ -1,11 +1,19 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { PaginationMetaDto } from '@libs/shared/types';
+import { PaginationMetaDto, type AuthorizedSignatory } from '@libs/shared/types';
 import type {
   CurrentCallerResponse,
   FindAllOrganizationsResponse,
   MembershipSummary,
   OrganizationResponse,
 } from './organization.types';
+
+export class AuthorizedSignatoryDto implements AuthorizedSignatory {
+  @ApiProperty({ example: 'Rahim Uddin' })
+  name!: string;
+
+  @ApiProperty({ example: 'Accounts Manager' })
+  designation!: string;
+}
 
 export class OrganizationResponseDto implements OrganizationResponse {
   @ApiProperty({ example: '6a1f1c2e-0b9d-4d55-9a8b-6b8f7c1d2e3f' })
@@ -22,6 +30,22 @@ export class OrganizationResponseDto implements OrganizationResponse {
 
   @ApiProperty({ example: [1, 7, 14], type: [Number], description: 'Payment reminders, in days after the due date.' })
   reminderOffsetsDays!: number[];
+
+  @ApiProperty({ example: '0012345670101', nullable: true, type: String, description: 'Bangladesh BIN (13 digits).' })
+  bin!: string | null;
+
+  @ApiProperty({ example: 'House 12, Road 8, Gulshan-1, Dhaka 1212', nullable: true, type: String })
+  address!: string | null;
+
+  @ApiProperty({ example: 'Asia/Dhaka', description: 'IANA time zone for printed dates and the invoice-number year.' })
+  timeZone!: string;
+
+  @ApiProperty({
+    type: () => AuthorizedSignatoryDto,
+    nullable: true,
+    description: 'Printed as the officer-in-charge on Mushak-6.3 tax invoices.',
+  })
+  authorizedSignatory!: AuthorizedSignatoryDto | null;
 
   @ApiProperty({ example: true })
   isActive!: boolean;

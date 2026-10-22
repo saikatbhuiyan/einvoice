@@ -2,7 +2,7 @@ import { Type } from 'class-transformer';
 import { IsBoolean, IsEnum, IsNumber, IsOptional, IsString, Length, Max, MaxLength, Min } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Sanitize } from '@libs/decorators';
-import { INVOICE_CONSTRAINTS } from '@libs/shared/types';
+import { INVOICE_CONSTRAINTS, TAX_IDENTITY_CONSTRAINTS } from '@libs/shared/types';
 import { PRODUCT_CONSTRAINTS, SUPPORTED_CURRENCIES } from './product.types';
 import type { CreateProductRequest, SupportedCurrency } from './product.types';
 
@@ -89,6 +89,17 @@ export class CreateProductDto implements CreateProductRequest {
   @Min(INVOICE_CONSTRAINTS.item.sdRate.min)
   @Max(INVOICE_CONSTRAINTS.item.sdRate.max)
   sdRate?: number;
+
+  @ApiPropertyOptional({
+    example: 'pcs',
+    maxLength: TAX_IDENTITY_CONSTRAINTS.unit.maxLength,
+    description: 'Unit of supply ("pcs", "kg", "service"): copied onto invoice lines and printed on tax invoices.',
+  })
+  @IsOptional()
+  @Sanitize()
+  @IsString()
+  @Length(1, TAX_IDENTITY_CONSTRAINTS.unit.maxLength)
+  unit?: string;
 
   @ApiPropertyOptional({
     example: true,

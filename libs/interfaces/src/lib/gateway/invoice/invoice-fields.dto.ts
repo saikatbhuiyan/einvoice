@@ -6,6 +6,7 @@ import {
   IsString,
   IsUUID,
   Length,
+  Matches,
   Max,
   MaxLength,
   Min,
@@ -16,14 +17,14 @@ import {
   type ValidatorConstraintInterface,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { INVOICE_CONSTRAINTS } from '@libs/shared/types';
+import { BIN_PATTERN, INVOICE_CONSTRAINTS, TAX_IDENTITY_CONSTRAINTS } from '@libs/shared/types';
 import { Sanitize } from '@libs/decorators';
 import type { ClientSnapshotRequest, InvoiceItemRequest } from './invoice.types';
 
 const constraints = INVOICE_CONSTRAINTS;
 
 /** Fields a catalog-backed line takes from the product, so it must not send them. */
-const CATALOG_FIELDS = ['catalogId', 'name', 'unitPrice', 'vatRate', 'sdRate'] as const;
+const CATALOG_FIELDS = ['catalogId', 'name', 'unitPrice', 'vatRate', 'sdRate', 'unit'] as const;
 
 /** Re-checked in the invoice service: RPC payloads skip DTO validation. */
 @ValidatorConstraint({ name: 'catalogLine' })
@@ -74,6 +75,16 @@ export class ClientSnapshotDto implements ClientSnapshotRequest {
   @IsString()
   @Length(constraints.client.address.minLength, constraints.client.address.maxLength)
   address!: string;
+
+  @ApiPropertyOptional({
+    example: '0098765430202',
+    pattern: '^\\d{13}$',
+    description:
+      'Bangladesh BIN of a registered buyer (13 digits): "BIN of Purchaser" on a Mushak-6.3. Omit for an unregistered buyer.',
+  })
+  @IsOptional()
+  @Matches(BIN_PATTERN, { message: 'bin must be exactly 13 digits' })
+  bin?: string;
 }
 
 export class InvoiceItemDto implements InvoiceItemRequest {
@@ -165,4 +176,15 @@ export class InvoiceItemDto implements InvoiceItemRequest {
   @Min(constraints.item.sdRate.min)
   @Max(constraints.item.sdRate.max)
   sdRate?: number;
+
+  @ApiPropertyOptional({
+    example: 'pcs',
+    maxLength: TAX_IDENTITY_CONSTRAINTS.unit.maxLength,
+    description: 'Free-form lines: unit of supply ("pcs", "kg", "service"). Catalog lines take the product\'s.',
+  })
+  @IsOptional()
+  @Sanitize()
+  @IsString()
+  @Length(1, TAX_IDENTITY_CONSTRAINTS.unit.maxLength)
+  unit?: string;
 }

@@ -24,6 +24,20 @@ describe('CustomerService', () => {
     service = new CustomerService(repository as never);
   });
 
+  // A registered buyer's BIN is "BIN of Purchaser" on the Mushak-6.3: it travels with the snapshot.
+  it("snapshots a customer's BIN", async () => {
+    repository.findOne.mockResolvedValue(
+      customerDoc({ name: 'Acme', email: 'billing@acme.test', address: '1 Main St', bin: '0098765430202' }),
+    );
+
+    await expect(service.snapshotOf('cust-1')).resolves.toEqual({
+      name: 'Acme',
+      email: 'billing@acme.test',
+      address: '1 Main St',
+      bin: '0098765430202',
+    });
+  });
+
   it('snapshots only the fields an invoice keeps', async () => {
     repository.findOne.mockResolvedValue(
       customerDoc({ name: 'Acme', email: 'billing@acme.test', address: '1 Main St', taxId: 'DE123', notes: 'vip' }),

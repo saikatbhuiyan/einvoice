@@ -12,6 +12,8 @@ export interface CreateProductRequest {
   vatRate: number;
   /** Bangladesh supplementary duty percentage; defaults to 0. */
   sdRate?: number;
+  /** Unit of supply ("pcs", "kg", "service"), printed on tax invoices. */
+  unit?: string;
   isActive?: boolean;
 }
 
@@ -56,6 +58,7 @@ export interface ProductResponse {
   vatRate: number;
   /** Bangladesh supplementary duty percentage; 0 elsewhere. */
   sdRate: number;
+  unit?: string;
   isActive: boolean;
   createdAt: string | Date;
   updatedAt: string | Date;

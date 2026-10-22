@@ -6,8 +6,8 @@
 <style>
   * { box-sizing: border-box; }
   body {
-    /* FreeSerif (ttf-freefont, in the image) carries the Bengali block, incl. the taka sign. */
-    font-family: 'Helvetica Neue', Arial, FreeSans, FreeSerif, sans-serif;
+    /* Noto Sans Bengali (font-noto-bengali, in the image) supplies the taka sign; FreeSerif is the older fallback. */
+    font-family: 'Helvetica Neue', Arial, 'Noto Sans Bengali', FreeSans, FreeSerif, sans-serif;
     color: #1a1a2e;
     margin: 0;
     padding: 40px;
@@ -105,17 +105,26 @@
     </div>
     <div class="meta">
       <div class="status <%= status %>"><%= status %></div>
-      <div>Issued: <%= issueDate %></div>
-      <% if (locals.dueDate) { %><div>Due: <%= dueDate %></div><% } %>
+      <div>Issued: <%= issued.date %></div>
+      <% if (locals.due) { %><div>Due: <%= due %></div><% } %>
     </div>
   </div>
 
   <div class="parties">
+    <% if (locals.seller) { %>
+    <div>
+      <div class="label">From</div>
+      <div><strong><%= seller.name %></strong></div>
+      <% if (seller.address) { %><div><%= seller.address %></div><% } %>
+      <% if (seller.bin) { %><div>BIN: <%= seller.bin %></div><% } %>
+    </div>
+    <% } %>
     <div>
       <div class="label">Billed to</div>
       <div><strong><%= client.name %></strong></div>
       <div><%= client.email %></div>
       <% if (client.address) { %><div><%= client.address %></div><% } %>
+      <% if (client.bin) { %><div>BIN: <%= client.bin %></div><% } %>
     </div>
   </div>
 

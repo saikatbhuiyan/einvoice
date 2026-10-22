@@ -1,5 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { INVOICE_CONSTRAINTS } from '@libs/shared/types';
+import { BIN_PATTERN, INVOICE_CONSTRAINTS } from '@libs/shared/types';
 import { EMBEDDED_SCHEMA_OPTIONS } from './base.schema';
 
 @Schema(EMBEDDED_SCHEMA_OPTIONS)
@@ -28,6 +28,10 @@ export class ClientSnapshot {
     maxlength: INVOICE_CONSTRAINTS.client.address.maxLength,
   })
   address?: string;
+
+  /** Bangladesh BIN of a registered buyer ("BIN of Purchaser" on a Mushak-6.3). */
+  @Prop({ type: String, default: undefined, match: [BIN_PATTERN, 'bin must be exactly 13 digits.'] })
+  bin?: string;
 }
 
 export const ClientSnapshotSchema = SchemaFactory.createForClass(ClientSnapshot);

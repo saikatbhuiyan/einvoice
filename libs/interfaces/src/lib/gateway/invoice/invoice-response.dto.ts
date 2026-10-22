@@ -9,6 +9,7 @@ import type {
   InvoiceItemResponse,
   InvoiceResponse,
   InvoiceStatus,
+  SellerSnapshotResponse,
   SupportedCurrency,
 } from './invoice.types';
 
@@ -21,6 +22,37 @@ export class ClientSnapshotResponseDto implements ClientSnapshotResponse {
 
   @ApiProperty({ example: 'House 12, Road 8, Gulshan, Dhaka 1212' })
   address!: string;
+
+  @ApiPropertyOptional({ example: '0098765430202', description: 'Bangladesh BIN of a registered buyer.' })
+  bin?: string;
+}
+
+export class SignatoryResponseDto {
+  @ApiProperty({ example: 'Rahim Uddin' })
+  name!: string;
+
+  @ApiProperty({ example: 'Accounts Manager' })
+  designation!: string;
+}
+
+export class SellerSnapshotResponseDto implements SellerSnapshotResponse {
+  @ApiProperty({ example: 'Acme Ltd.' })
+  name!: string;
+
+  @ApiPropertyOptional({
+    example: '0012345670101',
+    description: 'Bangladesh BIN; with one, a BDT invoice is a Mushak-6.3.',
+  })
+  bin?: string;
+
+  @ApiPropertyOptional({ example: 'House 12, Road 8, Gulshan-1, Dhaka 1212' })
+  address?: string;
+
+  @ApiPropertyOptional({ type: () => SignatoryResponseDto })
+  authorizedSignatory?: SignatoryResponseDto;
+
+  @ApiProperty({ example: 'Asia/Dhaka' })
+  timeZone!: string;
 }
 
 export class InvoiceItemResponseDto implements InvoiceItemResponse {
@@ -35,6 +67,9 @@ export class InvoiceItemResponseDto implements InvoiceItemResponse {
 
   @ApiProperty({ example: 'Enterprise subscription' })
   name!: string;
+
+  @ApiPropertyOptional({ example: 'pcs', description: 'Unit of supply.' })
+  unit?: string;
 
   @ApiProperty({ example: 2 })
   quantity!: number;
@@ -86,6 +121,12 @@ export class InvoiceResponseDto implements InvoiceResponse {
 
   @ApiProperty({ type: () => ClientSnapshotResponseDto })
   client!: ClientSnapshotResponseDto;
+
+  @ApiPropertyOptional({
+    type: () => SellerSnapshotResponseDto,
+    description: 'The issuing organization as of the moment of issue; absent on drafts.',
+  })
+  seller?: SellerSnapshotResponseDto;
 
   @ApiProperty({ type: () => InvoiceItemResponseDto, isArray: true })
   items!: InvoiceItemResponseDto[];

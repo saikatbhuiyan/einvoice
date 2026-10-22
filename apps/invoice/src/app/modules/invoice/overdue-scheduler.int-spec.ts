@@ -65,6 +65,8 @@ describe('overdue scheduler against real MongoDB and Redis', () => {
       current: async () => ({
         invoicePrefix: 'INV',
         reminderOffsetsDays: schedules[requireOrganizationId()] ?? [1, 7, 14],
+        timeZone: 'UTC',
+        issuer: { name: 'Acme Ltd.', bin: null, address: null, authorizedSignatory: null },
       }),
     };
     // A render records who asked: it must be the system, in the invoice's organization.

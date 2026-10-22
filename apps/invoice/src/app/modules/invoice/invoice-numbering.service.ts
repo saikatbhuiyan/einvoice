@@ -3,7 +3,17 @@ import { InjectModel } from '@nestjs/mongoose';
 import type { ClientSession } from 'mongoose';
 import { InvoiceCounterModelName, type InvoiceCounterModel } from '@libs/schemas';
 import { requireOrganizationId } from '@libs/logging/correlation-context';
+import { localDateTime } from '@libs/shared/types';
+import type { OrganizationInvoiceSettings } from '@libs/interfaces/gateway';
 import { OrganizationSettingsService } from './organization-settings.service';
+
+/** What issuing needs from before its transaction: where the number comes from, and the organization's settings. */
+export interface PreparedNumbering {
+  organizationId: string;
+  prefix: string;
+  year: number;
+  settings: OrganizationInvoiceSettings;
+}
 
 export function formatInvoiceNumber(prefix: string, year: number, sequence: number): string {
   return `${prefix}-${year}-${String(sequence).padStart(6, '0')}`;
@@ -30,22 +40,23 @@ export class InvoiceNumberingService {
    * document. Creating the counter here, idempotently, means the transaction only ever increments
    * an existing document: two first-of-the-year issues racing to *create* it inside their
    * transactions would fail with a duplicate key, which isn't a retryable transaction error.
+   *
+   * The year is the calendar year *in the organization's time zone*: an invoice issued at 03:00 on
+   * 1 January in Dhaka (21:00 UTC on 31 December) is numbered in the new year, as its printed date says.
    */
-  async prepare(issuedAt: Date): Promise<{ organizationId: string; prefix: string; year: number }> {
+  async prepare(issuedAt: Date): Promise<PreparedNumbering> {
     const organizationId = requireOrganizationId();
-    const year = issuedAt.getUTCFullYear();
-    const [{ invoicePrefix: prefix }] = await Promise.all([
-      this.settings.current(),
-      this.counters
-        .updateOne({ _id: `${organizationId}:${year}` }, { $setOnInsert: { seq: 0 } }, { upsert: true })
-        .exec(),
-    ]);
-    return { organizationId, prefix, year };
+    const settings = await this.settings.current();
+    const { year } = localDateTime(issuedAt, settings.timeZone);
+    await this.counters
+      .updateOne({ _id: `${organizationId}:${year}` }, { $setOnInsert: { seq: 0 } }, { upsert: true })
+      .exec();
+    return { organizationId, prefix: settings.invoicePrefix, year, settings };
   }
 
   /** The next number, inside the issuing transaction. */
   async next(
-    prepared: { organizationId: string; prefix: string; year: number },
+    prepared: Pick<PreparedNumbering, 'organizationId' | 'prefix' | 'year'>,
     session: ClientSession,
   ): Promise<string> {
     const counter = await this.counters

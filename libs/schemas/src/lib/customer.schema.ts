@@ -1,6 +1,6 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, Model } from 'mongoose';
-import { INVOICE_CONSTRAINTS } from '@libs/shared/types';
+import { BIN_PATTERN, INVOICE_CONSTRAINTS } from '@libs/shared/types';
 import { BASE_SCHEMA_OPTIONS, BaseSchema } from './base.schema';
 
 export const CUSTOMER_CONSTRAINTS = {
@@ -44,6 +44,10 @@ export class Customer extends BaseSchema {
 
   @Prop({ trim: true, maxlength: CUSTOMER_CONSTRAINTS.taxId.maxLength })
   taxId?: string;
+
+  /** Bangladesh BIN of a registered buyer; copied onto each invoice billed to this customer. */
+  @Prop({ type: String, default: undefined, match: [BIN_PATTERN, 'bin must be exactly 13 digits.'] })
+  bin?: string;
 
   @Prop({ trim: true, maxlength: CUSTOMER_CONSTRAINTS.notes.maxLength })
   notes?: string;
