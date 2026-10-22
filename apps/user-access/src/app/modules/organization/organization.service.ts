@@ -3,7 +3,16 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { QueryFailedError, Repository } from 'typeorm';
 import { Saga, SagaExecutionError } from '@libs/saga';
 import { DEFAULT_LIMIT, DEFAULT_PAGE } from '@libs/constants';
-import { buildPaginationMeta, reminderScheduleProblem } from '@libs/shared/types';
+import {
+  BANGLADESH_TIME_ZONE,
+  DEFAULT_TIME_ZONE,
+  TAX_IDENTITY_CONSTRAINTS,
+  binProblem,
+  buildPaginationMeta,
+  reminderScheduleProblem,
+  signatoryProblem,
+  timeZoneProblem,
+} from '@libs/shared/types';
 import { containsPattern } from '@libs/shared/utils';
 import {
   CreateOrganizationRequest,
@@ -115,16 +124,33 @@ export class OrganizationService {
   }
 
   async invoiceSettings(id: string): Promise<OrganizationInvoiceSettings> {
-    const { invoicePrefix, reminderOffsetsDays } = await this.findOne(id);
-    return { invoicePrefix, reminderOffsetsDays };
+    const { invoicePrefix, reminderOffsetsDays, timeZone, name, bin, address, authorizedSignatory } =
+      await this.findOne(id);
+    return { invoicePrefix, reminderOffsetsDays, timeZone, issuer: { name, bin, address, authorizedSignatory } };
   }
 
   /**
    * An organization's admin changing its own settings. Re-validated here: RPC payloads skip the
-   * gateway's DTO validation, and only these three fields can ever be written this way.
+   * gateway's DTO validation, and only the fields below can ever be written this way.
    */
   async updateSettings(id: string, request: UpdateCurrentOrganizationRequest): Promise<OrganizationResponse> {
-    const changes: Partial<Pick<OrganizationEntity, 'name' | 'invoicePrefix' | 'reminderOffsetsDays'>> = {};
+    const current = await this.organizations.findOne({ where: { id } });
+    if (!current) {
+      throw new NotFoundException(`Organization not found for id "${id}".`);
+    }
+    const changes: Partial<
+      Pick<
+        OrganizationEntity,
+        | 'name'
+        | 'invoicePrefix'
+        | 'reminderOffsetsDays'
+        | 'bin'
+        | 'address'
+        | 'timeZone'
+        | 'signatoryName'
+        | 'signatoryDesignation'
+      >
+    > = {};
     if (request.name !== undefined) {
       if (typeof request.name !== 'string' || request.name.trim().length < 2 || request.name.length > 160) {
         throw new UnprocessableEntityException('name must be 2-160 characters.');
@@ -142,6 +168,53 @@ export class OrganizationService {
       if (problem) throw new UnprocessableEntityException(problem);
       changes.reminderOffsetsDays = request.reminderOffsetsDays;
     }
+    if (request.bin !== undefined) {
+      if (request.bin !== null) {
+        const problem = binProblem(request.bin);
+        if (problem) throw new UnprocessableEntityException(problem);
+      }
+      changes.bin = request.bin;
+    }
+    if (request.address !== undefined) {
+      const { minLength, maxLength } = TAX_IDENTITY_CONSTRAINTS.address;
+      if (
+        request.address !== null &&
+        (typeof request.address !== 'string' ||
+          request.address.trim().length < minLength ||
+          request.address.length > maxLength)
+      ) {
+        throw new UnprocessableEntityException(`address must be ${minLength}-${maxLength} characters.`);
+      }
+      changes.address = request.address === null ? null : request.address.trim();
+    }
+    if (request.timeZone !== undefined) {
+      const problem = timeZoneProblem(request.timeZone);
+      if (problem) throw new UnprocessableEntityException(problem);
+      changes.timeZone = request.timeZone;
+    } else if (changes.bin && current.timeZone === DEFAULT_TIME_ZONE) {
+      // A BIN is Bangladeshi, and Bangladesh has one time zone: a tax invoice's time of issue must
+      // not print in UTC just because nobody thought to set it.
+      changes.timeZone = BANGLADESH_TIME_ZONE;
+    }
+    if (request.authorizedSignatory !== undefined) {
+      if (request.authorizedSignatory === null) {
+        changes.signatoryName = null;
+        changes.signatoryDesignation = null;
+      } else {
+        const problem = signatoryProblem(request.authorizedSignatory);
+        if (problem) throw new UnprocessableEntityException(problem);
+        changes.signatoryName = request.authorizedSignatory.name.trim();
+        changes.signatoryDesignation = request.authorizedSignatory.designation.trim();
+      }
+    }
+    // The form's seller block is name, BIN *and* address: a BIN without an address can't issue one.
+    const bin = changes.bin !== undefined ? changes.bin : current.bin;
+    const address = changes.address !== undefined ? changes.address : current.address;
+    if (bin && !address) {
+      throw new UnprocessableEntityException(
+        'An organization with a BIN needs its address (the challan-issuing address).',
+      );
+    }
 
     if (Object.keys(changes).length > 0) {
       await this.organizations.update({ id }, changes);
@@ -156,6 +229,13 @@ export class OrganizationService {
       slug: organization.slug,
       invoicePrefix: organization.invoicePrefix,
       reminderOffsetsDays: organization.reminderOffsetsDays,
+      bin: organization.bin ?? null,
+      address: organization.address ?? null,
+      timeZone: organization.timeZone,
+      authorizedSignatory:
+        organization.signatoryName && organization.signatoryDesignation
+          ? { name: organization.signatoryName, designation: organization.signatoryDesignation }
+          : null,
       isActive: organization.isActive,
       createdAt: organization.createdAt,
       updatedAt: organization.updatedAt,

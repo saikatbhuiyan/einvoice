@@ -46,6 +46,8 @@ export class PdfRendererService implements OnModuleInit, OnModuleDestroy {
       await page.setContent(html, { waitUntil: 'load' });
       const pdf = await page.pdf({
         format: 'A4',
+        // A template's own @page size wins (mushak-6.3.ejs is A4 landscape, like the NBR form).
+        preferCSSPageSize: true,
         printBackground: true,
         margin: { top: '0', bottom: '0', left: '0', right: '0' },
       });

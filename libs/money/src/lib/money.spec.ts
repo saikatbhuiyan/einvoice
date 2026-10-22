@@ -1,4 +1,4 @@
-import { MoneyError, formatMoney, fromMinor, toMinor } from './currency';
+import { formatAmount, MoneyError, formatMoney, fromMinor, toMinor } from './currency';
 import { computeLine, divideHalfUp, sumAmounts, type Amounts } from './tax';
 
 describe('money', () => {
@@ -117,5 +117,13 @@ describe('money', () => {
       expect(totals.netMinor).toBe(lines.reduce((sum, line) => sum + line.netMinor, 0));
       for (const value of Object.values(totals)) expect(Number.isSafeInteger(value)).toBe(true);
     });
+  });
+});
+
+describe('formatAmount', () => {
+  it('groups like formatMoney, without the symbol', () => {
+    expect(formatAmount(138_242_654, 'BDT')).toBe('13,82,426.54');
+    expect(formatAmount(5, 'BDT')).toBe('0.05');
+    expect(formatAmount(123_456_750, 'USD')).toBe('1,234,567.50');
   });
 });

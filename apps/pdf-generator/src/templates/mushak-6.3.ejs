@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Mushak-6.3 <%= invoiceNumber %></title>
+<!--
+  Bangladesh VAT tax invoice ("Tax Challan"), laid out after the National Board of Revenue's English
+  Mushak-6.3 form: header, seller/purchaser/challan fields and columns 1-10 carry the form's own
+  labels. Rendered for a BDT invoice from an organization with a BIN (invoice decides; see
+  documentFormat). Optional fields arrive *absent* over TCP, so they are read through `locals`.
+-->
+<style>
+  @page { size: A4 landscape; margin: 12mm; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: 'Noto Sans Bengali', 'Helvetica Neue', Arial, sans-serif;
+    color: #111;
+    margin: 0;
+    font-size: 11px;
+  }
+  .gov { text-align: center; line-height: 1.5; }
+  .gov .title { font-size: 15px; font-weight: bold; letter-spacing: 0.5px; margin-top: 2px; }
+  .gov .rule { font-size: 10px; }
+  .form-no {
+    position: absolute; top: 0; right: 0;
+    border: 1.5px solid #111; padding: 4px 10px; font-weight: bold; font-size: 12px;
+  }
+  .draft {
+    margin: 8px 0; padding: 6px; text-align: center; font-weight: bold;
+    border: 1.5px dashed #b71c1c; color: #b71c1c;
+  }
+  .seller { text-align: center; margin: 10px 0 12px; line-height: 1.6; }
+  .fields { display: flex; justify-content: space-between; margin-bottom: 10px; line-height: 1.7; }
+  .fields .label { color: #444; }
+  table.lines { width: 100%; border-collapse: collapse; }
+  table.lines th, table.lines td { border: 1px solid #111; padding: 4px 5px; vertical-align: top; }
+  table.lines th { font-size: 9.5px; font-weight: bold; text-align: center; background: #f2f2f2; }
+  table.lines tr.numbers td { text-align: center; font-size: 9px; padding: 2px; }
+  table.lines td.num { text-align: right; white-space: nowrap; }
+  table.lines td.center { text-align: center; }
+  table.lines tr.total td { font-weight: bold; }
+  .words { margin-top: 8px; }
+  .footer { display: flex; justify-content: space-between; margin-top: 22px; line-height: 2; }
+  .footer .line { display: inline-block; min-width: 180px; border-bottom: 1px solid #111; }
+  .notes { margin-top: 14px; font-size: 9.5px; color: #333; line-height: 1.5; }
+</style>
+</head>
+<body>
+  <div style="position: relative;">
+    <div class="form-no">MUSHAK-6.3</div>
+    <div class="gov">
+      <div>Government of the People's Republic of Bangladesh</div>
+      <div>National Board of Revenue</div>
+      <div class="title">Tax Challan</div>
+      <div class="rule">[See Clauses (C) and (f) of Sub-Rule (1) of Rule 40]</div>
+    </div>
+  </div>
+
+  <% if (status === 'draft') { %>
+  <div class="draft">DRAFT — not a tax invoice until issued</div>
+  <% } %>
+
+  <div class="seller">
+    <div><span class="label">Name of Registered Person:</span> <strong><%= seller.name %></strong></div>
+    <div><span class="label">BIN of Registered Person:</span> <strong><%= seller.bin %></strong></div>
+    <div><span class="label">Challan Issuing Address:</span> <%= locals.seller.address || '' %></div>
+  </div>
+
+  <div class="fields">
+    <div>
+      <div><span class="label">Name of Purchaser:</span> <strong><%= client.name %></strong></div>
+      <div><span class="label">BIN of Purchaser:</span> <%= locals.client.bin || '' %></div>
+      <div><span class="label">Destination of Supply:</span> <%= locals.client.address || '' %></div>
+    </div>
+    <div>
+      <div><span class="label">Invoice No:</span> <strong><%= invoiceNumber %></strong></div>
+      <div><span class="label">Date of Issue:</span> <%= issued.date %></div>
+      <div><span class="label">Time of Issue:</span> <%= issued.time %></div>
+    </div>
+  </div>
+
+  <table class="lines">
+    <thead>
+      <tr>
+        <th style="width: 4%">S.L No</th>
+        <th style="width: 22%">Goods/Service Description (in cases with Brand Name)</th>
+        <th style="width: 7%">Unit of Supply</th>
+        <th style="width: 7%">Quantity</th>
+        <th style="width: 10%">Unit Value* (TAKA)</th>
+        <th style="width: 11%">Total Value* (TAKA)</th>
+        <th style="width: 9%">Amount of Supplementary Duty (TAKA)</th>
+        <th style="width: 8%">Value Added Tax Rate / Specific Tax</th>
+        <th style="width: 10%">Value Added Tax / Specific Tax Amount (TAKA)</th>
+        <th style="width: 12%">Value Including All Kinds of Duty &amp; Tax (TAKA)</th>
+      </tr>
+      <tr class="numbers">
+        <td>1</td><td>2</td><td>3</td><td>4</td><td>5</td><td>6</td><td>7</td><td>8</td><td>9</td><td>10</td>
+      </tr>
+    </thead>
+    <tbody>
+      <% items.forEach(function(item, index) { %>
+      <tr>
+        <td class="center"><%= index + 1 %></td>
+        <td><%= item.name %></td>
+        <td class="center"><%= item.unit || '' %></td>
+        <td class="num"><%= item.quantity %></td>
+        <td class="num"><%= amount(item.unitPriceMinor) %></td>
+        <td class="num"><%= amount(item.netMinor) %></td>
+        <td class="num"><%= amount(item.sdMinor) %></td>
+        <td class="center"><%= item.vatRate %>%</td>
+        <td class="num"><%= amount(item.vatMinor) %></td>
+        <td class="num"><%= amount(item.totalMinor) %></td>
+      </tr>
+      <% }); %>
+      <tr class="total">
+        <td colspan="5" class="num">Total</td>
+        <td class="num"><%= amount(netMinor) %></td>
+        <td class="num"><%= amount(sdMinor) %></td>
+        <td></td>
+        <td class="num"><%= amount(vatMinor) %></td>
+        <td class="num"><%= amount(totalMinor) %></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="words"><span class="label">In words:</span> <strong><%= totalInWords %></strong></div>
+
+  <div class="footer">
+    <div>
+      <div><span class="label">Name of organization Officer-in-charge:</span>
+        <% if (locals.seller.authorizedSignatory) { %><strong><%= seller.authorizedSignatory.name %></strong><% } else { %><span class="line"></span><% } %></div>
+      <div><span class="label">Designation:</span>
+        <% if (locals.seller.authorizedSignatory) { %><%= seller.authorizedSignatory.designation %><% } else { %><span class="line"></span><% } %></div>
+      <div><span class="label">Signature:</span> <span class="line"></span></div>
+      <div><span class="label">Seal:</span></div>
+    </div>
+  </div>
+
+  <div class="notes">
+    <div>* Value except all kinds of Tax.</div>
+    <div>Applicable to the supplies made to the withholding entity only and in that case it will be used as combined tax invoice cum withholding certificate.</div>
+  </div>
+</body>
+</html>

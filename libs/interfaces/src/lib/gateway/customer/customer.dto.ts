@@ -1,8 +1,8 @@
-import { PartialType } from '@nestjs/swagger';
+import { OmitType, PartialType } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsEmail, IsInt, IsMongoId, IsOptional, IsString, Length, Max, MaxLength, Min } from 'class-validator';
+import { IsEmail, IsInt, IsMongoId, IsOptional, IsString, Length, Matches, Max, MaxLength, Min } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { INVOICE_CONSTRAINTS, PaginationMetaDto } from '@libs/shared/types';
+import { BIN_PATTERN, INVOICE_CONSTRAINTS, PaginationMetaDto } from '@libs/shared/types';
 import { Sanitize } from '@libs/decorators';
 import type {
   CreateCustomerRequest,
@@ -35,12 +35,26 @@ export class CreateCustomerDto implements CreateCustomerRequest {
   @Length(client.address.minLength, client.address.maxLength)
   address!: string;
 
-  @ApiPropertyOptional({ example: 'BIN-000123456', maxLength: 64, description: 'VAT / tax registration number.' })
+  @ApiPropertyOptional({
+    example: 'GB123456789',
+    maxLength: 64,
+    description: 'A VAT / tax registration number other than a Bangladesh BIN (that goes in `bin`).',
+  })
   @IsOptional()
   @Sanitize()
   @IsString()
   @MaxLength(64)
   taxId?: string;
+
+  @ApiPropertyOptional({
+    example: '0098765430202',
+    pattern: '^\\d{13}$',
+    description:
+      'Bangladesh BIN of a registered buyer (13 digits): printed as "BIN of Purchaser" on Mushak-6.3 tax invoices, which the buyer needs to claim input VAT. Omit for an unregistered buyer.',
+  })
+  @IsOptional()
+  @Matches(BIN_PATTERN, { message: 'bin must be exactly 13 digits' })
+  bin?: string;
 
   @ApiPropertyOptional({ example: 'Pays by bank transfer.', maxLength: 1000 })
   @IsOptional()
@@ -50,7 +64,16 @@ export class CreateCustomerDto implements CreateCustomerRequest {
   notes?: string;
 }
 
-export class UpdateCustomerDto extends PartialType(CreateCustomerDto) implements UpdateCustomerRequest {}
+/** `bin: null` removes the BIN (@IsOptional lets null through); invoices already issued keep theirs. */
+export class UpdateCustomerDto
+  extends PartialType(OmitType(CreateCustomerDto, ['bin'] as const))
+  implements UpdateCustomerRequest
+{
+  @ApiPropertyOptional({ example: '0098765430202', nullable: true, type: String, description: 'null removes the BIN.' })
+  @IsOptional()
+  @Matches(BIN_PATTERN, { message: 'bin must be exactly 13 digits' })
+  bin?: string | null;
+}
 
 export class FindAllCustomersDto implements FindAllCustomersRequest {
   @ApiPropertyOptional({ example: 1, minimum: 1 })
@@ -95,8 +118,11 @@ export class CustomerResponseDto implements CustomerResponse {
   @ApiProperty({ example: 'House 12, Road 8, Gulshan, Dhaka 1212' })
   address!: string;
 
-  @ApiPropertyOptional({ example: 'BIN-000123456' })
+  @ApiPropertyOptional({ example: 'GB123456789' })
   taxId?: string;
+
+  @ApiPropertyOptional({ example: '0098765430202' })
+  bin?: string;
 
   @ApiPropertyOptional({ example: 'Pays by bank transfer.' })
   notes?: string;

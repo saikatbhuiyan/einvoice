@@ -6,6 +6,7 @@ interface StoredItemJson {
   productId?: string;
   catalogId: string;
   name: string;
+  unit?: string;
   quantity: number;
   unitPriceMinor: number;
   vatRate: number;
@@ -40,6 +41,7 @@ export function presentInvoice(json: unknown): InvoiceResponse {
         ...(item.productId ? { productId: item.productId } : {}),
         catalogId: item.catalogId,
         name: item.name,
+        ...(item.unit ? { unit: item.unit } : {}),
         quantity: item.quantity,
         unitPrice: amount(item.unitPriceMinor),
         vatRate: item.vatRate,

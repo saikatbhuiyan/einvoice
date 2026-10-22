@@ -67,3 +67,15 @@ export function formatMoney(minor: number, currency: SupportedCurrency, locale =
     maximumFractionDigits: exponent,
   }).format(fromMinor(minor, currency));
 }
+
+/**
+ * Minor units as a grouped number without a currency symbol, for columns whose heading names the
+ * currency ("Total Value (TAKA)"): 138242654 BDT -> "13,82,426.54".
+ */
+export function formatAmount(minor: number, currency: SupportedCurrency, locale = CURRENCY_LOCALE[currency]): string {
+  const exponent = exponentOf(currency);
+  return new Intl.NumberFormat(locale, {
+    minimumFractionDigits: exponent,
+    maximumFractionDigits: exponent,
+  }).format(fromMinor(minor, currency));
+}

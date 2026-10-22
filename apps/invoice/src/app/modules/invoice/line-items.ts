@@ -1,5 +1,5 @@
 import type { InvoiceItemRequest, ProductResponse } from '@libs/interfaces/gateway';
-import type { SupportedCurrency } from '@libs/shared/types';
+import { TAX_IDENTITY_CONSTRAINTS, type SupportedCurrency } from '@libs/shared/types';
 import { MoneyError, toMinor } from '@libs/money';
 
 /** A line as stored: amounts in minor units; catalog lines carry the product's values. */
@@ -11,6 +11,7 @@ export interface StoredLine {
   unitPriceMinor: number;
   vatRate: number;
   sdRate: number;
+  unit?: string;
 }
 
 /** A line the client got wrong: always a 422. */
@@ -21,7 +22,7 @@ export class LineItemError extends Error {
   }
 }
 
-const CATALOG_FIELDS = ['catalogId', 'name', 'unitPrice', 'vatRate', 'sdRate'] as const;
+const CATALOG_FIELDS = ['catalogId', 'name', 'unitPrice', 'vatRate', 'sdRate', 'unit'] as const;
 
 /** The distinct products the lines refer to (one lookup per invoice). */
 export function catalogProductIds(items: readonly InvoiceItemRequest[]): string[] {
@@ -81,12 +82,14 @@ function catalogLine(
     unitPriceMinor: toMinor(product.unitPrice, currency),
     vatRate: product.vatRate,
     sdRate: product.sdRate ?? 0,
+    ...(product.unit ? { unit: product.unit } : {}),
   };
 }
 
 function freeFormLine(item: InvoiceItemRequest, currency: SupportedCurrency, where: string): StoredLine {
   const missing = (['catalogId', 'name', 'unitPrice', 'vatRate'] as const).filter((field) => item[field] === undefined);
   if (missing.length > 0) throw new LineItemError(`${where}: a free-form line needs ${missing.join(', ')}.`);
+  const unit = unitOf(item, where);
   return {
     catalogId: item.catalogId as string,
     name: item.name as string,
@@ -94,5 +97,16 @@ function freeFormLine(item: InvoiceItemRequest, currency: SupportedCurrency, whe
     unitPriceMinor: toMinor(item.unitPrice as number, currency),
     vatRate: item.vatRate as number,
     sdRate: item.sdRate ?? 0,
+    ...(unit ? { unit } : {}),
   };
+}
+
+/** Re-checked here: RPC payloads skip DTO validation. */
+function unitOf(item: InvoiceItemRequest, where: string): string | undefined {
+  if (item.unit === undefined) return undefined;
+  const unit = typeof item.unit === 'string' ? item.unit.trim() : '';
+  if (unit.length === 0 || unit.length > TAX_IDENTITY_CONSTRAINTS.unit.maxLength) {
+    throw new LineItemError(`${where}: unit must be 1-${TAX_IDENTITY_CONSTRAINTS.unit.maxLength} characters.`);
+  }
+  return unit;
 }

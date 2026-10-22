@@ -79,6 +79,57 @@ describe('PdfRendererService with a real Chromium', () => {
     expect(pdf.length).toBeGreaterThan(5_000);
   });
 
+  /** Width and height of the first page, in points, from the PDF's MediaBox. */
+  const pageSize = (pdf: Buffer) => {
+    const match = /\/MediaBox\s*\[\s*0 0 ([\d.]+) ([\d.]+)\s*\]/.exec(pdf.toString('latin1'));
+    if (!match) throw new Error('No MediaBox in the PDF.');
+    return { width: Number(match[1]), height: Number(match[2]) };
+  };
+
+  // The NBR form is landscape; the template's @page size must win over the renderer's A4 default.
+  it('renders a Mushak-6.3 on A4 landscape, and the standard invoice on A4 portrait', async () => {
+    const mushakHtml = await ejs.renderFile(
+      join(__dirname, '../../../templates/mushak-6.3.ejs'),
+      invoiceView({
+        format: 'mushak-6.3',
+        invoiceNumber: 'INV-2026-000001',
+        seller: { name: 'Acme Ltd.', bin: '0012345670101', address: 'Road 8, Dhaka' },
+        timeZone: 'Asia/Dhaka',
+        client: { name: 'Dhaka Traders Ltd', email: 'ap@dhaka.test' },
+        items: [
+          {
+            catalogId: 'AC-1',
+            name: 'Air conditioner',
+            unit: 'pcs',
+            quantity: 1,
+            unitPriceMinor: 10_000_000,
+            vatRate: 15,
+            sdRate: 20,
+            netMinor: 10_000_000,
+            sdMinor: 2_000_000,
+            vatMinor: 1_800_000,
+            totalMinor: 13_800_000,
+          },
+        ],
+        currency: 'BDT',
+        status: 'issued',
+        issueDate: '2026-10-21T04:11:22.173Z',
+        netMinor: 10_000_000,
+        sdMinor: 2_000_000,
+        vatMinor: 1_800_000,
+        totalMinor: 13_800_000,
+      }),
+    );
+
+    const mushak = pageSize(await renderer.renderPdf(mushakHtml));
+    const standard = pageSize(await renderer.renderPdf(await invoiceHtml()));
+
+    expect(mushak.width).toBeCloseTo(842, -1);
+    expect(mushak.height).toBeCloseTo(595, -1);
+    expect(standard.width).toBeCloseTo(595, -1);
+    expect(standard.height).toBeCloseTo(842, -1);
+  });
+
   it('serves concurrent renders from the one shared browser', async () => {
     const html = await invoiceHtml();
 

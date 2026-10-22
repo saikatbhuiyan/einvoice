@@ -7,6 +7,8 @@ export interface ClientSnapshotRequest {
   name: string;
   email: string;
   address: string;
+  /** Bangladesh BIN of a registered buyer (13 digits); omit for an unregistered one. */
+  bin?: string;
 }
 
 /**
@@ -23,6 +25,8 @@ export interface InvoiceItemRequest {
   vatRate?: number;
   /** Bangladesh supplementary duty, percent; VAT is charged on net + SD. Defaults to 0. */
   sdRate?: number;
+  /** Unit of supply ("pcs", "kg", "service"); catalog lines take the product's. */
+  unit?: string;
 }
 
 /**
@@ -45,6 +49,7 @@ export interface UpdateClientSnapshotRequest {
   name?: string;
   email?: string;
   address?: string;
+  bin?: string;
 }
 
 /** Items on update replace the whole list, so each is a complete line, as on create. */
@@ -93,10 +98,20 @@ export interface UpdateInvoiceGatewayRequest extends InvoiceIdGatewayRequest {
 
 export type ClientSnapshotResponse = ClientSnapshotRequest;
 
+export interface SellerSnapshotResponse {
+  name: string;
+  bin?: string;
+  address?: string;
+  authorizedSignatory?: { name: string; designation: string };
+  /** The zone the date and time of issue are shown in. */
+  timeZone: string;
+}
+
 export interface InvoiceItemResponse {
   productId?: string;
   catalogId: string;
   name: string;
+  unit?: string;
   quantity: number;
   unitPrice: number;
   vatRate: number;
@@ -119,6 +134,8 @@ export interface InvoiceResponse {
   reference?: string;
   customerId?: string | null;
   client: ClientSnapshotResponse;
+  /** The issuing organization as of the moment of issue; absent on drafts. */
+  seller?: SellerSnapshotResponse;
   items: InvoiceItemResponse[];
   currency: SupportedCurrency;
   status: InvoiceStatus;

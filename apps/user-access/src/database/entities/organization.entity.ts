@@ -30,6 +30,29 @@ export class OrganizationEntity {
   @Column({ type: 'int', array: true, default: '{1,7,14}' })
   reminderOffsetsDays!: number[];
 
+  /**
+   * Bangladesh Business Identification Number (13 digits). With one, the organization's BDT
+   * invoices are Mushak-6.3 tax invoices. Not unique: the same registered business may run more
+   * than one workspace.
+   */
+  @Column({ type: 'varchar', length: 13, nullable: true })
+  bin!: string | null;
+
+  /** The challan-issuing address printed on tax invoices. */
+  @Column({ type: 'varchar', length: 300, nullable: true })
+  address!: string | null;
+
+  /** IANA time zone: printed dates and times of issue, and the invoice-number year. */
+  @Column({ type: 'varchar', length: 64, default: 'UTC' })
+  timeZone!: string;
+
+  /** The officer-in-charge printed on tax invoices (both set, or neither). */
+  @Column({ type: 'varchar', length: 120, nullable: true })
+  signatoryName!: string | null;
+
+  @Column({ type: 'varchar', length: 80, nullable: true })
+  signatoryDesignation!: string | null;
+
   @Column({ type: 'boolean', default: true })
   isActive!: boolean;
 
