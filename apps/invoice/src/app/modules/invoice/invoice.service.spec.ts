@@ -132,6 +132,7 @@ describe('InvoiceService', () => {
       findPastDueIssued: jest.fn(),
       findDueReminders: jest.fn(),
       advanceReminder: jest.fn(),
+      applyLedgerEntry: jest.fn(),
     };
     cacheManager = { get: jest.fn(), set: jest.fn(), del: jest.fn() };
     redis = { get: jest.fn().mockResolvedValue(null), incr: jest.fn().mockResolvedValue(1) };
@@ -715,6 +716,7 @@ describe('InvoiceService', () => {
       await service.cancel(ID);
 
       expect(repository.transitionStatus).toHaveBeenCalledWith(ID, ['issued', 'overdue'], 'cancelled', {
+        prepare: expect.any(Function),
         inTransaction: expect.any(Function),
       });
     });
@@ -772,6 +774,125 @@ describe('InvoiceService', () => {
       repository.transitionStatus.mockResolvedValue({ outcome: 'not_found' });
 
       await expect(service.cancel(ID)).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
+  describe('payments ledger', () => {
+    const ENTRY = '6c0f3a52-2f0e-4c1b-9a51-0d2f7b6c9e10';
+
+    it('counts a ledger entry once, audits the amount and status change, and drops cached copies', async () => {
+      repository.applyLedgerEntry.mockResolvedValue({
+        outcome: 'applied',
+        previous: buildFullInvoiceDoc('issued'),
+        invoice: { ...buildFullInvoiceDoc('paid'), amountPaidMinor: 12_000 } as never,
+      });
+
+      const result = await service.applyLedgerEntry(ID, { entryId: ENTRY, kind: 'payment', amountMinor: 12_000 });
+
+      expect(repository.applyLedgerEntry).toHaveBeenCalledWith(ID, {
+        entryId: ENTRY,
+        kind: 'payment',
+        amountMinor: 12_000,
+      });
+      expect(result).toMatchObject({ status: 'paid', amountPaid: 120, balanceDue: 0 });
+      expect(cacheManager.del).toHaveBeenCalled();
+      expect(auditLog.record).toHaveBeenCalledWith({
+        action: 'PAYMENT_APPLIED',
+        entityType: 'invoice',
+        entityId: ID,
+        diff: {
+          amountPaidMinor: { from: 0, to: 12_000 },
+          status: { from: 'issued', to: 'paid' },
+          ledgerEntryId: ENTRY,
+        },
+      });
+    });
+
+    it('is a quiet no-op for an entry already counted (retries, redeliveries)', async () => {
+      repository.applyLedgerEntry.mockResolvedValue({
+        outcome: 'already_applied',
+        invoice: buildFullInvoiceDoc('paid'),
+      });
+
+      await expect(
+        service.applyLedgerEntry(ID, { entryId: ENTRY, kind: 'payment', amountMinor: 1 }),
+      ).resolves.toMatchObject({
+        status: 'paid',
+      });
+      expect(auditLog.record).not.toHaveBeenCalled();
+    });
+
+    it('refuses money on an invoice that is not owed (409) and is a 404 for a missing one', async () => {
+      repository.applyLedgerEntry.mockResolvedValue({ outcome: 'refused', invoice: buildFullInvoiceDoc('cancelled') });
+      await expect(service.applyLedgerEntry(ID, { entryId: ENTRY, kind: 'payment', amountMinor: 1 })).rejects.toThrow(
+        new ConflictException('Cannot apply a payment to an invoice that is cancelled.'),
+      );
+
+      repository.applyLedgerEntry.mockResolvedValue({ outcome: 'not_found' });
+      await expect(
+        service.applyLedgerEntry(ID, { entryId: ENTRY, kind: 'refund', amountMinor: 1 }),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    // Re-checked here: RPC payloads skip DTO validation.
+    it.each([
+      [{ entryId: 'nope', kind: 'payment', amountMinor: 1 }, /entryId/],
+      [{ entryId: ENTRY, kind: 'gift', amountMinor: 1 }, /kind/],
+      [{ entryId: ENTRY, kind: 'payment', amountMinor: 0 }, /amountMinor/],
+      [{ entryId: ENTRY, kind: 'payment', amountMinor: 1.5 }, /amountMinor/],
+    ] as [unknown, RegExp][])('refuses %j before touching the invoice', async (application, message) => {
+      await expect(service.applyLedgerEntry(ID, application as never)).rejects.toThrow(message);
+      expect(repository.applyLedgerEntry).not.toHaveBeenCalled();
+    });
+
+    // A stored document as Mongoose returns it: the field readable directly and through toJSON().
+    const withPaid = (doc: ReturnType<typeof buildFullInvoiceDoc>, amountPaidMinor: number) =>
+      ({ ...doc, amountPaidMinor, toJSON: () => ({ ...(doc.toJSON() as object), amountPaidMinor }) }) as never;
+
+    it('presents the amount paid and the balance due, legacy paid invoices as paid in full', async () => {
+      cacheManager.get.mockResolvedValue(undefined);
+      repository.findOne.mockResolvedValue(withPaid(buildFullInvoiceDoc('issued'), 2000));
+      await expect(service.findOne(ID)).resolves.toMatchObject({ total: 120, amountPaid: 20, balanceDue: 100 });
+
+      // Paid before the ledger: no amountPaidMinor stored.
+      repository.findOne.mockResolvedValue(buildFullInvoiceDoc('paid'));
+      await expect(service.findOne(ID)).resolves.toMatchObject({ amountPaid: 120, balanceDue: 0 });
+
+      // Overpaid: the balance never goes below 0.
+      repository.findOne.mockResolvedValue(withPaid(buildFullInvoiceDoc('paid'), 20_000));
+      await expect(service.findOne(ID)).resolves.toMatchObject({ amountPaid: 200, balanceDue: 0 });
+    });
+
+    // Money on an invoice is owed back first: a cancelled invoice can't hold payments.
+    it('refuses to cancel an invoice with money paid on it', async () => {
+      repository.transitionStatus.mockImplementation(async (_id, _from, _to, options?: TransitionOptions) => {
+        await options?.prepare?.(
+          { ...buildFullInvoiceDoc('issued'), amountPaidMinor: 6000 } as never,
+          SESSION as never,
+        );
+        return { outcome: 'transitioned', invoice: buildFullInvoiceDoc('cancelled'), from: 'issued' };
+      });
+
+      await expect(service.cancel(ID)).rejects.toThrow(
+        new ConflictException('Cannot cancel an invoice with 60 EUR paid on it; refund the payments first.'),
+      );
+      expect(eventsProducer.enqueueCancelled).not.toHaveBeenCalled();
+    });
+
+    // A payment service from before the ledger still marks invoices paid in full.
+    it('markPaid (pre-ledger callers) records the whole total as paid', async () => {
+      repository.transitionStatus.mockResolvedValue({
+        outcome: 'transitioned',
+        invoice: buildFullInvoiceDoc('paid'),
+        from: 'issued',
+      });
+
+      await service.markPaid(ID);
+
+      const options = repository.transitionStatus.mock.calls[0][3] as TransitionOptions;
+      await expect(options.prepare?.(buildFullInvoiceDoc('issued') as never, SESSION as never)).resolves.toEqual({
+        amountPaidMinor: 12_000,
+      });
     });
   });
 
@@ -1122,6 +1243,8 @@ describe('InvoiceService', () => {
           currency: 'EUR',
           totalMinor: 12_000,
           total: 120,
+          // Nothing paid yet: the balance is the whole total.
+          balanceDueMinor: 12_000,
           dueDate: DUE.toISOString(),
           daysOverdue: 1,
           reminderNumber: 1,

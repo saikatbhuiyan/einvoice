@@ -2,22 +2,23 @@ import {
   BadGatewayException,
   BadRequestException,
   ConflictException,
-  HttpException,
-  HttpStatus,
   Inject,
   Injectable,
   Logger,
+  NotFoundException,
   ServiceUnavailableException,
   UnprocessableEntityException,
 } from '@nestjs/common';
 import type { InvoiceStatus, SupportedCurrency } from '@libs/shared/types';
 import type {
+  AttentionPaymentResponse,
   CreateCheckoutSessionResponse,
   InvoiceResponse,
+  LedgerEntryResponse,
   PaymentOutcome,
   SslCommerzNotification,
 } from '@libs/interfaces/gateway';
-import { formatMoney, toMinor } from '@libs/money';
+import { formatMoney, fromMinor, toMinor } from '@libs/money';
 import { Saga, SagaExecutionError } from '@libs/saga';
 import { runInOrganization } from '@libs/logging/correlation-context';
 import {
@@ -30,6 +31,8 @@ import {
 import { IPaymentRepository, PAYMENT_REPOSITORY } from './payment.repository.interface';
 import { InvoiceClientService } from './invoice-client.service';
 import { PaymentProviderRegistry } from './payment-provider.registry';
+import { LedgerService } from './ledger/ledger.service';
+import { balanceDueOf } from './invoice-amounts';
 import { SslCommerzRejectedError, SslCommerzUnavailableError } from './sslcommerz/sslcommerz.client';
 import { PaymentEntity, type PaymentStatus } from '../../../database/entities/payment.entity';
 
@@ -57,16 +60,6 @@ const MIN_REUSABLE_SESSION_LIFETIME_MS = 30 * 60 * 1000;
 
 const PG_UNIQUE_VIOLATION = '23505';
 
-/**
- * invoice answered markPaid with a deterministic refusal (the invoice can't become paid, or no
- * longer exists): retrying the webhook would get the same answer forever.
- */
-const NON_RETRYABLE_MARK_PAID_STATUSES = new Set<number>([HttpStatus.NOT_FOUND, HttpStatus.CONFLICT]);
-
-interface MarkPaidSagaContext {
-  payment: PaymentEntity;
-}
-
 @Injectable()
 export class PaymentService {
   private readonly logger = new Logger(PaymentService.name);
@@ -76,13 +69,14 @@ export class PaymentService {
     @Inject(PAYMENT_REPOSITORY) private readonly paymentRepository: IPaymentRepository,
     private readonly invoiceClient: InvoiceClientService,
     private readonly providers: PaymentProviderRegistry,
+    private readonly ledger: LedgerService,
   ) {}
 
   /**
    * A payment link for an issued or overdue invoice, from the provider its currency and organization
    * call for (PaymentProviderRegistry). An open session is reused while it has time left.
    */
-  async createCheckoutSession(invoiceId: string): Promise<CreateCheckoutSessionResponse> {
+  async createCheckoutSession(invoiceId: string, requestedAmount?: number): Promise<CreateCheckoutSessionResponse> {
     const invoice = await this.invoiceClient.findOneInvoice(invoiceId);
 
     if (!PAYABLE_INVOICE_STATUSES.includes(invoice.status)) {
@@ -90,12 +84,12 @@ export class PaymentService {
     }
 
     const provider = await this.providers.forCheckout(invoice.currency);
-    this.assertWithinLimits(provider, invoice);
+    const amount = this.checkoutAmount(provider, invoice, requestedAmount);
 
-    // Issued invoices are immutable, so an open session's amount can never be out of date.
+    // One open session per invoice: reused when it is for the same provider and amount, else retired.
     const open = await this.paymentRepository.findOpenByInvoiceId(invoiceId);
     if (open) {
-      if (open.provider === provider.name && this.isReusable(open)) {
+      if (open.provider === provider.name && open.amount === amount && this.isReusable(open)) {
         return { checkoutUrl: open.checkoutUrl as string, provider: provider.name };
       }
       await this.retire(open);
@@ -104,7 +98,7 @@ export class PaymentService {
     const params: CheckoutSessionParams = {
       invoiceId,
       invoiceNumber: invoice.invoiceNumber as string,
-      amount: invoice.total,
+      amount,
       currency: invoice.currency,
       customer: {
         name: invoice.client.name,
@@ -233,17 +227,43 @@ export class PaymentService {
     return context.checkoutUrl as string;
   }
 
-  /** SSLCommerz caps one transaction (BDT 10 to 5,00,000): refused up front, with the limit named. */
-  private assertWithinLimits(provider: CheckoutProvider, invoice: InvoiceResponse): void {
-    const limits = provider.amountLimits(invoice.currency);
-    if (!limits) return;
+  /**
+   * What this link collects: the balance due, or a part of it (partial payments). Within the
+   * provider's per-payment limits -- SSLCommerz takes BDT 10 to 5,00,000, so a larger balance has to
+   * be paid in parts (or by bank transfer).
+   */
+  private checkoutAmount(provider: CheckoutProvider, invoice: InvoiceResponse, requested?: number): number {
     const currency = invoice.currency as SupportedCurrency;
-    const minor = toMinor(invoice.total, currency);
-    if (minor < limits.minMinor || minor > limits.maxMinor) {
+    const balanceMinor = toMinor(balanceDueOf(invoice), currency);
+    if (balanceMinor <= 0) throw new ConflictException('Nothing is owed on this invoice.');
+
+    let amountMinor = balanceMinor;
+    if (requested !== undefined && requested !== null) {
+      if (typeof requested !== 'number' || !Number.isFinite(requested) || requested <= 0) {
+        throw new BadRequestException('amount must be a positive number.');
+      }
+      try {
+        amountMinor = toMinor(requested, currency);
+      } catch (error) {
+        throw new UnprocessableEntityException((error as Error).message);
+      }
+      if (amountMinor > balanceMinor) {
+        throw new UnprocessableEntityException(
+          `${formatMoney(amountMinor, currency)} is more than the balance due (${formatMoney(balanceMinor, currency)}).`,
+        );
+      }
+    }
+
+    const limits = provider.amountLimits(invoice.currency);
+    if (limits && (amountMinor < limits.minMinor || amountMinor > limits.maxMinor)) {
+      const name = provider.name === 'sslcommerz' ? 'SSLCommerz' : provider.name;
       throw new UnprocessableEntityException(
-        `${provider.name === 'sslcommerz' ? 'SSLCommerz' : provider.name} takes ${formatMoney(limits.minMinor, currency)} to ${formatMoney(limits.maxMinor, currency)} per payment; this invoice is ${formatMoney(minor, currency)}. Pay it by bank transfer instead.`,
+        `${name} takes ${formatMoney(limits.minMinor, currency)} to ${formatMoney(limits.maxMinor, currency)} per payment; ` +
+          `${requested === undefined ? `the balance due is ${formatMoney(balanceMinor, currency)}` : `this is ${formatMoney(amountMinor, currency)}`}. ` +
+          'Ask for a part of it (amount), or record a bank transfer.',
       );
     }
+    return fromMinor(amountMinor, currency);
   }
 
   /** SSLCommerz failures as HTTP: its refusal is a gateway problem for the caller, an outage a 503. */
@@ -273,80 +293,77 @@ export class PaymentService {
 
     // A webhook has no caller organization: act in the one the payment was started in, which is
     // what scopes invoice's MARK_PAID (and this service's own queries) to the right tenant.
-    await runInOrganization(payment.organizationId, () => this.applyWebhookEvent(event.type, payment));
+    await runInOrganization(payment.organizationId, () =>
+      this.applyWebhookEvent(event.type, payment, event.providerReference),
+    );
   }
 
-  private async applyWebhookEvent(type: WebhookEventType, payment: PaymentEntity): Promise<void> {
+  private async applyWebhookEvent(
+    type: WebhookEventType,
+    payment: PaymentEntity,
+    providerReference?: string,
+  ): Promise<void> {
     if (type === 'payment_succeeded') {
-      if (await this.paymentRepository.hasOtherPaidPayment(payment.invoiceId, payment.id)) {
-        // The invoice was already paid through another session (e.g. one retired as nearly expired
-        // while the customer was still on it). invoice's markPaid is idempotent, so without this
-        // check the second charge would look like a normal success; it needs a refund instead.
-        await this.paymentRepository.updateStatus(payment.id, 'reconciliation_required');
-        this.logger.error(
-          `Payment "${payment.id}" for invoice "${payment.invoiceId}" succeeded but the invoice was already paid through another payment -- flagged for reconciliation (refund).`,
-        );
-        return;
-      }
-      await this.markPaid(payment);
+      await this.settle(payment, { providerReference });
       return;
     }
-
-    if (type === 'payment_failed') {
+    if (type === 'payment_failed' && payment.status === 'pending') {
       await this.paymentRepository.updateStatus(payment.id, 'failed');
     }
   }
 
   /**
-   * Stripe has already confirmed the money moved by the time this runs -- if the second step
-   * (telling invoice over TCP) fails, this system and invoice's Mongo document now disagree
-   * about the same fact. Reverting to 'pending' would erase that Stripe already confirmed
-   * payment; staying silently on 'paid' would claim invoice agrees when it might not. The
-   * compensation instead flags 'reconciliation_required' -- a distinct state for deliberate
-   * follow-up, logged at error level because this is a money-reconciliation condition, not a
-   * routine retry.
+   * A gateway confirmed the money for a checkout session: it goes into the ledger first (the record
+   * of what happened -- idempotent per session), then onto the invoice.
+   * - held (high risk): recorded, not counted on the invoice until a person accepts it;
+   * - refused by invoice (it was cancelled meanwhile): recorded, flagged -- a refund is owed;
+   * - overpaid (the invoice was already paid, e.g. through a session retired while the payer was on
+   *   it): counted, flagged -- the excess is owed back;
+   * - invoice unreachable: recorded; the ledger worker counts it later.
    */
-  private async markPaid(payment: PaymentEntity): Promise<void> {
-    const context: MarkPaidSagaContext = { payment };
-
-    const saga = new Saga<MarkPaidSagaContext>('MarkInvoicePaid');
-    saga
-      .addStep({
-        name: 'markPaymentPaid',
-        execute: async (ctx) => {
-          await this.paymentRepository.updateStatus(ctx.payment.id, 'paid');
-        },
-        compensate: async (ctx) => {
-          await this.paymentRepository.updateStatus(ctx.payment.id, 'reconciliation_required');
-          this.logger.error(
-            `Payment "${ctx.payment.id}" for invoice "${ctx.payment.invoiceId}" confirmed paid by ${ctx.payment.provider} but could not be reflected on the invoice -- flagged for reconciliation.`,
-          );
-        },
-      })
-      .addStep({
-        name: 'markInvoicePaid',
-        execute: async (ctx) => {
-          await this.invoiceClient.markInvoicePaid(ctx.payment.invoiceId);
-        },
+  private async settle(
+    payment: PaymentEntity,
+    details: { providerReference?: string; held?: boolean; mismatchAmount?: number },
+  ): Promise<void> {
+    if (details.mismatchAmount !== undefined) {
+      await this.ledger.recordGatewayPayment(payment, {
+        providerReference: details.providerReference,
+        amount: details.mismatchAmount,
+        applyState: 'refused',
       });
-
-    try {
-      await saga.execute(context);
-    } catch (error) {
-      if (error instanceof SagaExecutionError) {
-        // Already logged + flagged for reconciliation above. A deterministic refusal from invoice
-        // (e.g. the invoice was cancelled after this session was created) won't change on retry,
-        // so the webhook is acknowledged; anything else propagates so bff's relay surfaces a
-        // non-2xx and Stripe retries.
-        if (this.isNonRetryableMarkPaidFailure(error.cause)) return;
-        throw error.cause;
-      }
-      throw error;
+      await this.paymentRepository.updateStatus(payment.id, 'reconciliation_required');
+      return;
     }
 
-    this.logger.log(
-      `Invoice "${payment.invoiceId}" marked paid via ${payment.provider} session "${payment.providerSessionId}".`,
-    );
+    const entry = await this.ledger.recordGatewayPayment(payment, {
+      providerReference: details.providerReference,
+      applyState: details.held ? 'held' : 'pending',
+    });
+    if (entry.applyState === 'held') {
+      await this.paymentRepository.updateStatus(payment.id, 'review_required');
+      return;
+    }
+    if (entry.applyState === 'refused') {
+      await this.paymentRepository.updateStatus(payment.id, 'reconciliation_required');
+      return;
+    }
+
+    await this.paymentRepository.updateStatus(payment.id, 'paid');
+    if (entry.applyState === 'applied') return;
+
+    const applied = await this.ledger.apply(entry);
+    if (applied.outcome === 'refused') {
+      await this.paymentRepository.updateStatus(payment.id, 'reconciliation_required');
+      return;
+    }
+    if (applied.outcome === 'applied' && applied.invoice.amountPaid > applied.invoice.total) {
+      await this.paymentRepository.updateStatus(payment.id, 'reconciliation_required');
+      this.logger.error(
+        `Invoice "${payment.invoiceId}" is overpaid by ${(applied.invoice.amountPaid - applied.invoice.total).toFixed(2)} ${payment.currency} after payment "${payment.id}" -- flagged for reconciliation (refund the excess).`,
+      );
+      return;
+    }
+    this.logger.log(`Payment "${payment.id}" (${payment.provider}) settled for invoice "${payment.invoiceId}".`);
   }
 
   /**
@@ -404,15 +421,18 @@ export class PaymentService {
       transaction.currency !== payment.currency ||
       paidMinor !== toMinor(payment.amount, currency)
     ) {
-      // Money moved, but not for what we asked: a human must look (refund or adjust).
-      await this.paymentRepository.updateStatus(payment.id, 'reconciliation_required');
+      // Money moved, but not for what we asked: recorded (as paid), never counted -- a human must look.
+      await this.settle(payment, {
+        providerReference: transaction.bankTranId,
+        mismatchAmount: paidMinor === null ? payment.amount : fromMinor(paidMinor, currency),
+      });
       this.logger.error(
         `SSLCommerz payment for tran_id "${payment.providerSessionId}" doesn't match its order: paid ${transaction.amount} ${transaction.currency} for ${transaction.tranId}, expected ${payment.amount} ${payment.currency} -- flagged for reconciliation.`,
       );
       return outcome('reconciliation_required');
     }
     if (transaction.riskLevel === '1') {
-      await this.paymentRepository.updateStatus(payment.id, 'review_required');
+      await this.settle(payment, { providerReference: transaction.bankTranId, held: true });
       this.logger.error(
         `SSLCommerz flagged the payment for invoice "${payment.invoiceId}" (tran_id "${payment.providerSessionId}") as high risk ("${transaction.riskTitle}") -- held for review, invoice not marked paid.`,
       );
@@ -424,9 +444,77 @@ export class PaymentService {
       );
     }
 
-    await this.applyWebhookEvent('payment_succeeded', payment);
+    await this.settle(payment, { providerReference: transaction.bankTranId });
     const settled = await this.paymentRepository.findByProviderSessionId(payment.providerSessionId);
     return outcome((settled?.status ?? 'pending') as PaymentOutcome['status']);
+  }
+
+  /** Checkouts waiting for a person: held as high risk, or money that couldn't be settled on the invoice. */
+  async listAttention(): Promise<AttentionPaymentResponse[]> {
+    const rows = await this.paymentRepository.findByStatuses(['review_required', 'reconciliation_required']);
+    return Promise.all(
+      rows.map(async (row) => {
+        const entry = await this.ledger.findForCheckout(row.id);
+        return {
+          paymentId: row.id,
+          invoiceId: row.invoiceId,
+          provider: row.provider,
+          status: row.status as AttentionPaymentResponse['status'],
+          amount: entry?.amount ?? row.amount,
+          currency: row.currency,
+          ...(entry ? { ledgerEntryId: entry.id } : {}),
+          createdAt: row.createdAt,
+        };
+      }),
+    );
+  }
+
+  /** A person accepts a payment held as high risk: it counts on the invoice now. */
+  async acceptHeld(paymentId: string): Promise<PaymentOutcome> {
+    const payment = await this.attentionPayment(paymentId, ['review_required']);
+    const entry = await this.ledger.findForCheckout(payment.id);
+    if (!entry || entry.applyState !== 'held') {
+      throw new ConflictException(`Payment "${paymentId}" has no held ledger entry to accept.`);
+    }
+    const applied = await this.ledger.release(entry);
+    if (applied.outcome === 'refused') {
+      await this.paymentRepository.updateStatus(payment.id, 'reconciliation_required');
+      return { invoiceId: payment.invoiceId, status: 'reconciliation_required' };
+    }
+    await this.paymentRepository.updateStatus(payment.id, 'paid');
+    return { invoiceId: payment.invoiceId, status: applied.outcome === 'applied' ? 'paid' : 'pending' };
+  }
+
+  /**
+   * A person refuses a held or unreconcilable payment: everything left of it is refunded through
+   * its provider (LedgerService.refund), and the checkout is marked refunded.
+   */
+  async refuseHeld(paymentId: string, reason: string): Promise<LedgerEntryResponse> {
+    const payment = await this.attentionPayment(paymentId, ['review_required', 'reconciliation_required']);
+    const entry = await this.ledger.findForCheckout(payment.id);
+    if (!entry) throw new ConflictException(`Payment "${paymentId}" has no ledger entry to refund.`);
+    const remaining = await this.ledger.refundableMinor(entry);
+    if (remaining <= 0) throw new ConflictException(`Payment "${paymentId}" has already been refunded.`);
+
+    const refund = await this.ledger.refund(entry.invoiceId, {
+      paymentEntryId: entry.id,
+      amount: fromMinor(remaining, entry.currency as SupportedCurrency),
+      reason: typeof reason === 'string' && reason.trim().length >= 3 ? reason : 'Payment refused after review.',
+    });
+    if (refund.state !== 'failed') await this.paymentRepository.updateStatus(payment.id, 'refunded');
+    return refund;
+  }
+
+  private async attentionPayment(paymentId: string, statuses: PaymentStatus[]): Promise<PaymentEntity> {
+    if (typeof paymentId !== 'string' || !/^[0-9a-f-]{36}$/i.test(paymentId)) {
+      throw new BadRequestException(`"${paymentId}" is not a payment id.`);
+    }
+    const payment = await this.paymentRepository.findById(paymentId);
+    if (!payment) throw new NotFoundException(`Payment not found for id "${paymentId}".`);
+    if (!statuses.includes(payment.status)) {
+      throw new ConflictException(`Payment "${paymentId}" is ${payment.status}, not waiting for review.`);
+    }
+    return payment;
   }
 
   /**
@@ -471,10 +559,6 @@ export class PaymentService {
 
   private isUniqueViolation(error: unknown): boolean {
     return (error as { driverError?: { code?: string } } | null)?.driverError?.code === PG_UNIQUE_VIOLATION;
-  }
-
-  private isNonRetryableMarkPaidFailure(error: unknown): boolean {
-    return error instanceof HttpException && NON_RETRYABLE_MARK_PAID_STATUSES.has(error.getStatus());
   }
 }
 

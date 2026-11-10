@@ -25,7 +25,7 @@ import {
 } from '@libs/shared/types';
 import { fromMinor } from '@libs/money';
 import type { DocumentFormat } from '@libs/transports';
-import type { InvoiceDocument, SellerSnapshot } from '@libs/schemas';
+import { amountPaidOf, type InvoiceDocument, type SellerSnapshot } from '@libs/schemas';
 import {
   ClientSnapshotRequest,
   CreateInvoiceRequest,
@@ -45,6 +45,7 @@ import {
   INVOICE_REPOSITORY,
   IInvoiceRepository,
   type InTransaction,
+  type LedgerApplication,
   type TransitionOptions,
 } from './invoice.repository.interface';
 import { CustomerService } from '../customer/customer.service';
@@ -318,6 +319,16 @@ export class InvoiceService {
   async cancel(id: string): Promise<InvoiceResponse> {
     return this.toInvoiceResponse(
       await this.transition(id, 'cancelled', {
+        // Money on an invoice is owed back before it can be cancelled: refunds go through the ledger.
+        prepare: async (current) => {
+          const paid = amountPaidOf(current);
+          if (paid > 0) {
+            throw new ConflictException(
+              `Cannot cancel an invoice with ${fromMinor(paid, current.currency as SupportedCurrency)} ${current.currency} paid on it; refund the payments first.`,
+            );
+          }
+          return {};
+        },
         inTransaction: (invoice, session) =>
           this.eventsProducer
             .enqueueCancelled(session, {
@@ -337,7 +348,51 @@ export class InvoiceService {
    * reconciliation rather than retrying.
    */
   async markPaid(id: string): Promise<InvoiceResponse> {
-    return this.toInvoiceResponse(await this.transition(id, 'paid'));
+    // Kept for a payment service from before the ledger (mid-rollout), which pays the total at once.
+    return this.toInvoiceResponse(
+      await this.transition(id, 'paid', { prepare: async (current) => ({ amountPaidMinor: current.totalMinor }) }),
+    );
+  }
+
+  /**
+   * payment's ledger says money moved: count it on the invoice, once (idempotent by entry id).
+   * Re-checked here: RPC payloads skip DTO validation. A draft or cancelled invoice refuses money
+   * (409) -- payment then flags the entry for a refund.
+   */
+  async applyLedgerEntry(id: string, application: LedgerApplication): Promise<InvoiceResponse> {
+    const { entryId, kind, amountMinor } = application ?? ({} as LedgerApplication);
+    if (typeof entryId !== 'string' || !/^[0-9a-f-]{36}$/i.test(entryId)) {
+      throw new BadRequestException('entryId must be a ledger entry id.');
+    }
+    if (kind !== 'payment' && kind !== 'refund') throw new BadRequestException('kind must be payment or refund.');
+    if (!Number.isSafeInteger(amountMinor) || amountMinor <= 0) {
+      throw new BadRequestException('amountMinor must be a positive whole number of minor units.');
+    }
+
+    const result = await this.invoiceRepository.applyLedgerEntry(this.ensureObjectId(id), {
+      entryId,
+      kind,
+      amountMinor,
+    });
+    if (result.outcome === 'not_found') throw new NotFoundException(`Invoice not found for id "${id}".`);
+    if (result.outcome === 'refused') {
+      throw new ConflictException(`Cannot apply a ${kind} to an invoice that is ${result.invoice.status}.`);
+    }
+    if (result.outcome === 'already_applied') return this.toInvoiceResponse(result.invoice);
+
+    const { previous, invoice } = result;
+    await Promise.all([this.delCacheKey(CACHE_KEY_ONE(id)), this.bumpListVersion()]);
+    await this.auditLog.record({
+      action: kind === 'payment' ? 'PAYMENT_APPLIED' : 'REFUND_APPLIED',
+      entityType: 'invoice',
+      entityId: id,
+      diff: {
+        amountPaidMinor: { from: amountPaidOf(previous), to: amountPaidOf(invoice) },
+        ...(previous.status !== invoice.status ? { status: { from: previous.status, to: invoice.status } } : {}),
+        ledgerEntryId: entryId,
+      },
+    });
+    return this.toInvoiceResponse(invoice);
   }
 
   /**
@@ -515,6 +570,7 @@ export class InvoiceService {
             fileName: pdf.fileName,
             currency: stored.currency,
             ...eventAmount(stored.totalMinor, stored.currency),
+            balanceDueMinor: Math.max(0, stored.totalMinor - amountPaidOf(stored)),
             dueDate: dueDate.toISOString(),
             daysOverdue: daysOverdue(dueDate, now),
             reminderNumber: stored.remindersSent,
@@ -590,6 +646,7 @@ export class InvoiceService {
       sdMinor: invoice.sdMinor,
       vatMinor: invoice.vatMinor,
       totalMinor: invoice.totalMinor,
+      amountPaidMinor: amountPaidOf(invoice),
     });
 
     const { key } = await this.mediaClient.uploadFile({ fileName, contentType, base64 });

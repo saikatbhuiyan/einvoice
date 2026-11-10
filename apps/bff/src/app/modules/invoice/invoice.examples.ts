@@ -98,6 +98,8 @@ export const INVOICE_RESPONSE_EXAMPLE: InvoiceResponseDto = {
   sdTotal: 4000,
   vatTotal: 8100,
   total: 62100,
+  amountPaid: 20000,
+  balanceDue: 42100,
   version: 1,
   createdAt: '2026-04-28T10:30:00.000Z',
   updatedAt: '2026-04-28T10:30:00.000Z',

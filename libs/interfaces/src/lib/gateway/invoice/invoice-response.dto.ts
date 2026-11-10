@@ -161,6 +161,12 @@ export class InvoiceResponseDto implements InvoiceResponse {
   @ApiProperty({ example: 34500, description: 'Invoice grand total including VAT.' })
   total!: number;
 
+  @ApiProperty({ example: 10000, description: 'Received minus refunded. Can exceed the total when overpaid.' })
+  amountPaid!: number;
+
+  @ApiProperty({ example: 24500, description: 'Still owed: total minus amount paid, never below 0.' })
+  balanceDue!: number;
+
   @ApiProperty({
     example: 1,
     description:

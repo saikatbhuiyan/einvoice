@@ -3,14 +3,17 @@ import { randomBytes } from 'crypto';
 import { fromMinor, toMinor } from '@libs/money';
 import type { SupportedCurrency } from '@libs/shared/types';
 import { SSLCOMMERZ_OPTIONS, type SslCommerzOptions } from './sslcommerz.options';
-import type {
-  AmountLimits,
-  CheckoutProvider,
-  CheckoutSession,
-  CheckoutSessionParams,
+import {
+  RefundOutcomeUnknownError,
+  type AmountLimits,
+  type CheckoutProvider,
+  type CheckoutSession,
+  type CheckoutSessionParams,
+  type ProviderRefund,
+  type RefundParams,
 } from '../payment-provider.interface';
 import { ProviderCredentialsService } from '../credentials/provider-credentials.service';
-import { SslCommerzClient, type ValidatedTransaction } from './sslcommerz.client';
+import { SslCommerzClient, SslCommerzRejectedError, type ValidatedTransaction } from './sslcommerz.client';
 
 /**
  * SSLCommerz documents no session lifetime and has no API to close one. A session is handed out
@@ -40,6 +43,8 @@ export type SslCommerzOutcome =
 export class SslCommerzPaymentProvider implements CheckoutProvider {
   readonly name = 'sslcommerz' as const;
   readonly canExpireSessions = false;
+  /** A repeated refund_trans_id creates a second refund (probed): never retried automatically. */
+  readonly refundsAreIdempotent = false;
 
   constructor(
     private readonly credentials: ProviderCredentialsService,
@@ -85,6 +90,57 @@ export class SslCommerzPaymentProvider implements CheckoutProvider {
       providerSessionId: params.reference,
       checkoutUrl: session.gatewayUrl,
       expiresAt: new Date(Date.now() + ASSUMED_SESSION_LIFETIME_MS),
+    };
+  }
+
+  /**
+   * Starts a refund against the payment's bank_tran_id. "success" from SSLCommerz means accepted:
+   * the refund is pending until its status says refunded. An outage here is an unknown outcome --
+   * the refund may have been made -- and SSLCommerz refunds can't be safely retried.
+   */
+  async refund(params: RefundParams): Promise<ProviderRefund> {
+    let credentials;
+    try {
+      credentials = await this.credentials.resolveSslCommerz({ forSettlement: true });
+    } catch (error) {
+      // Nothing was sent, so nothing was refunded. Failing it (rather than leaving it pending, which
+      // is never retried for SSLCommerz) lets the refund simply be asked for again.
+      return { state: 'failed', failureReason: `Refund not sent: ${(error as Error).message}` };
+    }
+    const currency = params.currency as SupportedCurrency;
+    let answer;
+    try {
+      answer = await this.client.refund(credentials, {
+        bankTranId: params.paymentReference,
+        // Their documented maximum is 30 characters; our entry id without dashes is 32.
+        refundTransId: `r${params.refundId.replace(/-/g, '').slice(0, 29)}`,
+        amount: fromMinor(toMinor(params.amount, currency), currency).toFixed(2),
+        remarks: params.reason.slice(0, 255),
+      });
+    } catch (error) {
+      if (error instanceof SslCommerzRejectedError) return { state: 'failed', failureReason: error.message };
+      throw new RefundOutcomeUnknownError(`SSLCommerz refund outcome unknown: ${(error as Error).message}`);
+    }
+    if (answer.status === 'success' || answer.status === 'processing') {
+      return { state: 'pending', providerReference: answer.refundRefId };
+    }
+    return { state: 'failed', failureReason: answer.errorReason || `SSLCommerz refund ${answer.status || 'failed'}.` };
+  }
+
+  async refundStatus(providerReference: string): Promise<ProviderRefund> {
+    let answer;
+    try {
+      const credentials = await this.credentials.resolveSslCommerz({ forSettlement: true });
+      answer = await this.client.refundStatus(credentials, providerReference);
+    } catch (error) {
+      throw new RefundOutcomeUnknownError(`SSLCommerz refund status unknown: ${(error as Error).message}`);
+    }
+    if (answer.status === 'refunded') return { state: 'settled', providerReference };
+    if (answer.status === 'processing') return { state: 'pending', providerReference };
+    return {
+      state: 'failed',
+      providerReference,
+      failureReason: answer.errorReason || `SSLCommerz refund ${answer.status || 'failed'}.`,
     };
   }
 

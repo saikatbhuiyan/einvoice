@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Not, Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { PaymentEntity, PaymentStatus } from '../../../database/entities/payment.entity';
 import { requireOrganizationId } from '@libs/logging/correlation-context';
 import { CreatePaymentRecord, IPaymentRepository } from './payment.repository.interface';
@@ -27,9 +27,15 @@ export class PaymentRepository implements IPaymentRepository {
     });
   }
 
-  async hasOtherPaidPayment(invoiceId: string, excludeId: string): Promise<boolean> {
-    return this.repository.exists({
-      where: { organizationId: requireOrganizationId(), invoiceId, status: 'paid', id: Not(excludeId) },
+  findById(id: string): Promise<PaymentEntity | null> {
+    return this.repository.findOne({ where: { id, organizationId: requireOrganizationId() } });
+  }
+
+  findByStatuses(statuses: PaymentStatus[]): Promise<PaymentEntity[]> {
+    return this.repository.find({
+      where: { organizationId: requireOrganizationId(), status: In(statuses) },
+      order: { createdAt: 'DESC' },
+      take: 200,
     });
   }
 

@@ -1,16 +1,30 @@
 import { ServiceUnavailableException } from '@nestjs/common';
 import { SslCommerzPaymentProvider } from './sslcommerz-payment.provider';
+import { SslCommerzRejectedError, SslCommerzUnavailableError } from './sslcommerz.client';
+import { RefundOutcomeUnknownError } from '../payment-provider.interface';
 
 const CREDENTIALS = { storeId: 'testbox', storePassword: 'qwerty', sandbox: true };
 
 describe('SslCommerzPaymentProvider', () => {
   let credentials: { resolveSslCommerz: jest.Mock };
-  let client: { createSession: jest.Mock; queryTransaction: jest.Mock; validate: jest.Mock };
+  let client: {
+    createSession: jest.Mock;
+    queryTransaction: jest.Mock;
+    validate: jest.Mock;
+    refund: jest.Mock;
+    refundStatus: jest.Mock;
+  };
   let provider: SslCommerzPaymentProvider;
 
   beforeEach(() => {
     credentials = { resolveSslCommerz: jest.fn().mockResolvedValue(CREDENTIALS) };
-    client = { createSession: jest.fn(), queryTransaction: jest.fn(), validate: jest.fn() };
+    client = {
+      createSession: jest.fn(),
+      queryTransaction: jest.fn(),
+      validate: jest.fn(),
+      refund: jest.fn(),
+      refundStatus: jest.fn(),
+    };
     provider = new SslCommerzPaymentProvider(credentials as never, client as never, {
       publicBaseUrl: 'https://api.example.com/api/v1',
     });
@@ -135,6 +149,76 @@ describe('SslCommerzPaymentProvider', () => {
 
       await expect(provider.outcome('einv1')).resolves.toEqual({ kind });
       expect(client.validate).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('refunds (asynchronous at SSLCommerz, and never safe to repeat)', () => {
+    const REFUND = {
+      paymentReference: 'BANK1',
+      amount: 1300,
+      currency: 'BDT',
+      refundId: '0f6a2b9c-3d4e-4f50-8a1b-2c3d4e5f6a7b',
+      reason: "Customer's duplicate payment",
+    };
+
+    it('is not idempotent: a repeated refund_trans_id refunded twice when probed', () => {
+      expect(provider.refundsAreIdempotent).toBe(false);
+    });
+
+    it('refunds against the bank_tran_id with a 30-character refund_trans_id from the entry id, then waits', async () => {
+      client.refund.mockResolvedValue({ status: 'success', refundRefId: 'RRF1', errorReason: '' });
+
+      await expect(provider.refund(REFUND)).resolves.toEqual({ state: 'pending', providerReference: 'RRF1' });
+      expect(client.refund).toHaveBeenCalledWith(CREDENTIALS, {
+        bankTranId: 'BANK1',
+        refundTransId: 'r0f6a2b9c3d4e4f508a1b2c3d4e5f6',
+        amount: '1300.00',
+        remarks: "Customer's duplicate payment",
+      });
+      expect(client.refund.mock.calls[0][1].refundTransId).toHaveLength(30);
+      expect(credentials.resolveSslCommerz).toHaveBeenCalledWith({ forSettlement: true });
+    });
+
+    it('is failed when SSLCommerz refuses it, with its reason', async () => {
+      client.refund.mockResolvedValue({ status: 'failed', refundRefId: '', errorReason: 'Invalid amount' });
+      await expect(provider.refund(REFUND)).resolves.toEqual({ state: 'failed', failureReason: 'Invalid amount' });
+
+      client.refund.mockRejectedValue(new SslCommerzRejectedError('SSLCommerz refused the store credentials'));
+      await expect(provider.refund(REFUND)).resolves.toMatchObject({ state: 'failed' });
+    });
+
+    it('is an unknown outcome when SSLCommerz does not answer: it may have been made', async () => {
+      client.refund.mockRejectedValue(new SslCommerzUnavailableError('timeout'));
+
+      await expect(provider.refund(REFUND)).rejects.toBeInstanceOf(RefundOutcomeUnknownError);
+    });
+
+    it('is failed, not stuck pending, when it never got as far as SSLCommerz', async () => {
+      credentials.resolveSslCommerz.mockRejectedValue(
+        new ServiceUnavailableException('PAYMENT_CREDENTIALS_KEY is missing'),
+      );
+
+      await expect(provider.refund(REFUND)).resolves.toEqual({
+        state: 'failed',
+        failureReason: 'Refund not sent: PAYMENT_CREDENTIALS_KEY is missing',
+      });
+      expect(client.refund).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['refunded', { state: 'settled', providerReference: 'RRF1' }],
+      ['processing', { state: 'pending', providerReference: 'RRF1' }],
+      ['cancelled', { state: 'failed', providerReference: 'RRF1', failureReason: 'SSLCommerz refund cancelled.' }],
+    ])('follows a refund that is %s', async (status, expected) => {
+      client.refundStatus.mockResolvedValue({ status, refundRefId: 'RRF1', errorReason: '' });
+
+      await expect(provider.refundStatus('RRF1')).resolves.toEqual(expected);
+      expect(client.refundStatus).toHaveBeenCalledWith(CREDENTIALS, 'RRF1');
+    });
+
+    it('asks again later when the status can not be read', async () => {
+      credentials.resolveSslCommerz.mockRejectedValue(new Error('connection terminated'));
+      await expect(provider.refundStatus('RRF1')).rejects.toBeInstanceOf(RefundOutcomeUnknownError);
     });
   });
 });

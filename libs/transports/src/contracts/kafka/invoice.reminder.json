@@ -12,6 +12,7 @@
     "totalMinor": 12990,
     "total": 129.9,
     "dueDate": "2026-10-09T00:00:00.000Z",
+    "balanceDueMinor": 7990,
     "daysOverdue": 7,
     "reminderNumber": 2
   },

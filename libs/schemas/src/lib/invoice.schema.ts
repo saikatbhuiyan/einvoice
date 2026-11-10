@@ -110,6 +110,18 @@ export class Invoice extends BaseSchema {
   @Prop({ required: true, min: 0, default: 0 })
   totalMinor!: number;
 
+  /**
+   * Money received minus money refunded, in minor units (the payment service's ledger is the record;
+   * this is invoice's running total of the entries applied to it). May exceed totalMinor when
+   * overpaid. Absent on invoices from before the ledger: read through amountPaidOf().
+   */
+  @Prop({ type: Number, min: 0 })
+  amountPaidMinor?: number;
+
+  /** Ledger entries already counted in amountPaidMinor: applying one twice is a no-op. */
+  @Prop({ type: [String], default: undefined })
+  appliedEntryIds?: string[];
+
   /** Soft-delete timestamp. Null = active record. */
   @Prop({ type: Date, default: null, index: true })
   deletedAt?: Date | null;
@@ -216,3 +228,12 @@ export const INVOICE_MODEL_DEFINITION: ModelDefinition = {
 };
 
 export type InvoiceModel = Model<Invoice>;
+
+/**
+ * What has been paid on an invoice, in minor units. Invoices from before the ledger have no
+ * amountPaidMinor: a paid one was paid in full, any other nothing.
+ */
+export function amountPaidOf(invoice: { amountPaidMinor?: number | null; status: string; totalMinor: number }): number {
+  if (typeof invoice.amountPaidMinor === 'number') return invoice.amountPaidMinor;
+  return invoice.status === 'paid' ? invoice.totalMinor : 0;
+}

@@ -110,10 +110,11 @@ func (h *InvoiceHandler) handleReminder(ctx context.Context, e events.ReminderEv
 			return mail.Message{}, err
 		}
 		html, err := template.RenderReminderEmail(template.ReminderEmailData{
-			ClientName:     e.ClientName,
-			InvoiceNumber:  e.InvoiceNumber,
-			Currency:       e.Currency,
-			Total:          money.Format(money.FromEvent(e.TotalMinor, e.Total, e.Currency), e.Currency),
+			ClientName:    e.ClientName,
+			InvoiceNumber: e.InvoiceNumber,
+			Currency:      e.Currency,
+			// What is still owed: the balance after partial payments, else (older reminders) the total.
+			Total:          money.Format(amountDue(e), e.Currency),
 			DueDate:        dateOnly(e.DueDate),
 			DaysOverdue:    e.DaysOverdue,
 			ReminderNumber: e.ReminderNumber,
@@ -207,4 +208,13 @@ func (h *InvoiceHandler) fetchLegacyPDF(ctx context.Context, url string) ([]byte
 	}
 
 	return io.ReadAll(resp.Body)
+}
+
+// amountDue is the reminder's "Amount due": the balance when the event carries one (partial
+// payments), the whole total for reminders produced before the payments ledger.
+func amountDue(e events.ReminderEvent) int64 {
+	if e.BalanceDueMinor != nil {
+		return *e.BalanceDueMinor
+	}
+	return money.FromEvent(e.TotalMinor, e.Total, e.Currency)
 }

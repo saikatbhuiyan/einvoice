@@ -28,6 +28,38 @@ export type WebhookEventType = 'payment_succeeded' | 'payment_failed' | 'ignored
 export interface NormalizedWebhookEvent {
   type: WebhookEventType;
   providerSessionId?: string;
+  /** What a refund of this payment is made against (Stripe's payment_intent). */
+  providerReference?: string;
+}
+
+export interface RefundParams {
+  /** The payment's provider reference (Stripe payment_intent, SSLCommerz bank_tran_id). */
+  paymentReference: string;
+  /** Decimal, in `currency`. */
+  amount: number;
+  currency: string;
+  /** Our refund ledger entry's id: Stripe's idempotency key, SSLCommerz's refund_trans_id. */
+  refundId: string;
+  reason: string;
+}
+
+/** Where a refund stands at the provider. */
+export interface ProviderRefund {
+  state: 'settled' | 'pending' | 'failed';
+  /** The provider's refund id, to ask about it later (Stripe re_…, SSLCommerz refund_ref_id). */
+  providerReference?: string;
+  failureReason?: string;
+}
+
+/**
+ * The refund call's outcome is unknown (a timeout, an outage) -- it may or may not have been made.
+ * Only safe to retry when the provider de-duplicates refunds (refundsAreIdempotent).
+ */
+export class RefundOutcomeUnknownError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'RefundOutcomeUnknownError';
+  }
 }
 
 /** The smallest and largest amount one checkout may take, in minor units. */
@@ -62,6 +94,19 @@ export interface CheckoutProvider {
    * provider that can't expire sessions.
    */
   expireCheckoutSession(providerSessionId: string): Promise<void>;
+
+  /**
+   * Whether a refund call can be repeated after an unknown outcome without refunding twice. Stripe:
+   * yes (idempotency keys). SSLCommerz: no -- a repeated refund_trans_id creates a second refund
+   * (probed), so an unknown outcome is left for a human.
+   */
+  readonly refundsAreIdempotent: boolean;
+
+  /** Starts a refund. Throws RefundOutcomeUnknownError when it can't tell whether it was made. */
+  refund(params: RefundParams): Promise<ProviderRefund>;
+
+  /** Where a refund started earlier stands. */
+  refundStatus(providerReference: string): Promise<ProviderRefund>;
 }
 
 /** Stripe: the platform's own account, confirmed by signed webhooks. */

@@ -158,6 +158,10 @@
     <% if (hasSd) { %><div class="row"><span>Supplementary duty</span><span><%= money(sdMinor) %></span></div><% } %>
     <div class="row"><span>VAT</span><span><%= money(vatMinor) %></span></div>
     <div class="row grand"><span>Total (<%= currency %>)</span><span><%= money(totalMinor) %></span></div>
+    <% if (locals.amountPaidMinor > 0) { %>
+    <div class="row"><span>Paid</span><span>&minus;<%= money(amountPaidMinor) %></span></div>
+    <div class="row grand"><span>Balance due</span><span><%= money(Math.max(0, totalMinor - amountPaidMinor)) %></span></div>
+    <% } %>
   </div>
 
   <% if (locals.notes) { %>

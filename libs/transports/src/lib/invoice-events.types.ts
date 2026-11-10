@@ -75,6 +75,11 @@ export interface InvoiceReminderEvent extends InvoiceEventMetadata {
   /** The same total as a decimal, for consumers that predate totalMinor. */
   total: number;
   dueDate: string;
+  /**
+   * What is still owed, in minor units: the total minus what has been paid (partial payments).
+   * Absent from reminders produced before the payments ledger -- the whole total was owed then.
+   */
+  balanceDueMinor: number;
   /** Whole days past the due date when the reminder was sent (1 on the first overdue day). */
   daysOverdue: number;
   /** 1 for the first reminder sent for this invoice, 2 for the second, ... */

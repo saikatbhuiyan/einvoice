@@ -28,10 +28,13 @@ export interface IPaymentRepository {
   /** The invoice's open (pending) session, if any — at most one, by unique index. */
   findOpenByInvoiceId(invoiceId: string): Promise<PaymentEntity | null>;
 
-  /** Whether a payment other than `excludeId` has already been collected for this invoice. */
-  hasOtherPaidPayment(invoiceId: string, excludeId: string): Promise<boolean>;
-
   updateStatus(id: string, status: PaymentStatus): Promise<PaymentEntity | null>;
+
+  /** One of the organization's checkout rows. */
+  findById(id: string): Promise<PaymentEntity | null>;
+
+  /** The organization's checkout rows in these statuses, newest first. */
+  findByStatuses(statuses: PaymentStatus[]): Promise<PaymentEntity[]>;
 
   /** Records the checkout link once the provider session exists. */
   setCheckout(id: string, checkoutUrl: string, expiresAt: Date): Promise<void>;

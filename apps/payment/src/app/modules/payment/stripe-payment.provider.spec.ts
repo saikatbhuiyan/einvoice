@@ -17,6 +17,7 @@ jest.mock('../../../configuration', () => ({
 }));
 
 import { StripePaymentProvider } from './stripe-payment.provider';
+import { RefundOutcomeUnknownError } from './payment-provider.interface';
 
 const stripeFor = (provider: StripePaymentProvider) => (provider as unknown as { stripe: Stripe }).stripe;
 
@@ -50,6 +51,18 @@ describe('StripePaymentProvider', () => {
       expect(provider.parseWebhookEvent(rawBody, signature)).toEqual({
         type: 'payment_succeeded',
         providerSessionId: 'cs_test_123',
+      });
+    });
+
+    it('carries the payment intent, which a refund is made against', () => {
+      const event = sessionEvent('checkout.session.completed');
+      Object.assign(event.data.object, { payment_intent: 'pi_123' });
+      const { rawBody, signature } = signedWebhook(event);
+
+      expect(provider.parseWebhookEvent(rawBody, signature)).toEqual({
+        type: 'payment_succeeded',
+        providerSessionId: 'cs_test_123',
+        providerReference: 'pi_123',
       });
     });
 
@@ -202,6 +215,68 @@ describe('StripePaymentProvider', () => {
         .mockRejectedValue(new Stripe.errors.StripeConnectionError({ message: 'ECONNRESET', type: 'api_error' }));
 
       await expect(provider.expireCheckoutSession('cs_1')).rejects.toBeInstanceOf(Stripe.errors.StripeConnectionError);
+    });
+  });
+
+  describe('refunds (idempotent by our entry id)', () => {
+    const REFUND = {
+      paymentReference: 'pi_1',
+      amount: 129.9,
+      currency: 'EUR',
+      refundId: 'entry-1',
+      reason: 'Duplicate',
+    };
+    const stripeRefund = (fields: Partial<Stripe.Refund>) => ({ id: 're_1', status: 'pending', ...fields }) as never;
+
+    it('refunds the payment intent in minor units, with the entry id as idempotency key', async () => {
+      const create = jest
+        .spyOn(stripeFor(provider).refunds, 'create')
+        .mockResolvedValue(stripeRefund({ status: 'succeeded' }));
+
+      await expect(provider.refund(REFUND)).resolves.toEqual({ state: 'settled', providerReference: 're_1' });
+      expect(create).toHaveBeenCalledWith(
+        { payment_intent: 'pi_1', amount: 12990, metadata: { refundEntryId: 'entry-1', reason: 'Duplicate' } },
+        { idempotencyKey: 'refund-entry-1' },
+      );
+      expect(provider.refundsAreIdempotent).toBe(true);
+    });
+
+    it('is failed when Stripe refuses it outright: nothing was made', async () => {
+      jest.spyOn(stripeFor(provider).refunds, 'create').mockRejectedValue(
+        new Stripe.errors.StripeInvalidRequestError({
+          message: 'Charge ch_1 has already been refunded.',
+          type: 'invalid_request_error',
+        }),
+      );
+
+      await expect(provider.refund(REFUND)).resolves.toEqual({
+        state: 'failed',
+        failureReason: 'Charge ch_1 has already been refunded.',
+      });
+    });
+
+    it('is an unknown outcome on a connection error (safe to retry: same idempotency key)', async () => {
+      jest
+        .spyOn(stripeFor(provider).refunds, 'create')
+        .mockRejectedValue(new Stripe.errors.StripeConnectionError({ message: 'ECONNRESET', type: 'api_error' }));
+
+      await expect(provider.refund(REFUND)).rejects.toBeInstanceOf(RefundOutcomeUnknownError);
+    });
+
+    it.each([
+      ['succeeded', { state: 'settled', providerReference: 're_1' }],
+      ['pending', { state: 'pending', providerReference: 're_1' }],
+      ['requires_action', { state: 'pending', providerReference: 're_1' }],
+      ['failed', { state: 'failed', providerReference: 're_1', failureReason: 'lost_or_stolen_card' }],
+      ['canceled', { state: 'failed', providerReference: 're_1', failureReason: 'Stripe refund canceled.' }],
+    ])('follows a refund that is %s', async (status, expected) => {
+      jest
+        .spyOn(stripeFor(provider).refunds, 'retrieve')
+        .mockResolvedValue(
+          stripeRefund({ status, ...(status === 'failed' ? { failure_reason: 'lost_or_stolen_card' } : {}) }),
+        );
+
+      await expect(provider.refundStatus('re_1')).resolves.toEqual(expected);
     });
   });
 

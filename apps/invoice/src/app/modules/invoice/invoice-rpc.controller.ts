@@ -98,4 +98,21 @@ export class InvoiceRpcController {
     const data = unwrapRpcPayload(payload);
     return this.invoiceService.markPaid(data.id);
   }
+
+  // @Public(), like MARK_PAID: payment's ledger applying settled money -- a webhook, a returning
+  // payer or a person recording a bank transfer, each authorized on payment's side (payment:write
+  // for people). Narrow: it can only count a ledger entry, once.
+  @MessagePattern(TCP_PATTERNS.INVOICE.APPLY_LEDGER_ENTRY)
+  @Public()
+  applyLedgerEntry(@Payload() payload: RpcEnvelope<ApplyLedgerEntryPayload> | ApplyLedgerEntryPayload) {
+    const { id, ...application } = unwrapRpcPayload(payload);
+    return this.invoiceService.applyLedgerEntry(id, application);
+  }
+}
+
+interface ApplyLedgerEntryPayload {
+  id: string;
+  entryId: string;
+  kind: 'payment' | 'refund';
+  amountMinor: number;
 }

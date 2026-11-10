@@ -1,6 +1,7 @@
 import type { InvoiceItemResponse, InvoiceResponse } from '@libs/interfaces/gateway';
 import type { SupportedCurrency } from '@libs/shared/types';
 import { fromMinor } from '@libs/money';
+import { amountPaidOf } from '@libs/schemas';
 
 interface StoredItemJson {
   productId?: string;
@@ -17,12 +18,17 @@ interface StoredItemJson {
   totalMinor: number;
 }
 
-type StoredInvoiceJson = Omit<InvoiceResponse, 'items' | 'subtotal' | 'sdTotal' | 'vatTotal' | 'total'> & {
+type StoredInvoiceJson = Omit<
+  InvoiceResponse,
+  'items' | 'subtotal' | 'sdTotal' | 'vatTotal' | 'total' | 'amountPaid' | 'balanceDue'
+> & {
   items: StoredItemJson[];
   netMinor: number;
   sdMinor?: number;
   vatMinor: number;
   totalMinor: number;
+  amountPaidMinor?: number;
+  appliedEntryIds?: string[];
 };
 
 /**
@@ -30,7 +36,19 @@ type StoredInvoiceJson = Omit<InvoiceResponse, 'items' | 'subtotal' | 'sdTotal' 
  * leaves the service as decimals: every response goes through here.
  */
 export function presentInvoice(json: unknown): InvoiceResponse {
-  const { items, netMinor, sdMinor, vatMinor, totalMinor, ...rest } = json as StoredInvoiceJson;
+  const {
+    items,
+    netMinor,
+    sdMinor,
+    vatMinor,
+    totalMinor,
+    amountPaidMinor,
+    // Bookkeeping for APPLY_LEDGER_ENTRY's idempotency, never part of the API.
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    appliedEntryIds,
+    ...rest
+  } = json as StoredInvoiceJson;
+  const paidMinor = amountPaidOf({ amountPaidMinor, status: rest.status, totalMinor });
   const currency = rest.currency as SupportedCurrency;
   const amount = (minor: number | undefined) => fromMinor(minor ?? 0, currency);
 
@@ -56,5 +74,7 @@ export function presentInvoice(json: unknown): InvoiceResponse {
     sdTotal: amount(sdMinor),
     vatTotal: amount(vatMinor),
     total: amount(totalMinor),
+    amountPaid: amount(paidMinor),
+    balanceDue: amount(Math.max(0, totalMinor - paidMinor)),
   };
 }

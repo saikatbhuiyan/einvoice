@@ -1,7 +1,7 @@
 import {
   BadGatewayException,
   ConflictException,
-  HttpException,
+  NotFoundException,
   ServiceUnavailableException,
   UnprocessableEntityException,
 } from '@nestjs/common';
@@ -31,11 +31,20 @@ type MockPaymentRepository = {
   create: jest.Mock;
   findByProviderSessionId: jest.Mock;
   findOpenByInvoiceId: jest.Mock;
-  hasOtherPaidPayment: jest.Mock;
   updateStatus: jest.Mock;
   setCheckout: jest.Mock;
+  findById: jest.Mock;
+  findByStatuses: jest.Mock;
 };
 type MockInvoiceClient = { findOneInvoice: jest.Mock; markInvoicePaid: jest.Mock };
+type MockLedger = {
+  recordGatewayPayment: jest.Mock;
+  apply: jest.Mock;
+  findForCheckout: jest.Mock;
+  release: jest.Mock;
+  refundableMinor: jest.Mock;
+  refund: jest.Mock;
+};
 
 const buildPayment = (overrides: Partial<PaymentEntity> = {}): PaymentEntity =>
   ({
@@ -62,6 +71,7 @@ describe('PaymentService', () => {
   let registry: { forCheckout: jest.Mock; byName: jest.Mock; sslcommerz: MockSslCommerz };
   let paymentRepository: MockPaymentRepository;
   let invoiceClient: MockInvoiceClient;
+  let ledger: MockLedger;
   let service: PaymentService;
 
   beforeEach(() => {
@@ -92,17 +102,36 @@ describe('PaymentService', () => {
       create: jest.fn(),
       findByProviderSessionId: jest.fn(),
       findOpenByInvoiceId: jest.fn().mockResolvedValue(null),
-      hasOtherPaidPayment: jest.fn().mockResolvedValue(false),
       updateStatus: jest.fn().mockResolvedValue(undefined),
       setCheckout: jest.fn().mockResolvedValue(undefined),
+      findById: jest.fn(),
+      findByStatuses: jest.fn(),
     };
     invoiceClient = { findOneInvoice: jest.fn(), markInvoicePaid: jest.fn() };
+    // The ledger records the money and counts it on the invoice (its own spec covers how).
+    ledger = {
+      recordGatewayPayment: jest.fn(
+        async (payment: PaymentEntity, details: { amount?: number; applyState?: string }) => ({
+          id: 'entry-1',
+          invoiceId: payment.invoiceId,
+          amount: details.amount ?? payment.amount,
+          currency: payment.currency,
+          applyState: details.applyState ?? 'pending',
+        }),
+      ),
+      apply: jest.fn().mockResolvedValue({ outcome: 'applied', invoice: { amountPaid: 100, total: 100 } }),
+      findForCheckout: jest.fn(),
+      release: jest.fn(),
+      refundableMinor: jest.fn(),
+      refund: jest.fn(),
+    };
 
     service = new PaymentService(
       paymentProvider as never,
       paymentRepository as never,
       invoiceClient as never,
       registry as never,
+      ledger as never,
     );
   });
 
@@ -180,7 +209,7 @@ describe('PaymentService', () => {
 
     it('hands out the open session again instead of creating a second payable one', async () => {
       invoiceClient.findOneInvoice.mockResolvedValue(ISSUED_INVOICE);
-      paymentRepository.findOpenByInvoiceId.mockResolvedValue(buildPayment());
+      paymentRepository.findOpenByInvoiceId.mockResolvedValue(buildPayment({ amount: 220 }));
 
       const result = await service.createCheckoutSession('invoice-1');
 
@@ -354,8 +383,8 @@ describe('PaymentService', () => {
     });
 
     it.each([
-      ['above BDT 5 lakh', 500_000.01, 'this invoice is ৳5,00,000.01'],
-      ['below BDT 10', 9.99, 'this invoice is ৳9.99'],
+      ['above BDT 5 lakh', 500_000.01, 'the balance due is ৳5,00,000.01'],
+      ['below BDT 10', 9.99, 'the balance due is ৳9.99'],
     ])('refuses an invoice %s up front, naming the limit (422)', async (_label, total, detail) => {
       invoiceClient.findOneInvoice.mockResolvedValue({ ...BDT_INVOICE, total });
 
@@ -363,7 +392,7 @@ describe('PaymentService', () => {
 
       expect(error).toBeInstanceOf(UnprocessableEntityException);
       expect((error as Error).message).toBe(
-        `SSLCommerz takes ৳10.00 to ৳5,00,000.00 per payment; ${detail}. Pay it by bank transfer instead.`,
+        `SSLCommerz takes ৳10.00 to ৳5,00,000.00 per payment; ${detail}. Ask for a part of it (amount), or record a bank transfer.`,
       );
       expect(paymentRepository.create).not.toHaveBeenCalled();
       expect(sslcommerz.createCheckoutSession).not.toHaveBeenCalled();
@@ -437,21 +466,21 @@ describe('PaymentService', () => {
         currency: 'BDT',
         riskLevel: '0',
         riskTitle: 'Safe',
+        bankTranId: 'BANK1',
         ...overrides,
       },
     });
 
     beforeEach(() => {
       paymentRepository.findByProviderSessionId.mockResolvedValue(sslPayment());
-      invoiceClient.markInvoicePaid.mockResolvedValue({ id: 'invoice-1', status: 'paid' });
     });
 
     it("confirms with SSLCommerz, then marks the payment and the invoice paid -- in the payment's organization", async () => {
       sslcommerz.outcome.mockResolvedValue(valid());
       let organizationSeen: string | undefined;
-      invoiceClient.markInvoicePaid.mockImplementation(async () => {
+      ledger.apply.mockImplementation(async () => {
         organizationSeen = getCurrentCorrelationContext()?.organizationId;
-        return { id: 'invoice-1', status: 'paid' };
+        return { outcome: 'applied', invoice: { amountPaid: 1380.5, total: 1380.5 } };
       });
       paymentRepository.findByProviderSessionId
         .mockResolvedValueOnce(sslPayment())
@@ -463,8 +492,13 @@ describe('PaymentService', () => {
       });
 
       expect(sslcommerz.outcome).toHaveBeenCalledWith(TRAN);
+      // Into the ledger with the bank transaction a refund is made against, then onto the invoice.
+      expect(ledger.recordGatewayPayment).toHaveBeenCalledWith(expect.objectContaining({ id: 'payment-9' }), {
+        providerReference: 'BANK1',
+        applyState: 'pending',
+      });
       expect(paymentRepository.updateStatus).toHaveBeenCalledWith('payment-9', 'paid');
-      expect(invoiceClient.markInvoicePaid).toHaveBeenCalledWith('invoice-1');
+      expect(ledger.apply).toHaveBeenCalledWith(expect.objectContaining({ id: 'entry-1' }));
       expect(organizationSeen).toBe('org-1');
     });
 
@@ -477,7 +511,7 @@ describe('PaymentService', () => {
         status: 'pending',
       });
       expect(paymentRepository.updateStatus).not.toHaveBeenCalled();
-      expect(invoiceClient.markInvoicePaid).not.toHaveBeenCalled();
+      expect(ledger.recordGatewayPayment).not.toHaveBeenCalled();
     });
 
     it.each([
@@ -491,8 +525,13 @@ describe('PaymentService', () => {
       await expect(service.handleSslCommerzNotification({ tranId: TRAN, source: 'ipn' })).resolves.toMatchObject({
         status: 'reconciliation_required',
       });
+      // The money moved, so it is in the ledger -- but never counted on the invoice.
+      expect(ledger.recordGatewayPayment).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ applyState: 'refused' }),
+      );
       expect(paymentRepository.updateStatus).toHaveBeenCalledWith('payment-9', 'reconciliation_required');
-      expect(invoiceClient.markInvoicePaid).not.toHaveBeenCalled();
+      expect(ledger.apply).not.toHaveBeenCalled();
     });
 
     it('holds a high-risk payment for review without marking the invoice paid', async () => {
@@ -501,8 +540,12 @@ describe('PaymentService', () => {
       await expect(service.handleSslCommerzNotification({ tranId: TRAN, source: 'ipn' })).resolves.toMatchObject({
         status: 'review_required',
       });
+      expect(ledger.recordGatewayPayment).toHaveBeenCalledWith(expect.anything(), {
+        providerReference: 'BANK1',
+        applyState: 'held',
+      });
       expect(paymentRepository.updateStatus).toHaveBeenCalledWith('payment-9', 'review_required');
-      expect(invoiceClient.markInvoicePaid).not.toHaveBeenCalled();
+      expect(ledger.apply).not.toHaveBeenCalled();
     });
 
     it('marks a pending payment failed when every attempt ended unpaid', async () => {
@@ -537,7 +580,7 @@ describe('PaymentService', () => {
       await service.handleSslCommerzNotification({ tranId: TRAN, source: 'ipn' });
 
       expect(paymentRepository.updateStatus).toHaveBeenCalledWith('payment-9', 'paid');
-      expect(invoiceClient.markInvoicePaid).toHaveBeenCalledWith('invoice-1');
+      expect(ledger.apply).toHaveBeenCalled();
     });
 
     it('answers "unknown" for a tran_id that is not one of our SSLCommerz payments', async () => {
@@ -574,102 +617,277 @@ describe('PaymentService', () => {
     });
   });
 
-  describe('handleWebhookEvent', () => {
-    it('marks the payment and the invoice paid on a successful payment event', async () => {
-      paymentProvider.parseWebhookEvent.mockReturnValue({
-        type: 'payment_succeeded',
-        providerSessionId: 'cs_test_123',
+  describe('paying in parts', () => {
+    // A 13.8-lakh BDT invoice, half paid: SSLCommerz takes at most 5 lakh per payment.
+    const BIG = {
+      ...ISSUED_INVOICE,
+      currency: 'BDT',
+      total: 1_380_000.5,
+      amountPaid: 690_000,
+      balanceDue: 690_000.5,
+    };
+
+    beforeEach(() => {
+      registry.forCheckout.mockResolvedValue(sslcommerz);
+      invoiceClient.findOneInvoice.mockResolvedValue(BIG);
+      paymentRepository.create.mockResolvedValue(buildPayment({ id: 'payment-9', provider: 'sslcommerz' }));
+      sslcommerz.createCheckoutSession.mockResolvedValue({
+        providerSessionId: 'einv1',
+        checkoutUrl: 'https://sandbox.sslcommerz.com/EasyCheckOut/x',
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000),
       });
-      paymentRepository.findByProviderSessionId.mockResolvedValue(buildPayment());
-      invoiceClient.markInvoicePaid.mockResolvedValue(undefined);
-
-      await service.handleWebhookEvent(Buffer.from('{}').toString('base64'), 'sig');
-
-      expect(paymentRepository.updateStatus).toHaveBeenCalledWith('payment-1', 'paid');
-      expect(invoiceClient.markInvoicePaid).toHaveBeenCalledWith('invoice-1');
     });
 
-    // A webhook carries no caller organization; invoice's MARK_PAID is scoped by the one it runs in.
-    it("tells invoice in the payment's own organization", async () => {
+    it('collects a named part of the balance', async () => {
+      await service.createCheckoutSession('invoice-1', 500_000);
+
+      expect(paymentRepository.create).toHaveBeenCalledWith(expect.objectContaining({ amount: 500_000 }));
+      expect(sslcommerz.createCheckoutSession).toHaveBeenCalledWith(expect.objectContaining({ amount: 500_000 }));
+    });
+
+    it('asks for a part when the balance is over the provider limit, naming both', async () => {
+      await expect(service.createCheckoutSession('invoice-1')).rejects.toThrow(
+        new UnprocessableEntityException(
+          'SSLCommerz takes ৳10.00 to ৳5,00,000.00 per payment; the balance due is ৳6,90,000.50. Ask for a part of it (amount), or record a bank transfer.',
+        ),
+      );
+    });
+
+    it('defaults to the whole balance (not the total) when it fits', async () => {
+      invoiceClient.findOneInvoice.mockResolvedValue({ ...BIG, amountPaid: 1_000_000, balanceDue: 380_000.5 });
+
+      await service.createCheckoutSession('invoice-1');
+
+      expect(sslcommerz.createCheckoutSession).toHaveBeenCalledWith(expect.objectContaining({ amount: 380_000.5 }));
+    });
+
+    it.each([
+      [700_000, /more than the balance due \(৳6,90,000.50\)/],
+      [-5, /positive/],
+      [10.005, /more than 2 decimal places/],
+    ])('refuses %p', async (amount, message) => {
+      await expect(service.createCheckoutSession('invoice-1', amount)).rejects.toThrow(message);
+      expect(paymentRepository.create).not.toHaveBeenCalled();
+    });
+
+    it('refuses a link when nothing is owed', async () => {
+      invoiceClient.findOneInvoice.mockResolvedValue({
+        ...BIG,
+        status: 'issued',
+        amountPaid: 1_380_000.5,
+        balanceDue: 0,
+      });
+
+      await expect(service.createCheckoutSession('invoice-1')).rejects.toThrow('Nothing is owed on this invoice.');
+    });
+
+    // One open session per invoice: a different part means a different session.
+    it('does not reuse an open session for a different amount', async () => {
+      paymentRepository.findOpenByInvoiceId.mockResolvedValue(
+        buildPayment({
+          id: 'payment-old',
+          provider: 'sslcommerz',
+          amount: 500_000,
+          expiresAt: new Date(Date.now() + 3_600_000),
+        }),
+      );
+
+      await service.createCheckoutSession('invoice-1', 190_000.5);
+
+      expect(paymentRepository.updateStatus).toHaveBeenCalledWith('payment-old', 'superseded');
+      expect(sslcommerz.createCheckoutSession).toHaveBeenCalledWith(expect.objectContaining({ amount: 190_000.5 }));
+    });
+
+    // An invoice service from before the ledger reports no balance: nothing could be part-paid then.
+    it('treats an invoice without balanceDue (mid-rollout) as owing its total', async () => {
+      registry.forCheckout.mockResolvedValue(paymentProvider);
+      invoiceClient.findOneInvoice.mockResolvedValue(ISSUED_INVOICE);
+      paymentProvider.createCheckoutSession.mockResolvedValue({
+        providerSessionId: 'cs_1',
+        checkoutUrl: 'https://checkout.stripe.com/pay/cs_1',
+        expiresAt: new Date(Date.now() + 86_400_000),
+      });
+
+      await service.createCheckoutSession('invoice-1');
+
+      expect(paymentProvider.createCheckoutSession).toHaveBeenCalledWith(expect.objectContaining({ amount: 220 }));
+    });
+  });
+
+  describe('payments waiting for a person', () => {
+    const PAYMENT_ID = '6c0f3a52-2f0e-4c1b-9a51-0d2f7b6c9e10';
+    const held = () =>
+      buildPayment({ id: PAYMENT_ID, provider: 'sslcommerz', status: 'review_required', currency: 'BDT' });
+
+    beforeEach(() => {
+      paymentRepository.findById.mockResolvedValue(held());
+      ledger.findForCheckout.mockResolvedValue({
+        id: 'entry-9',
+        applyState: 'held',
+        amount: 1380.5,
+        currency: 'BDT',
+        invoiceId: 'invoice-1',
+      });
+    });
+
+    it('accepting counts the held payment on the invoice', async () => {
+      ledger.release.mockResolvedValue({ outcome: 'applied', invoice: { amountPaid: 1380.5, total: 1380.5 } });
+
+      await expect(service.acceptHeld(PAYMENT_ID)).resolves.toEqual({ invoiceId: 'invoice-1', status: 'paid' });
+      expect(ledger.release).toHaveBeenCalledWith(expect.objectContaining({ id: 'entry-9' }));
+      expect(paymentRepository.updateStatus).toHaveBeenCalledWith(PAYMENT_ID, 'paid');
+    });
+
+    it('refusing refunds everything left of it, and marks the checkout refunded', async () => {
+      ledger.refundableMinor.mockResolvedValue(138_050);
+      ledger.refund.mockResolvedValue({ id: 'refund-1', state: 'pending' });
+
+      await service.refuseHeld(PAYMENT_ID, 'Card reported stolen.');
+
+      expect(ledger.refund).toHaveBeenCalledWith('invoice-1', {
+        paymentEntryId: 'entry-9',
+        amount: 1380.5,
+        reason: 'Card reported stolen.',
+      });
+      expect(paymentRepository.updateStatus).toHaveBeenCalledWith(PAYMENT_ID, 'refunded');
+    });
+
+    it('keeps the checkout waiting when the refund itself failed', async () => {
+      ledger.refundableMinor.mockResolvedValue(138_050);
+      ledger.refund.mockResolvedValue({ id: 'refund-1', state: 'failed' });
+
+      await service.refuseHeld(PAYMENT_ID, 'Card reported stolen.');
+
+      expect(paymentRepository.updateStatus).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      [
+        'a payment that is not waiting',
+        () => paymentRepository.findById.mockResolvedValue({ ...held(), status: 'paid' }),
+        ConflictException,
+      ],
+      ['an unknown payment', () => paymentRepository.findById.mockResolvedValue(null), NotFoundException],
+    ])('refuses to act on %s', async (_label, arrange, error) => {
+      arrange();
+
+      await expect(service.acceptHeld(PAYMENT_ID)).rejects.toBeInstanceOf(error);
+      expect(ledger.release).not.toHaveBeenCalled();
+    });
+
+    it('lists what is waiting, with its ledger entry', async () => {
+      paymentRepository.findByStatuses.mockResolvedValue([held()]);
+
+      await expect(service.listAttention()).resolves.toEqual([
+        expect.objectContaining({
+          paymentId: PAYMENT_ID,
+          status: 'review_required',
+          ledgerEntryId: 'entry-9',
+          amount: 1380.5,
+        }),
+      ]);
+      expect(paymentRepository.findByStatuses).toHaveBeenCalledWith(['review_required', 'reconciliation_required']);
+    });
+  });
+
+  describe('handleWebhookEvent (Stripe)', () => {
+    const succeeded = (overrides: Record<string, unknown> = {}) =>
       paymentProvider.parseWebhookEvent.mockReturnValue({
         type: 'payment_succeeded',
         providerSessionId: 'cs_test_123',
+        providerReference: 'pi_123',
+        ...overrides,
       });
+    const webhook = () => service.handleWebhookEvent(Buffer.from('{}').toString('base64'), 'sig');
+
+    beforeEach(() => paymentRepository.findByProviderSessionId.mockResolvedValue(buildPayment()));
+
+    it('records the payment with its payment_intent, marks the checkout paid, and counts it on the invoice', async () => {
+      succeeded();
+
+      await webhook();
+
+      expect(ledger.recordGatewayPayment).toHaveBeenCalledWith(expect.objectContaining({ id: 'payment-1' }), {
+        providerReference: 'pi_123',
+        applyState: 'pending',
+      });
+      expect(paymentRepository.updateStatus).toHaveBeenCalledWith('payment-1', 'paid');
+      expect(ledger.apply).toHaveBeenCalledWith(expect.objectContaining({ id: 'entry-1' }));
+    });
+
+    // A webhook carries no caller organization; invoice is scoped by the one the payment was started in.
+    it("tells invoice in the payment's own organization", async () => {
+      succeeded();
       paymentRepository.findByProviderSessionId.mockResolvedValue(buildPayment({ organizationId: 'org-of-payment' }));
       let organizationId: string | undefined;
-      invoiceClient.markInvoicePaid.mockImplementation(async () => {
+      ledger.apply.mockImplementation(async () => {
         organizationId = getCurrentCorrelationContext()?.organizationId;
+        return { outcome: 'applied', invoice: { amountPaid: 100, total: 100 } };
       });
 
-      await service.handleWebhookEvent(Buffer.from('{}').toString('base64'), 'sig');
+      await webhook();
 
       expect(organizationId).toBe('org-of-payment');
     });
 
-    it('flags the payment for reconciliation if marking the invoice paid fails, rather than reverting to pending or staying silently paid', async () => {
-      paymentProvider.parseWebhookEvent.mockReturnValue({
-        type: 'payment_succeeded',
-        providerSessionId: 'cs_test_123',
+    // e.g. the invoice was cancelled after the payer opened the checkout: the money is recorded, a
+    // refund is owed, and a retry would get the same answer -- the webhook is acknowledged.
+    it('flags the checkout for reconciliation when invoice refuses the money, and acknowledges', async () => {
+      succeeded();
+      ledger.apply.mockResolvedValue({
+        outcome: 'refused',
+        reason: 'Cannot apply a payment to an invoice that is cancelled.',
       });
-      paymentRepository.findByProviderSessionId.mockResolvedValue(buildPayment());
-      const invoiceError = new Error('invoice service unreachable');
-      invoiceClient.markInvoicePaid.mockRejectedValue(invoiceError);
 
-      await expect(service.handleWebhookEvent(Buffer.from('{}').toString('base64'), 'sig')).rejects.toThrow(
-        'invoice service unreachable',
-      );
+      await expect(webhook()).resolves.toBeUndefined();
 
-      expect(paymentRepository.updateStatus).toHaveBeenNthCalledWith(1, 'payment-1', 'paid');
-      expect(paymentRepository.updateStatus).toHaveBeenNthCalledWith(2, 'payment-1', 'reconciliation_required');
+      expect(paymentRepository.updateStatus).toHaveBeenLastCalledWith('payment-1', 'reconciliation_required');
     });
 
-    // e.g. the invoice was cancelled after the customer opened the checkout page: the money moved,
-    // invoice refuses deterministically, and a Stripe retry would get the same answer forever.
-    it.each([409, 404])(
-      'flags for reconciliation and acknowledges the webhook when invoice refuses with %i',
-      async (status) => {
-        paymentProvider.parseWebhookEvent.mockReturnValue({
-          type: 'payment_succeeded',
-          providerSessionId: 'cs_test_123',
-        });
-        paymentRepository.findByProviderSessionId.mockResolvedValue(buildPayment());
-        invoiceClient.markInvoicePaid.mockRejectedValue(new HttpException({ message: 'refused' }, status));
+    // Recorded in the ledger already; the ledger worker counts it once invoice is back.
+    it('acknowledges when invoice is unreachable: the payment is recorded, and counted later', async () => {
+      succeeded();
+      ledger.apply.mockResolvedValue({ outcome: 'retry' });
 
-        await expect(service.handleWebhookEvent(Buffer.from('{}').toString('base64'), 'sig')).resolves.toBeUndefined();
+      await expect(webhook()).resolves.toBeUndefined();
 
-        expect(paymentRepository.updateStatus).toHaveBeenLastCalledWith('payment-1', 'reconciliation_required');
-      },
-    );
-
-    it('still lets Stripe retry when invoice is unavailable (503)', async () => {
-      paymentProvider.parseWebhookEvent.mockReturnValue({
-        type: 'payment_succeeded',
-        providerSessionId: 'cs_test_123',
-      });
-      paymentRepository.findByProviderSessionId.mockResolvedValue(buildPayment());
-      invoiceClient.markInvoicePaid.mockRejectedValue(new HttpException({ message: 'down' }, 503));
-
-      await expect(service.handleWebhookEvent(Buffer.from('{}').toString('base64'), 'sig')).rejects.toBeInstanceOf(
-        HttpException,
-      );
+      expect(ledger.recordGatewayPayment).toHaveBeenCalled();
+      expect(paymentRepository.updateStatus).toHaveBeenLastCalledWith('payment-1', 'paid');
     });
 
-    it('flags a second successful payment for the same invoice instead of treating it as a normal success', async () => {
-      paymentProvider.parseWebhookEvent.mockReturnValue({ type: 'payment_succeeded', providerSessionId: 'cs_second' });
-      paymentRepository.findByProviderSessionId.mockResolvedValue(buildPayment({ id: 'payment-2' }));
-      paymentRepository.hasOtherPaidPayment.mockResolvedValue(true);
+    // e.g. paid through a session retired while the payer was still on it: the excess is owed back.
+    it('flags an overpaid invoice for reconciliation', async () => {
+      succeeded();
+      ledger.apply.mockResolvedValue({ outcome: 'applied', invoice: { amountPaid: 440, total: 220 } });
 
-      await service.handleWebhookEvent(Buffer.from('{}').toString('base64'), 'sig');
+      await webhook();
 
-      expect(paymentRepository.hasOtherPaidPayment).toHaveBeenCalledWith('invoice-1', 'payment-2');
-      expect(paymentRepository.updateStatus).toHaveBeenCalledWith('payment-2', 'reconciliation_required');
-      expect(invoiceClient.markInvoicePaid).not.toHaveBeenCalled();
+      expect(paymentRepository.updateStatus).toHaveBeenLastCalledWith('payment-1', 'reconciliation_required');
+    });
+
+    // Stripe redelivers: the ledger finds the entry it already has, already counted.
+    it('is idempotent: a redelivered webhook neither records nor counts the payment again', async () => {
+      succeeded();
+      ledger.recordGatewayPayment.mockResolvedValue({ id: 'entry-1', applyState: 'applied' });
+
+      await webhook();
+
+      expect(ledger.apply).not.toHaveBeenCalled();
+    });
+
+    it('marks an expired checkout failed', async () => {
+      paymentProvider.parseWebhookEvent.mockReturnValue({ type: 'payment_failed', providerSessionId: 'cs_test_123' });
+
+      await webhook();
+
+      expect(paymentRepository.updateStatus).toHaveBeenCalledWith('payment-1', 'failed');
+      expect(ledger.recordGatewayPayment).not.toHaveBeenCalled();
     });
 
     it('does nothing for an ignored event type', async () => {
       paymentProvider.parseWebhookEvent.mockReturnValue({ type: 'ignored' });
 
-      await service.handleWebhookEvent(Buffer.from('{}').toString('base64'), 'sig');
+      await webhook();
 
       expect(paymentRepository.findByProviderSessionId).not.toHaveBeenCalled();
     });

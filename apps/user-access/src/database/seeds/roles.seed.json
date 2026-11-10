@@ -13,7 +13,9 @@
       "customer:read",
       "customer:write",
       "organization:read",
-      "organization:write"
+      "organization:write",
+      "payment:read",
+      "payment:write"
     ],
     "scope": "organization"
   },
@@ -29,27 +31,31 @@
       "user:write",
       "customer:read",
       "customer:write",
-      "organization:read"
+      "organization:read",
+      "payment:read",
+      "payment:write"
     ],
     "scope": "organization"
   },
   {
     "name": "accountant",
-    "description": "Reads and writes invoices, reads the product catalog. No user management.",
+    "description": "Reads and writes invoices and records payments and refunds; reads the product catalog. No user management.",
     "permissions": [
       "invoice:read",
       "invoice:write",
       "product:read",
       "customer:read",
       "customer:write",
-      "organization:read"
+      "organization:read",
+      "payment:read",
+      "payment:write"
     ],
     "scope": "organization"
   },
   {
     "name": "viewer",
     "description": "Read-only access across invoices, products, and users.",
-    "permissions": ["invoice:read", "product:read", "user:read", "customer:read", "organization:read"],
+    "permissions": ["invoice:read", "product:read", "user:read", "customer:read", "organization:read", "payment:read"],
     "scope": "organization"
   },
   {

@@ -15,11 +15,20 @@ import {
 } from '@nestjs/common';
 import type { Request } from 'express';
 import { ApiBearerAuth, ApiBody, ApiExcludeEndpoint, ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
-import { SslCommerzCredentialsDto, SslCommerzCredentialsResponseDto } from '@libs/interfaces/gateway';
+import {
+  CreatePaymentLinkDto,
+  LedgerEntryResponseDto,
+  RecordPaymentDto,
+  RefundDto,
+  SslCommerzCredentialsDto,
+  SslCommerzCredentialsResponseDto,
+} from '@libs/interfaces/gateway';
 import { Public, RequirePermission } from '@libs/auth';
 import { ResponseMessage } from '@libs/interceptors';
 import { RateLimit } from '@libs/rate-limit';
 import { RATE_LIMIT_MUTATE_BURST, RATE_LIMIT_MUTATE_RATE } from '@libs/constants';
+import { IsOptional, IsString, Length } from 'class-validator';
+import { ApiPropertyOptional } from '@nestjs/swagger';
 import {
   ApiCorrelationIdHeader,
   ApiEnvelopeResponse,
@@ -29,6 +38,14 @@ import { PaymentClientService } from './payment-client.service';
 
 interface RawBodyRequest extends Request {
   rawBody?: Buffer;
+}
+
+class RefusePaymentDto {
+  @ApiPropertyOptional({ example: 'Card reported stolen by the bank.', minLength: 3, maxLength: 255 })
+  @IsOptional()
+  @IsString()
+  @Length(3, 255)
+  reason?: string;
 }
 
 enum SslCommerzReturn {
@@ -60,9 +77,10 @@ export class PaymentController {
   @ApiOperation({
     summary: 'Create a payment link for an invoice',
     description:
-      "Returns a hosted payment page for the invoice total: SSLCommerz (cards, bKash, Nagad, Rocket, internet banking) for a BDT invoice when the organization has connected its SSLCommerz store, Stripe Checkout otherwise. An open link is reused while it has time left. 422 when the amount is outside the provider's per-payment limits (SSLCommerz: BDT 10 to 5,00,000).",
+      "Returns a hosted payment page for the balance due, or for `amount` (a part of it): SSLCommerz (cards, bKash, Nagad, Rocket, internet banking) for a BDT invoice when the organization has connected its SSLCommerz store, Stripe Checkout otherwise. One link is open at a time: an open link for the same provider and amount is reused while it has time left; asking for another amount replaces it. 409 when nothing is owed; 422 when the amount is more than the balance or outside the provider's per-payment limits (SSLCommerz: BDT 10 to 5,00,000 -- ask for a part, or record a bank transfer).",
   })
   @ApiParam({ name: 'id', description: 'MongoDB ObjectId of the invoice.' })
+  @ApiBody({ type: CreatePaymentLinkDto, required: false })
   @ApiProblemResponses(
     HttpStatus.NOT_FOUND,
     HttpStatus.CONFLICT,
@@ -70,8 +88,116 @@ export class PaymentController {
     HttpStatus.BAD_GATEWAY,
     HttpStatus.SERVICE_UNAVAILABLE,
   )
-  createPaymentLink(@Param('id') id: string) {
-    return this.paymentClient.createCheckoutSession(id);
+  createPaymentLink(@Param('id') id: string, @Body() body: CreatePaymentLinkDto = {}) {
+    return this.paymentClient.createCheckoutSession(id, body?.amount);
+  }
+
+  @Get('invoices/:id/payments')
+  @ApiBearerAuth('jwt')
+  @RequirePermission('payment:read')
+  @ResponseMessage('Payments retrieved successfully')
+  @ApiOperation({
+    summary: "An invoice's payments and refunds",
+    description:
+      'The ledger for the invoice, oldest first: every payment (online or recorded by hand) and refund, with its state, and for a payment how much of it has been refunded.',
+  })
+  @ApiParam({ name: 'id', description: 'MongoDB ObjectId of the invoice.' })
+  @ApiEnvelopeResponse({
+    status: HttpStatus.OK,
+    description: 'Ledger entries.',
+    model: LedgerEntryResponseDto,
+    message: 'Payments retrieved successfully',
+    isArray: true,
+    dataExample: [],
+  })
+  @ApiProblemResponses(HttpStatus.BAD_GATEWAY)
+  listPayments(@Param('id') id: string) {
+    return this.paymentClient.listLedger(id);
+  }
+
+  @Post('invoices/:id/payments')
+  @ApiBearerAuth('jwt')
+  @RequirePermission('payment:write')
+  @RateLimit({ burst: RATE_LIMIT_MUTATE_BURST, rate: RATE_LIMIT_MUTATE_RATE })
+  @ResponseMessage('Payment recorded successfully')
+  @ApiOperation({
+    summary: 'Record a payment received outside the gateways',
+    description:
+      'A bank transfer, cheque, cash or mobile-money payment. At most the balance due; the invoice becomes paid when the balance reaches 0.',
+  })
+  @ApiParam({ name: 'id', description: 'MongoDB ObjectId of the invoice.' })
+  @ApiBody({ type: RecordPaymentDto })
+  @ApiProblemResponses(
+    HttpStatus.UNPROCESSABLE_ENTITY,
+    HttpStatus.CONFLICT,
+    HttpStatus.NOT_FOUND,
+    HttpStatus.BAD_GATEWAY,
+  )
+  recordPayment(@Param('id') id: string, @Body() body: RecordPaymentDto) {
+    return this.paymentClient.recordPayment(id, body);
+  }
+
+  @Post('invoices/:id/refunds')
+  @ApiBearerAuth('jwt')
+  @RequirePermission('payment:write')
+  @RateLimit({ burst: RATE_LIMIT_MUTATE_BURST, rate: RATE_LIMIT_MUTATE_RATE })
+  @ResponseMessage('Refund started successfully')
+  @ApiOperation({
+    summary: 'Refund money from one payment',
+    description:
+      "Online payments are refunded through their provider (Stripe settles at once; SSLCommerz refunds are pending until the provider completes them). Payments made by hand, or with returnedOutsideSystem, are recorded as returned. At most what is left of the payment; a settled refund reopens the invoice's balance.",
+  })
+  @ApiParam({ name: 'id', description: 'MongoDB ObjectId of the invoice.' })
+  @ApiBody({ type: RefundDto })
+  @ApiProblemResponses(
+    HttpStatus.UNPROCESSABLE_ENTITY,
+    HttpStatus.CONFLICT,
+    HttpStatus.NOT_FOUND,
+    HttpStatus.BAD_GATEWAY,
+  )
+  refund(@Param('id') id: string, @Body() body: RefundDto) {
+    return this.paymentClient.refund(id, body);
+  }
+
+  @Get('payments/attention')
+  @ApiBearerAuth('jwt')
+  @RequirePermission('payment:read')
+  @ResponseMessage('Payments needing attention retrieved successfully')
+  @ApiOperation({
+    summary: 'Payments waiting for a person',
+    description:
+      'Held as high risk (review_required), or money that could not be settled on its invoice (reconciliation_required: the invoice was cancelled, overpaid, or the amount did not match).',
+  })
+  @ApiProblemResponses(HttpStatus.BAD_GATEWAY)
+  listAttention() {
+    return this.paymentClient.listAttention();
+  }
+
+  @Post('payments/:paymentId/accept')
+  @ApiBearerAuth('jwt')
+  @RequirePermission('payment:write')
+  @ResponseMessage('Payment accepted successfully')
+  @ApiOperation({ summary: 'Accept a payment held as high risk', description: 'It counts on the invoice from now on.' })
+  @ApiParam({ name: 'paymentId', description: 'The checkout payment id (from payments/attention).' })
+  @ApiProblemResponses(HttpStatus.NOT_FOUND, HttpStatus.CONFLICT, HttpStatus.BAD_GATEWAY)
+  acceptHeld(@Param('paymentId') paymentId: string) {
+    return this.paymentClient.acceptHeld(paymentId);
+  }
+
+  @Post('payments/:paymentId/refuse')
+  @ApiBearerAuth('jwt')
+  @RequirePermission('payment:write')
+  @RateLimit({ burst: RATE_LIMIT_MUTATE_BURST, rate: RATE_LIMIT_MUTATE_RATE })
+  @ResponseMessage('Payment refused and refund started successfully')
+  @ApiOperation({
+    summary: 'Refuse a held or unreconcilable payment',
+    description: 'Everything left of it is refunded through its provider.',
+  })
+  @ApiParam({ name: 'paymentId', description: 'The checkout payment id (from payments/attention).' })
+  @ApiBody({ type: RefusePaymentDto, required: false })
+  @ApiProblemResponses(HttpStatus.NOT_FOUND, HttpStatus.CONFLICT, HttpStatus.BAD_GATEWAY)
+  refuseHeld(@Param('paymentId') paymentId: string, @Body() body: RefusePaymentDto = {}) {
+    return this.paymentClient.refuseHeld(paymentId, body?.reason ?? '');
   }
 
   // @Public(): Stripe can't present a Keycloak bearer token, so this route can never go through

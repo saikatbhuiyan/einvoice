@@ -25,7 +25,9 @@ export type PaymentStatus =
    */
   | 'superseded'
   /** The provider flagged the payment as high risk (SSLCommerz risk_level=1): held until a human decides. */
-  | 'review_required';
+  | 'review_required'
+  /** A person refused a held or unreconcilable payment, and it was refunded (see the ledger). */
+  | 'refunded';
 
 /**
  * At most one open (pending) checkout session per invoice: PaymentService reuses it rather than
