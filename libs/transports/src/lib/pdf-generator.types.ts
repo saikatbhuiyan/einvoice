@@ -62,6 +62,8 @@ export interface GenerateInvoicePdfRequest {
   sdMinor: number;
   vatMinor: number;
   totalMinor: number;
+  /** Received minus refunded so far; the document shows Paid and Balance due once it is above 0. */
+  amountPaidMinor?: number;
 }
 
 export interface GenerateInvoicePdfResponse {

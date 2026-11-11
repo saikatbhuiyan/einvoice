@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { CONFIGURATION } from '../configuration';
 import { PaymentEntity } from './entities/payment.entity';
 import { ProviderCredentialEntity } from './entities/provider-credential.entity';
+import { LedgerEntryEntity } from './entities/ledger-entry.entity';
 
 @Global()
 @Module({
@@ -20,7 +21,7 @@ import { ProviderCredentialEntity } from './entities/provider-credential.entity'
           username: config.POSTGRES_USER,
           password: config.POSTGRES_PASSWORD,
           database: config.POSTGRES_DB,
-          entities: [PaymentEntity, ProviderCredentialEntity],
+          entities: [PaymentEntity, ProviderCredentialEntity, LedgerEntryEntity],
           // Schema is managed by migrations (see data-source.ts + payment:migration:* scripts),
           // never by auto-sync -- run `pnpm payment:migration:run` before starting the app
           // against a fresh database.

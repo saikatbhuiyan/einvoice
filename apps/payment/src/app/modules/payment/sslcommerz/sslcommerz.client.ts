@@ -68,6 +68,16 @@ export interface ValidatedTransaction {
   riskTitle: string;
   /** A discount SSLCommerz applied (bank or store campaign), if any. */
   discountAmount?: string;
+  /** The bank's transaction id: what a refund is made against. */
+  bankTranId: string;
+}
+
+/** A refund at SSLCommerz: success means accepted (then processing), not done. */
+export interface SslCommerzRefund {
+  /** Initiate: success | failed | processing. Status: refunded | processing | cancelled | failed. */
+  status: string;
+  refundRefId: string;
+  errorReason: string;
 }
 
 const TIMEOUT_MS = 15_000;
@@ -155,6 +165,57 @@ export class SslCommerzClient {
       riskLevel: text('risk_level'),
       riskTitle: text('risk_title'),
       discountAmount: text('discount_amount') || undefined,
+      bankTranId: text('bank_tran_id'),
+    };
+  }
+
+  /**
+   * Starts a refund. NOT idempotent: a repeated call with the same refund_trans_id creates another
+   * refund (probed) -- never retry it on an unknown outcome.
+   */
+  async refund(
+    credentials: SslCommerzCredentials,
+    refund: { bankTranId: string; refundTransId: string; amount: string; remarks: string },
+  ): Promise<SslCommerzRefund> {
+    const body = await this.call(
+      `${host(credentials)}/validator/api/merchantTransIDvalidationAPI.php?${new URLSearchParams({
+        bank_tran_id: refund.bankTranId,
+        refund_trans_id: refund.refundTransId,
+        refund_amount: refund.amount,
+        refund_remarks: refund.remarks,
+        store_id: credentials.storeId,
+        store_passwd: credentials.storePassword,
+        format: 'json',
+      })}`,
+    );
+    return this.toRefund(body);
+  }
+
+  async refundStatus(credentials: SslCommerzCredentials, refundRefId: string): Promise<SslCommerzRefund> {
+    const body = await this.call(
+      `${host(credentials)}/validator/api/merchantTransIDvalidationAPI.php?${new URLSearchParams({
+        refund_ref_id: refundRefId,
+        store_id: credentials.storeId,
+        store_passwd: credentials.storePassword,
+        format: 'json',
+      })}`,
+    );
+    return this.toRefund(body);
+  }
+
+  private toRefund(body: Record<string, unknown>): SslCommerzRefund {
+    if (body['APIConnect'] !== 'DONE') {
+      throw body['APIConnect'] === 'FAILED'
+        ? new SslCommerzRejectedError('SSLCommerz refused the store credentials (wrong, or the store is inactive).')
+        : new SslCommerzUnavailableError(`SSLCommerz refund API answered APIConnect=${String(body['APIConnect'])}.`);
+    }
+    return {
+      status: String(body['status'] ?? ''),
+      refundRefId: String(body['refund_ref_id'] ?? ''),
+      // SSLCommerz HTML-escapes its messages ("customer&#039;s").
+      errorReason: String(body['errorReason'] ?? '')
+        .replace(/&#0?39;/g, "'")
+        .replace(/&amp;/g, '&'),
     };
   }
 

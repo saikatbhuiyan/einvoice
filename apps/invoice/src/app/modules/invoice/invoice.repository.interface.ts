@@ -130,6 +130,14 @@ export interface IInvoiceRepository {
    * still overdue, so a reminder can only ever be handled once; returns null if it already was (or
    * the invoice was paid or cancelled meanwhile).
    */
+  /**
+   * Counts a ledger entry once (atomic, guarded by appliedEntryIds): a payment adds to the amount
+   * paid, a refund takes from it. The status follows the money -- paid when the amount paid reaches
+   * the total; a refund that reopens a balance takes a paid invoice back to issued (the overdue
+   * scheduler then marks it overdue if it is past due).
+   */
+  applyLedgerEntry(id: string, application: LedgerApplication): Promise<LedgerApplyResult>;
+
   advanceReminder(
     id: string,
     scheduledAt: Date,
@@ -139,6 +147,21 @@ export interface IInvoiceRepository {
 }
 
 /** An invoice found by a system scan: enough to act on it inside its own organization. */
+/** A settled money movement from payment's ledger, to count on the invoice. */
+export interface LedgerApplication {
+  entryId: string;
+  kind: 'payment' | 'refund';
+  amountMinor: number;
+}
+
+export type LedgerApplyResult =
+  | { outcome: 'applied'; invoice: InvoiceDocument; previous: InvoiceDocument }
+  /** The entry was applied before (a retry or a redelivery): nothing changed. */
+  | { outcome: 'already_applied'; invoice: InvoiceDocument }
+  /** The invoice can't take money in its state (draft, cancelled). */
+  | { outcome: 'refused'; invoice: InvoiceDocument }
+  | { outcome: 'not_found' };
+
 export interface InvoiceRef {
   id: string;
   organizationId: string;

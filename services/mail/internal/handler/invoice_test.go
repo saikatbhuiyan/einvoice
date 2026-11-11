@@ -371,3 +371,28 @@ func TestHandleDeadLettersAReminderWithoutAPdf(t *testing.T) {
 		t.Fatalf("emailed a reminder with no PDF")
 	}
 }
+
+// After a part-payment the reminder asks for what is still owed, not the invoice total.
+func TestHandleRemindsOfTheBalanceAfterAPartPayment(t *testing.T) {
+	f := newFixture()
+	message := []byte(fmt.Sprintf(`{
+	  "data": {
+	    "type": "invoice.reminder", "eventId": "evt-r2", "invoiceId": "i1", "invoiceNumber": "INV-7",
+	    "clientName": "Acme Corp", "clientEmail": "billing@acme.test", "pdfKey": %q,
+	    "fileName": "invoice-INV-7.pdf", "currency": "BDT", "totalMinor": 138000050, "total": 1380000.5,
+	    "balanceDueMinor": 38000050,
+	    "dueDate": "2026-10-10T00:00:00.000Z", "daysOverdue": 7, "reminderNumber": 2
+	  },
+	  "meta": {"correlationId": "c1", "traceId": "t1", "sourceService": "invoice", "systemActor": "overdue-job",
+	           "organizationId": "org-1", "timestamp": "2026-10-17T00:05:00.000Z"}
+	}`, pdfKey))
+
+	if err := f.handle(t, message); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	body := f.sender.sent[0].HTMLBody
+	if !strings.Contains(body, "৳3,80,000.50") || strings.Contains(body, "৳13,80,000.50") {
+		t.Fatalf("reminder should ask for the balance ৳3,80,000.50, not the total")
+	}
+}

@@ -4,6 +4,10 @@ import { CIRCUIT_BREAKER_FACTORY } from '@libs/circuit-breaker';
 import type { CircuitBreakerFactory } from '@libs/circuit-breaker';
 import { BaseTcpClient, ServiceName, TCP_CLIENT_TOKENS, TCP_PATTERNS } from '@libs/transports';
 import type {
+  AttentionPaymentResponse,
+  LedgerEntryResponse,
+  RecordPaymentRequest,
+  RefundRequest,
   CreateCheckoutSessionResponse,
   PaymentOutcome,
   SslCommerzCredentialsRequest,
@@ -27,9 +31,43 @@ export class PaymentClientService extends BaseTcpClient {
     super(circuitBreakerFactory);
   }
 
-  async createCheckoutSession(invoiceId: string): Promise<CreateCheckoutSessionGatewayResponse> {
-    return this.send<CreateCheckoutSessionGatewayResponse, { invoiceId: string }>(TCP_PATTERNS.PAYMENT.INITIATE, {
+  async createCheckoutSession(invoiceId: string, amount?: number): Promise<CreateCheckoutSessionGatewayResponse> {
+    return this.send<CreateCheckoutSessionGatewayResponse, { invoiceId: string; amount?: number }>(
+      TCP_PATTERNS.PAYMENT.INITIATE,
+      { invoiceId, ...(amount !== undefined ? { amount } : {}) },
+    );
+  }
+
+  async listLedger(invoiceId: string): Promise<LedgerEntryResponse[]> {
+    return this.send<LedgerEntryResponse[], { invoiceId: string }>(TCP_PATTERNS.PAYMENT.LEDGER_LIST, { invoiceId });
+  }
+
+  async recordPayment(invoiceId: string, data: RecordPaymentRequest): Promise<LedgerEntryResponse> {
+    return this.send<LedgerEntryResponse, { invoiceId: string; data: RecordPaymentRequest }>(
+      TCP_PATTERNS.PAYMENT.RECORD_MANUAL,
+      { invoiceId, data },
+    );
+  }
+
+  async refund(invoiceId: string, data: RefundRequest): Promise<LedgerEntryResponse> {
+    return this.send<LedgerEntryResponse, { invoiceId: string; data: RefundRequest }>(TCP_PATTERNS.PAYMENT.REFUND, {
       invoiceId,
+      data,
+    });
+  }
+
+  async listAttention(): Promise<AttentionPaymentResponse[]> {
+    return this.send<AttentionPaymentResponse[], Record<string, never>>(TCP_PATTERNS.PAYMENT.ATTENTION_LIST, {});
+  }
+
+  async acceptHeld(paymentId: string): Promise<PaymentOutcome> {
+    return this.send<PaymentOutcome, { paymentId: string }>(TCP_PATTERNS.PAYMENT.ACCEPT_HELD, { paymentId });
+  }
+
+  async refuseHeld(paymentId: string, reason: string): Promise<LedgerEntryResponse> {
+    return this.send<LedgerEntryResponse, { paymentId: string; reason: string }>(TCP_PATTERNS.PAYMENT.REFUSE_HELD, {
+      paymentId,
+      reason,
     });
   }
 

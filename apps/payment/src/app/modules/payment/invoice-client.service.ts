@@ -23,6 +23,18 @@ export class InvoiceClientService extends BaseTcpClient {
     return this.send<InvoiceResponse, { id: string }>(TCP_PATTERNS.INVOICE.FIND_ONE, { id });
   }
 
+  /** Counts a settled ledger entry on the invoice, once (idempotent by entryId). */
+  async applyLedgerEntry(
+    id: string,
+    application: { entryId: string; kind: 'payment' | 'refund'; amountMinor: number },
+  ): Promise<InvoiceResponse> {
+    return this.send<InvoiceResponse, { id: string; entryId: string; kind: string; amountMinor: number }>(
+      TCP_PATTERNS.INVOICE.APPLY_LEDGER_ENTRY,
+      { id, ...application },
+    );
+  }
+
+  /** @deprecated Kept until every invoice instance understands APPLY_LEDGER_ENTRY. */
   async markInvoicePaid(id: string): Promise<InvoiceResponse> {
     return this.send<InvoiceResponse, { id: string }>(TCP_PATTERNS.INVOICE.MARK_PAID, { id });
   }

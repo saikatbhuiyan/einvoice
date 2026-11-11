@@ -13,6 +13,8 @@ import {
   InTransaction,
   InvoiceContentUpdate,
   InvoiceRef,
+  LedgerApplication,
+  LedgerApplyResult,
   NewInvoice,
   PaginatedResult,
   StatusTransitionResult,
@@ -21,6 +23,9 @@ import {
 
 // invoiceNumber is not content: the server assigns it on issue (transitionStatus' prepare hook).
 const CONTENT_FIELDS = ['reference', 'client', 'items', 'currency', 'notes'] as const;
+
+/** Only an issued invoice carries money: a draft isn't owed yet, a cancelled one isn't owed at all. */
+const MONEY_BEARING_STATUSES: readonly InvoiceStatus[] = ['issued', 'overdue', 'paid'];
 
 const CONCURRENT_MODIFICATION_MESSAGE = 'Invoice was modified by another user. Please refresh and retry.';
 
@@ -236,6 +241,62 @@ export class InvoiceRepository implements IInvoiceRepository {
    */
   private transaction<T>(work: (session: ClientSession) => Promise<T>): Promise<T> {
     return this.writeModel.db.transaction(work);
+  }
+
+  async applyLedgerEntry(id: string, application: LedgerApplication): Promise<LedgerApplyResult> {
+    const { entryId, kind, amountMinor } = application;
+    const delta = kind === 'payment' ? amountMinor : -amountMinor;
+    // Legacy invoices (no amountPaidMinor) count as paid in full when paid, else nothing: amountPaidOf.
+    const paidSoFar = {
+      $ifNull: ['$amountPaidMinor', { $cond: [{ $eq: ['$status', 'paid'] }, '$totalMinor', 0] }],
+    };
+
+    const previous = await this.writeModel
+      .findOneAndUpdate(
+        {
+          ...this.activeFilter(id),
+          status: { $in: MONEY_BEARING_STATUSES },
+          appliedEntryIds: { $ne: entryId },
+        },
+        [
+          {
+            $set: {
+              amountPaidMinor: { $add: [paidSoFar, delta] },
+              appliedEntryIds: { $concatArrays: [{ $ifNull: ['$appliedEntryIds', []] }, [entryId]] },
+              version: { $add: ['$version', 1] },
+              updatedAt: '$$NOW',
+            },
+          },
+          {
+            $set: {
+              status: {
+                $switch: {
+                  branches: [
+                    { case: { $gte: ['$amountPaidMinor', '$totalMinor'] }, then: 'paid' },
+                    // A refund reopened a balance on a paid invoice.
+                    { case: { $eq: ['$status', 'paid'] }, then: 'issued' },
+                  ],
+                  default: '$status',
+                },
+              },
+            },
+          },
+        ],
+        // Mongoose 9 refuses an update pipeline unless asked for explicitly.
+        { returnDocument: 'before', updatePipeline: true },
+      )
+      .exec();
+
+    if (previous) {
+      const invoice = await this.writeModel.findOne(this.activeFilter(id)).exec();
+      return { outcome: 'applied', invoice: invoice as InvoiceDocument, previous };
+    }
+
+    // Nothing matched: work out why.
+    const current = await this.writeModel.findOne(this.activeFilter(id)).exec();
+    if (!current) return { outcome: 'not_found' };
+    if (current.appliedEntryIds?.includes(entryId)) return { outcome: 'already_applied', invoice: current };
+    return { outcome: 'refused', invoice: current };
   }
 
   /**

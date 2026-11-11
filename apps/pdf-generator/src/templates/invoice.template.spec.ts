@@ -137,6 +137,15 @@ describe('invoice.ejs', () => {
     await expect(render(invoice())).resolves.not.toContain('BIN:');
   });
 
+  it('shows what has been paid and the balance due once anything is paid', async () => {
+    const html = await render({ ...invoice(), amountPaidMinor: 5000 });
+
+    expect(html).toContain('Paid</span><span>&minus;€50.00');
+    expect(html).toContain('Balance due</span><span>€79.90');
+    await expect(render(invoice())).resolves.not.toContain('Balance due');
+    await expect(render({ ...invoice(), amountPaidMinor: 0 })).resolves.not.toContain('Balance due');
+  });
+
   it('omits the address line for a client without one', async () => {
     const data = invoice();
     delete data.client.address;

@@ -171,6 +171,8 @@ func TestContractReminderEvent(t *testing.T) {
 	}
 	takeTotalMinor(t, got.TotalMinor, 12990)
 	got.TotalMinor = nil
+	takeTotalMinor(t, got.BalanceDueMinor, 7990)
+	got.BalanceDueMinor = nil
 	want := ReminderEvent{
 		Type:           TypeReminder,
 		EventID:        "6710000000000000000000e5",

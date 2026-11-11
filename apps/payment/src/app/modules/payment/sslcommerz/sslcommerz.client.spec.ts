@@ -154,6 +154,7 @@ describe('SslCommerzClient', () => {
           risk_level: '0',
           risk_title: 'Safe',
           discount_amount: '0.00',
+          bank_tran_id: '261022224233MK0t7zbkRyl26Y1',
         }),
       );
 
@@ -166,8 +167,61 @@ describe('SslCommerzClient', () => {
         riskLevel: '0',
         riskTitle: 'Safe',
         discountAmount: '0.00',
+        bankTranId: '261022224233MK0t7zbkRyl26Y1',
       });
       expect(http.mock.calls[0][0]).toContain('/validator/api/validationserverAPI.php?val_id=VAL1&');
+    });
+  });
+
+  // Probed: "success" means accepted; status reports processing, then refunded. Messages come HTML-escaped.
+  describe('refunds', () => {
+    it('starts a refund against the bank transaction, and reads where one stands', async () => {
+      http.mockReturnValue(
+        json({
+          APIConnect: 'DONE',
+          bank_tran_id: 'B1',
+          trans_id: 'einv1',
+          refund_ref_id: '6ada4c6493526',
+          status: 'success',
+          errorReason: '',
+        }),
+      );
+
+      await expect(
+        client.refund(SANDBOX, { bankTranId: 'B1', refundTransId: 'rabc', amount: '100.00', remarks: 'Overpaid' }),
+      ).resolves.toEqual({ status: 'success', refundRefId: '6ada4c6493526', errorReason: '' });
+      expect(http.mock.calls[0][0]).toBe(
+        'https://sandbox.sslcommerz.com/validator/api/merchantTransIDvalidationAPI.php?bank_tran_id=B1&refund_trans_id=rabc&refund_amount=100.00&refund_remarks=Overpaid&store_id=testbox&store_passwd=qwerty&format=json',
+      );
+
+      http.mockReturnValue(json({ APIConnect: 'DONE', status: 'processing', refund_ref_id: '6ada4c6493526' }));
+      await expect(client.refundStatus(SANDBOX, '6ada4c6493526')).resolves.toMatchObject({ status: 'processing' });
+      expect(http.mock.calls[1][0]).toContain('refund_ref_id=6ada4c6493526&');
+    });
+
+    it("un-escapes SSLCommerz's error messages", async () => {
+      http.mockReturnValue(
+        json({
+          APIConnect: 'DONE',
+          status: 'failed',
+          errorReason: 'Refund amount must not be more than customer&#039;s transaction amount!',
+        }),
+      );
+
+      await expect(
+        client.refund(SANDBOX, { bankTranId: 'B1', refundTransId: 'r1', amount: '99999.00', remarks: 'x' }),
+      ).resolves.toMatchObject({
+        status: 'failed',
+        errorReason: "Refund amount must not be more than customer's transaction amount!",
+      });
+    });
+
+    it('distinguishes refused credentials from an outage', async () => {
+      http.mockReturnValue(json({ APIConnect: 'FAILED' }));
+      await expect(client.refundStatus(SANDBOX, 'x')).rejects.toBeInstanceOf(SslCommerzRejectedError);
+
+      http.mockRejectedValue(new TypeError('fetch failed'));
+      await expect(client.refundStatus(SANDBOX, 'x')).rejects.toBeInstanceOf(SslCommerzUnavailableError);
     });
   });
 

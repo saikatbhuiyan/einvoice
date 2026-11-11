@@ -83,20 +83,23 @@ type SentEvent struct {
 // ReminderEvent means a payment reminder is due for an overdue invoice: email ClientEmail, with the
 // PDF at PdfKey attached. Deduped on EventID like SentEvent.
 type ReminderEvent struct {
-	Type           string  `json:"type"`
-	EventID        string  `json:"eventId"`
-	InvoiceID      string  `json:"invoiceId"`
-	InvoiceNumber  string  `json:"invoiceNumber"`
-	ClientName     string  `json:"clientName"`
-	ClientEmail    string  `json:"clientEmail"`
-	PdfKey         string  `json:"pdfKey"`
-	FileName       string  `json:"fileName"`
-	Currency       string  `json:"currency"`
-	TotalMinor     *int64  `json:"totalMinor,omitempty"`
-	Total          float64 `json:"total"`
-	DueDate        string  `json:"dueDate"`
-	DaysOverdue    int     `json:"daysOverdue"`
-	ReminderNumber int     `json:"reminderNumber"`
+	Type          string  `json:"type"`
+	EventID       string  `json:"eventId"`
+	InvoiceID     string  `json:"invoiceId"`
+	InvoiceNumber string  `json:"invoiceNumber"`
+	ClientName    string  `json:"clientName"`
+	ClientEmail   string  `json:"clientEmail"`
+	PdfKey        string  `json:"pdfKey"`
+	FileName      string  `json:"fileName"`
+	Currency      string  `json:"currency"`
+	TotalMinor    *int64  `json:"totalMinor,omitempty"`
+	Total         float64 `json:"total"`
+	DueDate       string  `json:"dueDate"`
+	// BalanceDueMinor is what is still owed after partial payments; absent from reminders produced
+	// before the payments ledger, when the whole total was owed.
+	BalanceDueMinor *int64 `json:"balanceDueMinor,omitempty"`
+	DaysOverdue     int    `json:"daysOverdue"`
+	ReminderNumber  int    `json:"reminderNumber"`
 }
 
 // Decode parses a raw Kafka message value into an Envelope and the concrete event type its

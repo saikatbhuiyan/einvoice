@@ -151,6 +151,10 @@ export interface InvoiceResponse {
   sdTotal: number;
   vatTotal: number;
   total: number;
+  /** Received minus refunded (payment's ledger). Can exceed the total when overpaid. */
+  amountPaid: number;
+  /** What is still owed: total minus amount paid, never below 0. */
+  balanceDue: number;
   version: number;
   idempotencyKey?: string;
   /** Payment reminders emailed so far (overdue invoices only). */

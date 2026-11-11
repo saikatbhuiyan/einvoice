@@ -6,6 +6,7 @@ import { expand } from 'dotenv-expand';
 import { DataSource } from 'typeorm';
 import { PaymentEntity } from './entities/payment.entity';
 import { ProviderCredentialEntity } from './entities/provider-credential.entity';
+import { LedgerEntryEntity } from './entities/ledger-entry.entity';
 
 /**
  * CLI-only DataSource for the `typeorm` migration commands (see package.json's
@@ -38,7 +39,7 @@ const AppDataSource = new DataSource({
   password: process.env['POSTGRES_PASSWORD'] ?? '',
   database: process.env['POSTGRES_DB'] ?? '',
   ssl: process.env['POSTGRES_SSL'] === 'true',
-  entities: [PaymentEntity, ProviderCredentialEntity],
+  entities: [PaymentEntity, ProviderCredentialEntity, LedgerEntryEntity],
   migrations: [join(__dirname, 'migrations', '*.{ts,js}')],
 });
 

@@ -4,6 +4,7 @@ import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testconta
 import { DataSource, type MigrationInterface } from 'typeorm';
 import { PaymentEntity } from './entities/payment.entity';
 import { ProviderCredentialEntity } from './entities/provider-credential.entity';
+import { LedgerEntryEntity } from './entities/ledger-entry.entity';
 import { randomBytes } from 'crypto';
 import { PaymentRepository } from '../app/modules/payment/payment.repository';
 import { ProviderCredentialsService } from '../app/modules/payment/credentials/provider-credentials.service';
@@ -53,7 +54,7 @@ describe('payment database (real Postgres)', () => {
     const dataSource = new DataSource({
       type: 'postgres',
       url: url.toString(),
-      entities: [PaymentEntity, ProviderCredentialEntity],
+      entities: [PaymentEntity, ProviderCredentialEntity, LedgerEntryEntity],
       migrations: applied,
     });
     await dataSource.initialize();
@@ -172,6 +173,46 @@ describe('payment database (real Postgres)', () => {
   });
 
   // Each duplicate is a session a customer may still pay through; choosing one is a human call.
+  // The ledger is complete from day one: money collected before it existed gets its entry -- counted
+  // on the invoice for a paid checkout, refused (a refund is owed) for one needing reconciliation, and
+  // held for one waiting for review (accepting or refusing it needs the entry).
+  it('gives existing paid, unreconciled and held checkouts their ledger entry', async () => {
+    const ledgerIndex = migrationNamed('AddLedgerEntries');
+    const dataSource = await freshDataSource('ledger_backfill', []);
+    const runner = dataSource.createQueryRunner();
+    try {
+      for (const Migration of migrations.slice(0, ledgerIndex)) await new Migration().up(runner);
+      await insertPayment(dataSource, 'paid', 'cs_paid');
+      await insertPayment(dataSource, 'reconciliation_required', 'cs_twice');
+      await insertPayment(dataSource, 'review_required', 'cs_risky');
+      await insertPayment(dataSource, 'failed', 'cs_failed');
+      await insertPayment(dataSource, 'pending', 'cs_open');
+
+      for (const Migration of migrations.slice(ledgerIndex)) await new Migration().up(runner);
+
+      const rows = await dataSource.query(
+        `SELECT p."providerSessionId" AS session, l."organizationId", l."invoiceId", l.kind, l.method, l.amount,
+                l.currency, l.state, l."applyState", l."providerReference", l."recordedBy"
+         FROM ledger_entries l JOIN payments p ON p.id = l."paymentId" ORDER BY session`,
+      );
+      const entry = { organizationId: ORG, invoiceId: 'inv-1', kind: 'payment', method: 'stripe', amount: '129.90' };
+      const rest = {
+        currency: 'EUR',
+        state: 'settled',
+        providerReference: null,
+        recordedBy: 'migration:AddLedgerEntries',
+      };
+      expect(rows).toEqual([
+        { session: 'cs_paid', ...entry, ...rest, applyState: 'applied' },
+        { session: 'cs_risky', ...entry, ...rest, applyState: 'held' },
+        { session: 'cs_twice', ...entry, ...rest, applyState: 'refused' },
+      ]);
+    } finally {
+      await runner.release();
+      await dataSource.destroy();
+    }
+  });
+
   it('refuses to add the open-session index over existing duplicates, naming the invoices, and changes nothing', async () => {
     const guardIndex = migrationNamed('AddOpenSessionGuardToPayments');
     const before = migrations.slice(0, guardIndex);
@@ -194,7 +235,7 @@ describe('payment database (real Postgres)', () => {
     }
   });
 
-  it('PaymentRepository finds the open session and detects another collected payment', async () => {
+  it('PaymentRepository finds the open session, and a paid one is no longer open', async () => {
     const dataSource = await freshDataSource('repository');
     try {
       await dataSource.runMigrations();
@@ -213,16 +254,11 @@ describe('payment database (real Postgres)', () => {
 
       expect(await repository.findOpenByInvoiceId('inv-1')).toMatchObject({ id: first.id, expiresAt });
       expect(await repository.findOpenByInvoiceId('inv-2')).toBeNull();
-      expect(await repository.hasOtherPaidPayment('inv-1', first.id)).toBe(false);
 
       await repository.updateStatus(first.id, 'paid');
+      expect(await repository.findOpenByInvoiceId('inv-1')).toBeNull();
       await insertPayment(dataSource, 'pending', 'cs_second');
-      const second = await repository.findOpenByInvoiceId('inv-1');
-      if (!second) throw new Error('second open payment not found');
-
-      expect(await repository.hasOtherPaidPayment('inv-1', second.id)).toBe(true);
-      // A payment is never "another" payment relative to itself.
-      expect(await repository.hasOtherPaidPayment('inv-1', first.id)).toBe(false);
+      expect(await repository.findOpenByInvoiceId('inv-1')).toMatchObject({ providerSessionId: 'cs_second' });
     } finally {
       await dataSource.destroy();
     }

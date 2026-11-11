@@ -3,6 +3,9 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { ServiceName, TcpClientModule } from '@libs/transports';
 import { PaymentEntity } from '../../../database/entities/payment.entity';
 import { ProviderCredentialEntity } from '../../../database/entities/provider-credential.entity';
+import { LedgerEntryEntity } from '../../../database/entities/ledger-entry.entity';
+import { LedgerService } from './ledger/ledger.service';
+import { LEDGER_WORKER_OPTIONS, LedgerWorker, ledgerWorkerOptionsFromEnv } from './ledger/ledger.worker';
 import { ProviderCredentialsService } from './credentials/provider-credentials.service';
 import { PaymentProviderRegistry } from './payment-provider.registry';
 import { SslCommerzClient } from './sslcommerz/sslcommerz.client';
@@ -21,7 +24,7 @@ import { InvoiceClientService } from './invoice-client.service';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([PaymentEntity, ProviderCredentialEntity]),
+    TypeOrmModule.forFeature([PaymentEntity, ProviderCredentialEntity, LedgerEntryEntity]),
     TcpClientModule.forServices([ServiceName.INVOICE]),
   ],
   controllers: [PaymentHttpController, PaymentRpcController, InvoiceEventsController],
@@ -42,6 +45,10 @@ import { InvoiceClientService } from './invoice-client.service';
     ProviderCredentialsService,
     SslCommerzPaymentProvider,
     PaymentProviderRegistry,
+    // The payments ledger, and the worker that finishes applies and follows refunds.
+    LedgerService,
+    LedgerWorker,
+    { provide: LEDGER_WORKER_OPTIONS, useFactory: () => ledgerWorkerOptionsFromEnv() },
   ],
 })
 export class PaymentModule {}

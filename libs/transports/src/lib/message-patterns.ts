@@ -11,6 +11,11 @@ export const INVOICE_PATTERNS = {
   CANCEL: 'invoice.cancel',
   SEND: 'invoice.send',
   MARK_PAID: 'invoice.markPaid',
+  /**
+   * payment telling invoice that money moved: a settled payment or refund (ledger entry). Idempotent
+   * by entry id; recomputes amount paid and, with it, paid/reopened status.
+   */
+  APPLY_LEDGER_ENTRY: 'invoice.applyLedgerEntry',
 } as const;
 
 // Served by invoice (customers share its database: an invoice snapshots its customer locally).
@@ -71,8 +76,6 @@ export const NOTIFICATION_PATTERNS = {
 
 export const PAYMENT_PATTERNS = {
   INITIATE: 'payment.initiate',
-  VERIFY: 'payment.verify',
-  REFUND: 'payment.refund',
   WEBHOOK: 'payment.handleWebhookEvent',
   /** bff relaying an SSLCommerz IPN or the payer's return redirect: "go and check this tran_id". */
   SSLCOMMERZ_NOTIFY: 'payment.sslcommerz.notify',
@@ -80,6 +83,14 @@ export const PAYMENT_PATTERNS = {
   SSLCOMMERZ_CREDENTIALS_GET: 'payment.sslcommerz.credentials.get',
   SSLCOMMERZ_CREDENTIALS_SET: 'payment.sslcommerz.credentials.set',
   SSLCOMMERZ_CREDENTIALS_DELETE: 'payment.sslcommerz.credentials.delete',
+  /** The ledger: money received or returned for an invoice (payment:read / payment:write). */
+  LEDGER_LIST: 'payment.ledger.list',
+  RECORD_MANUAL: 'payment.ledger.recordManual',
+  REFUND: 'payment.ledger.refund',
+  /** Checkouts needing a person (review_required / reconciliation_required), and their resolution. */
+  ATTENTION_LIST: 'payment.attention.list',
+  ACCEPT_HELD: 'payment.attention.accept',
+  REFUSE_HELD: 'payment.attention.refuse',
 } as const;
 
 export const PDF_GENERATOR_PATTERNS = {

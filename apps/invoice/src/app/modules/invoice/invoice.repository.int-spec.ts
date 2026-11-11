@@ -338,4 +338,122 @@ describe('InvoiceRepository against real MongoDB', () => {
       await expect(issueAs(mine.id, 'INV-2026-000001')).resolves.toMatchObject({ outcome: 'transitioned' });
     });
   });
+
+  // The update pipeline, the once-only guard and the status rules only exist in the database.
+  describe('applyLedgerEntry (payments ledger)', () => {
+    const E1 = '11111111-1111-4111-8111-111111111111';
+    const E2 = '22222222-2222-4222-8222-222222222222';
+    const E3 = '33333333-3333-4333-8333-333333333333';
+
+    // 2 x 50.00 at 10% VAT: a total of 110.00 (11,000 minor).
+    const issued = async () => {
+      const invoice = await repository.create(payload());
+      await issueAs(invoice.id, `INV-2026-${String(++counter).padStart(6, '0')}`);
+      return invoice.id;
+    };
+    const state = async (id: string) => {
+      const doc = await model.findById(id).lean();
+      return {
+        status: doc?.status,
+        amountPaidMinor: doc?.amountPaidMinor,
+        applied: doc?.appliedEntryIds,
+        version: doc?.version,
+      };
+    };
+
+    it('adds part-payments, stays issued with a balance, and becomes paid at the total', async () => {
+      const id = await issued();
+
+      const first = await repository.applyLedgerEntry(id, { entryId: E1, kind: 'payment', amountMinor: 6000 });
+      expect(first.outcome).toBe('applied');
+      expect(await state(id)).toMatchObject({ status: 'issued', amountPaidMinor: 6000, applied: [E1] });
+
+      await repository.applyLedgerEntry(id, { entryId: E2, kind: 'payment', amountMinor: 5000 });
+      expect(await state(id)).toMatchObject({ status: 'paid', amountPaidMinor: 11_000, applied: [E1, E2] });
+    });
+
+    it('counts an entry once, however often it is applied (retries, redeliveries, races)', async () => {
+      const id = await issued();
+      await repository.applyLedgerEntry(id, { entryId: E1, kind: 'payment', amountMinor: 6000 });
+      const before = await state(id);
+
+      const results = await Promise.all(
+        Array.from({ length: 5 }, () =>
+          repository.applyLedgerEntry(id, { entryId: E1, kind: 'payment', amountMinor: 6000 }),
+        ),
+      );
+
+      expect(results.map((result) => result.outcome)).toEqual(Array(5).fill('already_applied'));
+      expect(await state(id)).toEqual(before);
+    });
+
+    it('applies concurrent different entries exactly once each', async () => {
+      const id = await issued();
+      const ids = Array.from({ length: 10 }, (_, i) => `4444444${i}-4444-4444-8444-444444444444`);
+
+      await Promise.all(
+        ids.map((entryId) => repository.applyLedgerEntry(id, { entryId, kind: 'payment', amountMinor: 100 })),
+      );
+
+      expect(await state(id)).toMatchObject({ amountPaidMinor: 1000, status: 'issued' });
+      expect((await state(id)).applied).toHaveLength(10);
+    });
+
+    it('records an overpayment as paid, with the excess still counted', async () => {
+      const id = await issued();
+
+      await repository.applyLedgerEntry(id, { entryId: E1, kind: 'payment', amountMinor: 11_000 });
+      await repository.applyLedgerEntry(id, { entryId: E2, kind: 'payment', amountMinor: 11_000 });
+
+      expect(await state(id)).toMatchObject({ status: 'paid', amountPaidMinor: 22_000 });
+    });
+
+    it('reopens a paid invoice when a refund leaves a balance, and keeps it paid when it does not', async () => {
+      const id = await issued();
+      await repository.applyLedgerEntry(id, { entryId: E1, kind: 'payment', amountMinor: 13_000 });
+
+      await repository.applyLedgerEntry(id, { entryId: E2, kind: 'refund', amountMinor: 2000 });
+      expect(await state(id)).toMatchObject({ status: 'paid', amountPaidMinor: 11_000 });
+
+      await repository.applyLedgerEntry(id, { entryId: E3, kind: 'refund', amountMinor: 1000 });
+      expect(await state(id)).toMatchObject({ status: 'issued', amountPaidMinor: 10_000 });
+    });
+
+    // Paid before the ledger existed: no amountPaidMinor. It was paid in full.
+    it('treats a legacy paid invoice as paid in full', async () => {
+      const id = await issued();
+      await model.updateOne({ _id: id }, { $set: { status: 'paid' } });
+
+      await repository.applyLedgerEntry(id, { entryId: E1, kind: 'refund', amountMinor: 1000 });
+
+      expect(await state(id)).toMatchObject({ status: 'issued', amountPaidMinor: 10_000 });
+    });
+
+    it('refuses money on a draft or a cancelled invoice, and changes nothing', async () => {
+      const draft = await repository.create(payload());
+      expect(
+        (await repository.applyLedgerEntry(draft.id, { entryId: E1, kind: 'payment', amountMinor: 100 })).outcome,
+      ).toBe('refused');
+
+      const id = await issued();
+      await model.updateOne({ _id: id }, { $set: { status: 'cancelled' } });
+      const result = await repository.applyLedgerEntry(id, { entryId: E2, kind: 'payment', amountMinor: 100 });
+      expect(result.outcome).toBe('refused');
+      expect(await state(id)).toMatchObject({ amountPaidMinor: undefined, applied: undefined });
+    });
+
+    it("bumps the version (an in-flight edit can't overwrite it) and can't reach another organization's invoice", async () => {
+      const id = await issued();
+      const { version } = await state(id);
+
+      await repository.applyLedgerEntry(id, { entryId: E1, kind: 'payment', amountMinor: 100 });
+      expect((await state(id)).version).toBe((version as number) + 1);
+
+      await expect(
+        inOrganization(OTHER_ORG, () =>
+          repository.applyLedgerEntry(id, { entryId: E2, kind: 'payment', amountMinor: 100 }),
+        ),
+      ).resolves.toEqual({ outcome: 'not_found' });
+    });
+  });
 });

@@ -8,12 +8,16 @@ import {
   CheckoutSessionParams,
   NormalizedWebhookEvent,
   PaymentProvider,
+  ProviderRefund,
+  RefundOutcomeUnknownError,
+  RefundParams,
 } from './payment-provider.interface';
 
 @Injectable()
 export class StripePaymentProvider implements PaymentProvider {
   readonly name = 'stripe' as const;
   readonly canExpireSessions = true;
+  readonly refundsAreIdempotent = true;
   private readonly stripe: Stripe;
 
   constructor() {
@@ -70,6 +74,49 @@ export class StripePaymentProvider implements PaymentProvider {
     }
   }
 
+  /** Our refund entry id is the idempotency key: retrying after an unknown outcome can't refund twice. */
+  async refund(params: RefundParams): Promise<ProviderRefund> {
+    try {
+      const refund = await this.stripe.refunds.create(
+        {
+          payment_intent: params.paymentReference,
+          amount: toMinor(params.amount, params.currency as SupportedCurrency),
+          metadata: { refundEntryId: params.refundId, reason: params.reason.slice(0, 500) },
+        },
+        { idempotencyKey: `refund-${params.refundId}` },
+      );
+      return this.toProviderRefund(refund);
+    } catch (error) {
+      if (error instanceof Stripe.errors.StripeInvalidRequestError || error instanceof Stripe.errors.StripeCardError) {
+        // Stripe refused it outright (already fully refunded, amount too high...): nothing was made.
+        return { state: 'failed', failureReason: error.message };
+      }
+      throw new RefundOutcomeUnknownError(`Stripe refund outcome unknown: ${(error as Error).message}`);
+    }
+  }
+
+  async refundStatus(providerReference: string): Promise<ProviderRefund> {
+    try {
+      return this.toProviderRefund(await this.stripe.refunds.retrieve(providerReference));
+    } catch (error) {
+      throw new RefundOutcomeUnknownError(`Stripe refund status unknown: ${(error as Error).message}`);
+    }
+  }
+
+  private toProviderRefund(refund: Stripe.Refund): ProviderRefund {
+    const state =
+      refund.status === 'succeeded'
+        ? 'settled'
+        : refund.status === 'failed' || refund.status === 'canceled'
+          ? 'failed'
+          : 'pending';
+    return {
+      state,
+      providerReference: refund.id,
+      ...(state === 'failed' ? { failureReason: refund.failure_reason ?? `Stripe refund ${refund.status}.` } : {}),
+    };
+  }
+
   parseWebhookEvent(rawBody: Buffer, signature: string): NormalizedWebhookEvent {
     // constructEvent verifies the signature itself -- the webhook secret never leaves this
     // service; bff, which actually receives the HTTP request, never sees or needs it.
@@ -82,7 +129,13 @@ export class StripePaymentProvider implements PaymentProvider {
     switch (event.type) {
       case 'checkout.session.completed': {
         const session = event.data.object as Stripe.Checkout.Session;
-        return { type: 'payment_succeeded', providerSessionId: session.id };
+        const paymentIntent =
+          typeof session.payment_intent === 'string' ? session.payment_intent : session.payment_intent?.id;
+        return {
+          type: 'payment_succeeded',
+          providerSessionId: session.id,
+          ...(paymentIntent ? { providerReference: paymentIntent } : {}),
+        };
       }
       case 'checkout.session.expired': {
         const session = event.data.object as Stripe.Checkout.Session;
